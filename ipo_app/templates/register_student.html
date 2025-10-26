@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Student Registration · IPO{% endblock %}
+
+{% block content %}
+  <h2>{{ form_title or "Student registration" }}</h2>
+  <form method="post" class="form-grid">
+    {{ form.hidden_tag() }}
+    <div class="form-field">
+      {{ form.first_name.label }}
+      {{ form.first_name() }}
+      {% for error in form.first_name.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.last_name.label }}
+      {{ form.last_name() }}
+      {% for error in form.last_name.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.email.label }}
+      {{ form.email() }}
+      {% for error in form.email.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.country.label }}
+      {{ form.country() }}
+      {% for error in form.country.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.school.label }}
+      {{ form.school() }}
+      {% for error in form.school.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.gender.label }}
+      {{ form.gender() }}
+      {% for error in form.gender.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.date_of_birth.label }}
+      {{ form.date_of_birth() }}
+      {% for error in form.date_of_birth.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.essay_language.label }}
+      {{ form.essay_language() }}
+      {% for error in form.essay_language.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.keyboard_preference.label }}
+      {{ form.keyboard_preference() }}
+      {% for error in form.keyboard_preference.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.meal_preference.label }}
+      {{ form.meal_preference() }}
+      {% for error in form.meal_preference.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field full-width">
+      {{ form.special_needs.label }}
+      {{ form.special_needs(rows=4) }}
+      {% for error in form.special_needs.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    {% if show_absence_toggle %}
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.is_absent() }}
+          Mark as absent
+        </label>
+      </div>
+    {% endif %}
+    <div class="form-actions">
+      {{ form.submit(class_="button") }}
+    </div>
+  </form>
+{% endblock %}

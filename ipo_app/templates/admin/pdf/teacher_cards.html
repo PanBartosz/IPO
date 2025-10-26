@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body {
+        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        margin: 24px;
+        color: #111827;
+      }
+      .card {
+        page-break-inside: avoid;
+        border: 1px solid #d1d5db;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .card-header h2 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+      .credentials {
+        font-size: 1.1rem;
+        margin: 12px 0;
+      }
+      .instructions {
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+      .instructions strong {
+        font-weight: 600;
+      }
+      .logo-block {
+        text-align: right;
+      }
+      .logo-block h3 {
+        margin: 0;
+        font-size: 1.4rem;
+        letter-spacing: 0.1rem;
+      }
+    </style>
+  </head>
+  <body>
+    {% for entry in teachers %}
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>{{ loop.index }} · {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}</h2>
+            <p>{{ entry.teacher.country }}</p>
+          </div>
+          <div class="logo-block">
+            <h3>IPO {{ current_year }}</h3>
+            <p>Teacher Portal Access</p>
+          </div>
+        </div>
+        <div class="instructions">
+          <p><strong>Getting started:</strong></p>
+          <ol>
+            <li>Visit the portal at <strong>{{ login_url }}</strong>.</li>
+            <li>Sign in with the personal username and temporary password shown below.</li>
+            <li>Download the essays assigned to you and record scores in the portal.</li>
+            <li>Finalize each score when you are satisfied. Only admins can reopen finalized scores.</li>
+          </ol>
+        </div>
+        <div class="credentials">
+          <p><strong>Username:</strong> {{ entry.username }}</p>
+          <p><strong>Temporary password:</strong> {{ entry.password }}</p>
+        </div>
+        <p class="instructions">
+          Need announcements? Open the teacher board at <strong>{{ board_url }}</strong>.
+          Please keep these credentials secure and change your password after first login.
+        </p>
+      </div>
+    {% endfor %}
+  </body>
+</html>

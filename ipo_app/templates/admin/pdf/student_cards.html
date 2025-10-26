@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body {
+        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        margin: 24px;
+        color: #111827;
+      }
+      .card {
+        page-break-inside: avoid;
+        border: 1px solid #d1d5db;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .card-header h2 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+      .credentials {
+        font-size: 1.2rem;
+        margin: 12px 0;
+      }
+      .instructions {
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+      .instructions strong {
+        font-weight: 600;
+      }
+      .logo-block {
+        text-align: right;
+      }
+      .logo-block h3 {
+        margin: 0;
+        font-size: 1.4rem;
+        letter-spacing: 0.1rem;
+      }
+    </style>
+  </head>
+  <body>
+    {% for student in students %}
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>{{ loop.index }} · {{ student.first_name }} {{ student.last_name }}</h2>
+            <p>{{ student.country }}</p>
+          </div>
+          <div class="logo-block">
+            <h3>IPO {{ current_year }}</h3>
+            <p>{{ event_theme }}</p>
+          </div>
+        </div>
+        <div class="instructions">
+          <p><strong>When you have finished writing your essay:</strong></p>
+          <ol>
+            <li>Save your essay as a PDF on the computer desktop.</li>
+            <li>Open a web browser and visit <strong>{{ upload_url }}</strong>.</li>
+            <li>Log in with your personal username and password shown below.</li>
+            <li>Upload the essay PDF and wait for the confirmation screen.</li>
+            <li>Do not touch the computer afterwards and leave the room quietly.</li>
+          </ol>
+        </div>
+        <div class="credentials">
+          <p><strong>Username:</strong> {{ student.upload_username }}</p>
+          <p><strong>Password:</strong> {{ student.upload_token }}</p>
+          <p><strong>Essay language:</strong> {{ student.essay_language }}</p>
+        </div>
+        <p class="instructions">If you have questions or encounter issues, please call one of the invigilators immediately.</p>
+      </div>
+    {% endfor %}
+  </body>
+</html>

@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% from "admin/partials/quick_message_modal.html" import render_quick_message_modal %}
+
+{% block title %}Logistics Dashboard · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="dashboard-header">
+    <div>
+      <h2>Logistics Dashboard</h2>
+      <p class="fine-print">Last refreshed {{ last_refreshed.strftime('%Y-%m-%d %H:%M UTC') }}</p>
+    </div>
+    <form method="get">
+      <button type="submit" class="button secondary">Refresh</button>
+    </form>
+  </div>
+
+  <div class="dashboard-filters">
+    <form method="get" class="filter-form">
+      <div class="filter-group">
+        <label>Essay language
+          <select name="essay_language">
+            <option value="">All</option>
+            {% for lang in language_options %}
+              <option value="{{ lang }}"{% if filters.essay_language == lang %} selected{% endif %}>{{ lang }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="filter-group">
+        <label>Alert level
+          <select name="alert_level">
+            {% for option in alert_options %}
+              <option value="{{ option.value }}"{% if option.value == (filters.alert_level or '') %} selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="filter-actions">
+        <button type="submit" class="button secondary">Apply filters</button>
+        <a href="{{ url_for('web.admin_dashboard') }}" class="button-link">Reset</a>
+      </div>
+    </form>
+  </div>
+
+  <section class="dashboard-cards">
+    <article class="dashboard-card">
+      <h3>Students</h3>
+      <p class="metric-large">{{ metrics.students.total }}</p>
+      <ul>
+        <li>{{ metrics.students.uploads_pending }} pending uploads</li>
+        <li>{{ metrics.students.uploads_complete }} uploaded</li>
+        <li>{{ metrics.students.absent }} marked absent</li>
+      </ul>
+    </article>
+    <article class="dashboard-card">
+      <h3>Teachers</h3>
+      <p class="metric-large">{{ metrics.teachers.active }}</p>
+      <ul>
+        <li>{{ metrics.teachers.pending_scores }} awaiting scores</li>
+        <li>{{ metrics.teachers.absent }} absent</li>
+        <li>{{ metrics.groups.understaffed }} understaffed groups</li>
+      </ul>
+    </article>
+    <article class="dashboard-card">
+      <h3>Stage 1</h3>
+      <p class="metric-large">{{ metrics.stage.stage1.completed }}/{{ metrics.stage.stage1.total }}</p>
+      <ul>
+        <li>{{ metrics.stage.stage1.pending }} essays pending</li>
+        <li>Scores entered: {{ metrics.stage.stage1.entered_scores }}/{{ metrics.stage.stage1.expected_scores }}</li>
+        <li>Completion: {{ metrics.stage.stage1.completion_rate|round(1) }}%</li>
+      </ul>
+      <p>
+        <strong>Grading:</strong>
+        {% if stage_lock_state['stage_1'] %}
+          <span class="status-tag warning">Locked</span>
+        {% else %}
+          <span class="status-tag success">Open</span>
+        {% endif %}
+      </p>
+      <form method="post" action="{{ url_for('web.admin_toggle_grading_lock') }}">
+        <input type="hidden" name="stage" value="{{ Stage.STAGE_1.value }}">
+        <input type="hidden" name="state" value="{{ 'unlock' if stage_lock_state['stage_1'] else 'lock' }}">
+        <button type="submit" class="button secondary">
+          {% if stage_lock_state['stage_1'] %}Unlock Stage 1 grading{% else %}Lock Stage 1 grading{% endif %}
+        </button>
+      </form>
+    </article>
+    <article class="dashboard-card">
+      <h3>Stage 2</h3>
+      <p class="metric-large">{{ metrics.stage.stage2.completed }}/{{ metrics.stage.stage2.candidates }}</p>
+      <ul>
+        <li>{{ metrics.stage.stage2.pending }} essays pending</li>
+        <li>Scores entered: {{ metrics.stage.stage2.entered_scores }}/{{ metrics.stage.stage2.expected_scores }}</li>
+        <li>Completion: {{ metrics.stage.stage2.completion_rate|round(1) }}%</li>
+      </ul>
+      <p>
+        <strong>Grading:</strong>
+        {% if stage_lock_state['stage_2'] %}
+          <span class="status-tag warning">Locked</span>
+        {% else %}
+          <span class="status-tag success">Open</span>
+        {% endif %}
+      </p>
+      <form method="post" action="{{ url_for('web.admin_toggle_grading_lock') }}">
+        <input type="hidden" name="stage" value="{{ Stage.STAGE_2.value }}">
+        <input type="hidden" name="state" value="{{ 'unlock' if stage_lock_state['stage_2'] else 'lock' }}">
+        <button type="submit" class="button secondary">
+          {% if stage_lock_state['stage_2'] %}Unlock Stage 2 grading{% else %}Lock Stage 2 grading{% endif %}
+        </button>
+      </form>
+    </article>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="dashboard-panel">
+      <h3>Alerts</h3>
+      {% if alerts %}
+        <ul class="alert-list">
+          {% for alert in alerts %}
+            <li class="alert-{{ alert.level }}">
+              <span>{{ alert.message }}</span>
+              {% if alert.link %}
+                <a href="{{ alert.link }}">View</a>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">Everything looks good. No outstanding alerts.</p>
+      {% endif %}
+    </div>
+    <div class="dashboard-panel">
+      <h3>Deadlines & SLAs</h3>
+      <ul class="fine-list">
+        {% for item in deadlines %}
+          <li>
+            <strong>{{ item.label }}:</strong>
+            <span>
+              {% if item.value %}
+                {{ item.display }}
+                <em>({{ item.time_remaining }})</em>
+              {% else %}
+                {{ item.display }}
+              {% endif %}
+            </span>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <section class="dashboard-grid">
+    <div class="dashboard-panel">
+      <h3>Teachers needing attention</h3>
+      {% if tables.teacher_workload %}
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>Teacher</th>
+              <th>Pending</th>
+              <th>Assigned</th>
+              <th>Completed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in tables.teacher_workload %}
+              <tr>
+                <td>
+                  <span class="teacher-name-cell">
+                    {{ item.teacher.first_name }} {{ item.teacher.last_name }} ({{ item.teacher.country }})
+                    <button
+                      type="button"
+                      class="icon-button message-launch"
+                      data-teacher-id="{{ item.teacher.id }}"
+                      data-teacher-name="{{ item.teacher.first_name }} {{ item.teacher.last_name }}"
+                      aria-label="Message {{ item.teacher.first_name }} {{ item.teacher.last_name }}"
+                    >
+                      Message
+                    </button>
+                  </span>
+                </td>
+                <td>{{ item.pending }}</td>
+                <td>{{ item.assigned }}</td>
+                <td>{{ item.completed }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="fine-print">No outstanding workloads.</p>
+      {% endif %}
+    </div>
+    <div class="dashboard-panel">
+      <h3>Students without essay uploads</h3>
+      {% if tables.students_without_uploads %}
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Country</th>
+              <th>Registered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for student in tables.students_without_uploads %}
+              <tr>
+                <td>{{ student.first_name }} {{ student.last_name }}</td>
+                <td>{{ student.country }}</td>
+                <td>{{ student.created_at.strftime('%Y-%m-%d %H:%M') if student.created_at else '—' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="fine-print">All registered students have uploaded their essays.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="dashboard-panel">
+    <h3>Stage 1 essays needing scores</h3>
+    {% if tables.stage1_pending %}
+      <table class="compact-table">
+        <thead>
+          <tr>
+            <th>Essay</th>
+            <th>Student</th>
+            <th>Missing scores</th>
+            <th>Language</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in tables.stage1_pending %}
+            <tr>
+              <td>#{{ item.assignment.id }}</td>
+              <td>{{ item.student.first_name }} {{ item.student.last_name }}</td>
+              <td>{{ item.missing }}</td>
+              <td>{{ item.student.essay_language }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No essays are waiting for Stage 1 scoring.</p>
+    {% endif %}
+  </section>
+  {{ render_quick_message_modal(quick_message_form, quick_message_templates, quick_message_templates_data) }}
+{% endblock %}

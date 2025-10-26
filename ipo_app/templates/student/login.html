@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Essay Upload · Login{% endblock %}
+
+{% block content %}
+  <div class="table-card" style="max-width: 480px; margin: 2rem auto;">
+    <h2>Upload login</h2>
+    <p>Please use the personal username and password from your participant card.</p>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field full-width">
+        {{ form.username.label }}
+        {{ form.username(autocomplete="username") }}
+        {% for error in form.username.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.password.label }}
+        {{ form.password(type="password", autocomplete="current-password") }}
+        {% for error in form.password.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

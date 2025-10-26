@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}{{ stage_label }} · {{ display_label }} · Teacher Portal{% endblock %}
+
+{% block content %}
+  <div class="portal-breadcrumb">
+    <a href="{{ url_for('teacher_portal.dashboard') }}">&larr; Back to dashboard</a>
+  </div>
+
+  <section class="portal-assignment-detail">
+    <header>
+      <div>
+        <h2>{{ display_label }}</h2>
+        <p class="fine-print">{{ stage_label }} · Group {{ group_label }}</p>
+      </div>
+      <div class="portal-assignment-actions">
+        {% if download_url %}
+          <a class="button secondary" href="{{ download_url }}">Download essay PDF</a>
+        {% else %}
+          <span class="button disabled">
+            {% if status_info.code == "awaiting_finalization" %}
+              Awaiting student finalization
+            {% else %}
+              Essay not available yet
+            {% endif %}
+          </span>
+        {% endif %}
+        <a class="button secondary" href="{{ url_for('web.teacher_board') }}">Message board</a>
+      </div>
+    </header>
+
+    {% if status_info.code == "finalized" %}
+      <div class="portal-alert success">
+        <strong>Finalized:</strong> This score was finalized on
+        {{ score_record.teacher_finalized_at.strftime('%Y-%m-%d %H:%M') if score_record.teacher_finalized_at else '—' }}.
+        Contact the admin team to reopen if adjustments are needed.
+      </div>
+    {% elif status_info.code == "awaiting_finalization" %}
+      <div class="portal-alert warning">
+        The student has not finalized this submission yet. Grading unlocks once they confirm their upload.
+      </div>
+    {% elif status_info.code == "waiting_upload" %}
+      <div class="portal-alert warning">
+        The essay file has not been uploaded yet. Please return once it becomes available.
+      </div>
+    {% elif status_info.code == "admin_override" %}
+      <div class="portal-alert warning">
+        <strong>Admin override:</strong> An administrator adjusted this score{% if status_info.timestamp %} on {{ status_info.timestamp.strftime('%Y-%m-%d %H:%M') }}{% endif %}.
+        Please contact the admin team if further changes are needed.
+      </div>
+    {% elif status_info.code == "admin_entered" %}
+      <div class="portal-alert">
+        <strong>Admin entry:</strong> An administrator saved a score{% if status_info.timestamp %} on {{ status_info.timestamp.strftime('%Y-%m-%d %H:%M') }}{% endif %}. Review and finalize when ready.
+      </div>
+    {% elif status_info.code == "locked" %}
+      <div class="portal-alert warning">
+        {% if global_lock %}
+          Grading for this stage is temporarily locked by the admin team.
+        {% elif assignment_locked %}
+          Grading for this essay is currently locked by the admin team.
+        {% else %}
+          Grading changes are paused until the admin team unlocks this score.
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <form method="post" class="portal-score-form" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.score.label }}
+        {{ form.score(step="0.01", min="0", max="10", placeholder="Enter score between 0 and 10", disabled=not can_edit) }}
+        {% for error in form.score.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.comments.label }}
+        {{ form.comments(rows=6, placeholder="Optional notes for the jury", disabled=not can_edit) }}
+        {% for error in form.comments.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {% if can_edit %}
+          {{ form.save(class_="button secondary") }}
+          {{ form.finalize(class_="button") }}
+        {% else %}
+          {% if status_info.code == "awaiting_finalization" %}
+            <p class="fine-print">Grading unlocks after the student finalizes their submission.</p>
+          {% elif status_info.code == "waiting_upload" %}
+            <p class="fine-print">Essay is not yet available for grading.</p>
+          {% elif status_info.code == "locked" %}
+            <p class="fine-print">Grading is temporarily locked by the admin team.</p>
+          {% else %}
+            <p class="fine-print">Scoring changes are disabled once finalized.</p>
+          {% endif %}
+        {% endif %}
+      </div>
+    </form>
+  </section>
+{% endblock %}

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Settings · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Dashboard Settings</h2>
+      <a class="button-link" href="{{ url_for('web.admin_dashboard') }}">Back to dashboard</a>
+    </div>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.upload_deadline.label }}
+        {{ form.upload_deadline(type="datetime-local") }}
+        <span class="form-help">Leave blank to use default ({{ config.DASHBOARD_UPLOAD_DEADLINE or 'none' }}).</span>
+        {% for error in form.upload_deadline.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.stage2_deadline.label }}
+        {{ form.stage2_deadline(type="datetime-local") }}
+        <span class="form-help">Leave blank to use default ({{ config.DASHBOARD_STAGE2_DEADLINE or 'none' }}).</span>
+        {% for error in form.stage2_deadline.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.stage1_sla.label }}
+        {{ form.stage1_sla(min=1) }}
+        <span class="form-help">Default: {{ config.DASHBOARD_STAGE1_SCORE_SLA_HOURS }} hours.</span>
+        {% for error in form.stage1_sla.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.stage2_sla.label }}
+        {{ form.stage2_sla(min=1) }}
+        <span class="form-help">Default: {{ config.DASHBOARD_STAGE2_SCORE_SLA_HOURS }} hours.</span>
+        {% for error in form.stage2_sla.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.packet_print_mode.label }}
+        {{ form.packet_print_mode() }}
+        <span class="form-help">Controls whether automatically generated packets insert blank pages for duplex printing.</span>
+        {% for error in form.packet_print_mode.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.teacher_portal_enabled() }}
+          {{ form.teacher_portal_enabled.label.text }}
+        </label>
+        <span class="form-help">When enabled, teachers receive individual credentials, can download assigned essays, submit scores, and view personalized board messages.</span>
+        {% for error in form.teacher_portal_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.email_auto_enabled() }}
+          {{ form.email_auto_enabled.label.text }}
+        </label>
+        <span class="form-help">Requires SENDGRID_API_KEY and SENDGRID_FROM_EMAIL environment variables.</span>
+        {% for error in form.email_auto_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_student_subject.label }}
+        {{ form.email_student_subject(style="width: 150%; max-width: 100%;") }}
+        {% for error in form.email_student_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_student_body.label }}
+        {{ form.email_student_body(style="height: 9rem;") }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ essay_language }}' }}, {{ '{{ keyboard_preference }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ special_needs }}' }}.</span>
+        {% for error in form.email_student_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_teacher_subject.label }}
+        {{ form.email_teacher_subject() }}
+        {% for error in form.email_teacher_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_teacher_body.label }}
+        {{ form.email_teacher_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ languages }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ tshirt_size }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ delegation_leader }}' }}, {{ '{{ prior_ipo_assessor }}' }}.</span>
+        {% for error in form.email_teacher_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_message_subject.label }}
+        {{ form.email_message_subject() }}
+        {% for error in form.email_message_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_message_body.label }}
+        {{ form.email_message_body() }}
+        <span class="form-help">Available variables: {{ '{{ teacher_first_name }}' }}, {{ '{{ teacher_last_name }}' }}, {{ '{{ teacher_email }}' }}, {{ '{{ title }}' }}, {{ '{{ body }}' }}, {{ '{{ priority }}' }}, {{ '{{ board_url }}' }}.</span>
+        {% for error in form.email_message_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

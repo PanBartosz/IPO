@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Teacher Portal Login · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card portal-login-card">
+    <h2>Teacher portal access</h2>
+    <p class="fine-print">Use your individualized credentials to download assigned essays and submit scores.</p>
+    <form method="post" novalidate>
+      {{ form.hidden_tag() }}
+      {% if next_value %}
+        <input type="hidden" name="next" value="{{ next_value }}">
+      {% endif %}
+      <div class="form-field">
+        {{ form.username.label }}
+        {{ form.username(autocomplete="username") }}
+        {% for error in form.username.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.password.label }}
+        {{ form.password(type="password", autocomplete="current-password") }}
+        {% for error in form.password.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+    <p class="fine-print" style="margin-top: 1rem;">
+      Need the shared announcements instead?
+      <a href="{{ url_for('web.teacher_board_login') }}">Go to the teacher message board login</a>.
+    </p>
+  </div>
+{% endblock %}

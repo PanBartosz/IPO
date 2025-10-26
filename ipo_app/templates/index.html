@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}IPO Registration{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <h2>Welcome to the IPO registration portal</h2>
+    <p>Please choose the appropriate registration form.</p>
+    <div class="cta-group">
+      <a class="button" href="{{ url_for('web.register_student') }}">Register a student</a>
+      <a class="button secondary" href="{{ url_for('web.register_teacher') }}">Register a teacher</a>
+    </div>
+  </section>
+{% endblock %}

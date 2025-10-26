@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{% block title %}IPO Registration{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    {% block extra_head %}{% endblock %}
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <h1><a href="{{ url_for('web.index') }}">International Philosophy Olympiad</a></h1>
+        <nav>
+          <a href="{{ url_for('web.register_student') }}">Student registration</a>
+          <a href="{{ url_for('web.register_teacher') }}">Teacher registration</a>
+          <a href="{{ url_for('web.student_login') }}">Essay upload</a>
+          {% if teacher_portal_enabled %}
+            <a href="{{ url_for('teacher_portal.login') }}">Teacher portal</a>
+          {% endif %}
+          <a href="{{ url_for('web.teacher_board_login') }}">Teacher board</a>
+          <a href="{{ url_for('web.admin_dashboard') }}">Admin</a>
+        </nav>
+      </div>
+    </header>
+    {% with current_admin=current_admin, admin_modules=ADMIN_MODULES %}
+{% if current_admin %}
+    <div class="admin-nav">
+      <div class="container">
+        <nav>
+          {% for label, endpoint in admin_modules %}
+            <a href="{{ url_for(endpoint) }}">{{ label }}</a>
+          {% endfor %}
+          <a href="{{ url_for('web.admin_logout') }}">Logout ({{ current_admin }})</a>
+        </nav>
+      </div>
+    </div>
+    {% endif %}
+{% endwith %}
+    <main class="{% block main_class %}container{% endblock %}">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <ul class="flash-messages">
+            {% for category, message in messages %}
+              <li class="flash flash-{{ category }}">{{ message }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+      <div class="container">
+        <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
+      </div>
+    </footer>
+    {% block extra_scripts %}{% endblock %}
+  </body>
+</html>

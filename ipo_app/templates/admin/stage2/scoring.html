@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% from "admin/partials/quick_message_modal.html" import render_quick_message_modal %}
+
+{% block title %}Stage 2 Scores · {{ student.first_name }} {{ student.last_name }}{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Stage 2 · {{ student.first_name }} {{ student.last_name }}</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_stage2_overview') }}">Back to Stage 2 overview</a>
+        <a class="button-link" href="{{ url_for('web.admin_stage2_packet', assignment_id=assignment.id) }}">Stage 2 packet</a>
+      </div>
+    </div>
+    <p><strong>Country:</strong> {{ student.country }} · <strong>Essay language:</strong> {{ student.essay_language }}</p>
+    <p><strong>Upload status:</strong>
+      {% if student.uploaded_filename %}
+        <span class="status-tag">Uploaded on {{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% else %}
+        <span class="status-tag warning">Not uploaded</span>
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Stage 1 summary</h3>
+    <p><strong>Group:</strong>
+      {% if assignment.group %}
+        {{ assignment.group.name }} · <strong>Language:</strong> {{ assignment.group.language }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
+    <p><strong>Scores:</strong> {{ stage1_status.entered_scores }} / {{ stage1_status.expected_scores }}</p>
+    <p><strong>Average:</strong> {{ stage1_status.average_score if stage1_status.average_score is not none else '—' }}</p>
+    <p><strong>Spread:</strong> {{ stage1_status.score_range if stage1_status.score_range is not none else '—' }}</p>
+    <p><strong>Recommendation:</strong> {{ stage1_status.recommendation }}</p>
+    <p>
+      <strong>Grading access:</strong>
+      {% if stage1_global_lock %}
+        <span class="status-tag warning">Globally locked</span>
+      {% elif assignment.stage1_locked %}
+        <span class="status-tag warning">Locked</span>
+      {% else %}
+        <span class="status-tag success">Open</span>
+      {% endif %}
+    </p>
+    {% if stage1_entries %}
+      <table class="data-table" style="margin-top: 1rem;">
+        <thead>
+          <tr>
+            <th>Reader</th>
+            <th>Country</th>
+            <th>Role</th>
+            <th>Score</th>
+            <th>Portal status</th>
+            <th>Submitted</th>
+            <th>Last updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in stage1_entries %}
+            <tr>
+              <td>
+                <span class="teacher-name-cell">
+                  {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}
+                  <button
+                    type="button"
+                    class="icon-button message-launch"
+                    data-teacher-id="{{ entry.teacher.id }}"
+                    data-teacher-name="{{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                    aria-label="Message {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                  >
+                    Message
+                  </button>
+                </span>
+                <span class="fine-print">{{ entry.teacher.languages }}</span>
+              </td>
+              <td>{{ entry.teacher.country }}</td>
+              <td>{{ entry.source }}</td>
+              <td>
+                {% if entry.score is not none %}
+                  {{ '%.2f'|format(entry.score) }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% set status_code = entry.portal_status_code or '' %}
+                {% if status_code == '' %}
+                  {% if entry.finalized %}
+                    {% set status_code = "finalized" %}
+                  {% elif entry.score is not none %}
+                    {% set status_code = "in_progress" %}
+                  {% else %}
+                    {% set status_code = "pending" %}
+                  {% endif %}
+                {% endif %}
+                {% if entry.finalized %}
+                  {% set status_code = "finalized" %}
+                {% endif %}
+                {% if status_code == "finalized" %}
+                  <span class="status-tag success">Teacher finalized</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">finalized on {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_override" %}
+                  <span class="status-tag warning">Admin override</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">overridden {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_entered" %}
+                  <span class="status-tag">Admin entered</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">entered {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "locked" %}
+                  <span class="status-tag warning">Locked by admin</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">locked {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "in_progress" %}
+                  <span class="status-tag">Draft saved</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">updated {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "awaiting_finalization" %}
+                  <span class="status-tag warning">Awaiting student finalization</span>
+                  <div class="fine-print">Student must finalize their submission.</div>
+                {% elif status_code == "waiting_upload" %}
+                  <span class="status-tag warning">Awaiting essay upload</span>
+                  <div class="fine-print">Essay file not yet available.</div>
+                {% else %}
+                  <span class="status-tag">Not started</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.submitted_at %}
+                  {{ entry.submitted_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.updated_at %}
+                  {{ entry.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No Stage 1 readers recorded.</p>
+    {% endif %}
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Stage 2 readers</h3>
+    <form method="post" class="form-grid" novalidate>
+      <input type="hidden" name="action" value="update_scores">
+      <table class="data-table" style="width: 100%;">
+        <thead>
+          <tr>
+            <th>Teacher</th>
+            <th>Country</th>
+            <th>Score (0-10)</th>
+            <th>Portal status</th>
+            <th>Last updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in entries %}
+            <tr>
+              <td>
+                <span class="teacher-name-cell">
+                  {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}
+                  <button
+                    type="button"
+                    class="icon-button message-launch"
+                    data-teacher-id="{{ entry.teacher.id }}"
+                    data-teacher-name="{{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                    aria-label="Message {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                  >
+                    Message
+                  </button>
+                </span>
+                <span class="fine-print">{{ entry.teacher.languages }}</span>
+              </td>
+              <td>{{ entry.teacher.country }}</td>
+              <td>
+                <input type="number" min="0" max="10" step="0.1" name="score_{{ entry.teacher_id }}" value="{{ entry.score or '' }}" style="width: 5rem;">
+              </td>
+              <td>
+                {% set status_code = entry.portal_status_code or '' %}
+                {% if status_code == '' %}
+                  {% if entry.finalized %}
+                    {% set status_code = "finalized" %}
+                  {% elif entry.score is not none %}
+                    {% set status_code = "in_progress" %}
+                  {% else %}
+                    {% set status_code = "pending" %}
+                  {% endif %}
+                {% endif %}
+                {% if entry.finalized %}
+                  {% set status_code = "finalized" %}
+                {% endif %}
+                {% if status_code == "finalized" %}
+                  <span class="status-tag success">Teacher finalized</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">finalized on {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_override" %}
+                  <span class="status-tag warning">Admin override</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">overridden {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_entered" %}
+                  <span class="status-tag">Admin entered</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">entered {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "locked" %}
+                  <span class="status-tag warning">Locked by admin</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">locked {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "in_progress" %}
+                  <span class="status-tag">Draft saved</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">updated {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "awaiting_finalization" %}
+                  <span class="status-tag warning">Awaiting student finalization</span>
+                  <div class="fine-print">Student must finalize their submission.</div>
+                {% elif status_code == "waiting_upload" %}
+                  <span class="status-tag warning">Awaiting essay upload</span>
+                  <div class="fine-print">Essay file not yet available.</div>
+                {% else %}
+                  <span class="status-tag">Not started</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.updated_at %}
+                  {{ entry.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.finalized %}
+                  <button type="submit" name="unlock_reader" value="{{ entry.teacher_id }}" class="button-link">Unlock</button>
+                  <span class="button-spacer">·</span>
+                {% endif %}
+                <button type="submit" name="remove_reader" value="{{ entry.teacher_id }}" class="button-link danger">Remove</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="form-actions" style="margin-top: 1rem;">
+        <button type="submit" class="button">Save scores</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Add Stage 2 reader</h3>
+    {% if available_teachers %}
+      {% if suggested_teachers %}
+        <p class="fine-print"><strong>Suggested readers:</strong></p>
+        <ul class="fine-print" style="margin-top: 0; padding-left: 1.2rem;">
+          {% for teacher in suggested_teachers %}
+            {% set stats = teacher_stats.get(teacher.id) %}
+            <li>
+              {{ teacher.first_name }} {{ teacher.last_name }} · {{ teacher.country }}
+              {% if stats %}
+                <span>— Stage 1 {{ stats.stage1_completed }}/{{ stats.stage1_expected }}{% if stats.stage1_pending == 0 and stats.stage1_expected > 0 %} complete{% elif stats.stage1_expected == 0 %} (no Stage 1 load){% endif %} · Stage 2 {{ stats.stage2_assigned }} assigned{% if stats.stage2_pending %} ({{ stats.stage2_pending }} pending){% endif %}</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post" class="form-grid" novalidate>
+        <input type="hidden" name="action" value="add_reader">
+        <div class="form-field">
+          <label for="stage2-reader">Teacher</label>
+          <select id="stage2-reader" name="teacher_id" required>
+            <option value="" disabled selected>Select teacher</option>
+            {% for teacher in available_teachers %}
+              {% set stats = teacher_stats.get(teacher.id) %}
+              <option value="{{ teacher.id }}">
+                {{ teacher.first_name }} {{ teacher.last_name }} · {{ teacher.country }}
+                {% if stats %}
+                  · Stage 1 {{ stats.stage1_completed }}/{{ stats.stage1_expected }}
+                  · Stage 2 {{ stats.stage2_assigned }} assigned
+                {% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="button">Add reader</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="fine-print">No teachers available.</p>
+    {% endif %}
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Stage 2 status</h3>
+    <p><strong>Scores:</strong> {{ stage2_status.entered_scores }} / {{ stage2_status.expected_scores }}</p>
+    <p><strong>Average:</strong> {{ stage2_status.average_score if stage2_status.average_score is not none else '—' }}</p>
+    <p><strong>Spread:</strong> {{ stage2_status.score_range if stage2_status.score_range is not none else '—' }}</p>
+    <p>
+      <strong>Grading access:</strong>
+      {% if stage2_global_lock %}
+        <span class="status-tag warning">Globally locked</span>
+      {% elif assignment.stage2_locked %}
+        <span class="status-tag warning">Locked</span>
+      {% else %}
+        <span class="status-tag success">Open</span>
+      {% endif %}
+    </p>
+    <div class="cta-group" style="margin-top: 1rem;">
+      <form method="post" style="display: inline;">
+        <input type="hidden" name="action" value="toggle_stage2_lock">
+        <button type="submit" class="button secondary">
+          {% if assignment.stage2_locked %}Unlock assignment grading{% else %}Lock assignment grading{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Combined status</h3>
+    <p><strong>Total scores:</strong> {{ combined_status.count }}</p>
+    <p><strong>Overall average:</strong> {{ combined_status.average if combined_status.average is not none else '—' }}</p>
+    <p><strong>Overall spread:</strong> {{ combined_status.score_range if combined_status.score_range is not none else '—' }}</p>
+    <form method="post" style="margin-top: 1rem;">
+      <input type="hidden" name="action" value="mark_stage3">
+      <button type="submit" class="button{{ ' secondary' if not assignment.stage_three_recommended else '' }}">
+        {% if assignment.stage_three_recommended %}Marked for Stage 3{% else %}Mark as Stage 3 recommendation{% endif %}
+      </button>
+    </form>
+  </div>
+  {{ render_quick_message_modal(quick_message_form, quick_message_templates, quick_message_templates_data) }}
+{% endblock %}

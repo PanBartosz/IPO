@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Essay Uploads · Admin{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.0.3/css/dataTables.dataTables.min.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "jquery": "https://cdn.jsdelivr.net/npm/jquery@3.7.1/+esm"
+      }
+    }
+  </script>
+{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    {% if active_batch %}
+      <p class="status-tag">Active Stage 1 batch: {{ active_batch.name }}</p>
+    {% else %}
+      <p class="status-tag warning">No Stage 1 batch is published. Scores cannot be recorded.</p>
+    {% endif %}
+  </div>
+
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Essay uploads overview</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_student_cards_pdf') }}">Participant cards PDF</a>
+      </div>
+    </div>
+    <table id="uploads-table" class="data-table display">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Student</th>
+          <th>Country</th>
+          <th>Language</th>
+          <th>Username</th>
+          <th>Essay status</th>
+          <th>Uploaded at</th>
+          <th>Stage 1 status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for student in students %}
+          <tr>
+            <td>{{ student.id }}</td>
+            <td>{{ student.first_name }} {{ student.last_name }}</td>
+            <td>{{ student.country }}</td>
+            <td>{{ student.essay_language }}</td>
+            <td>{{ student.upload_username }}</td>
+            <td>
+              {% if student.essay_finalized %}
+                <span class="status-tag success">Finished</span>
+              {% elif student.uploaded_filename %}
+                <span class="status-tag">Uploaded</span>
+              {% else %}
+                <span class="status-tag warning">Pending</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if student.uploaded_at %}
+                {{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if status_map[student.id].stage_two %}
+                <span class="status-tag">Stage 2</span>
+              {% elif status_map[student.id].needs_extra %}
+                <span class="status-tag warning">Needs extra reader</span>
+              {% elif status_map[student.id].completed %}
+                <span class="status-tag">Stage 1 complete</span>
+              {% else %}
+                <span class="status-tag warning">Incomplete</span>
+              {% endif %}
+            </td>
+            <td class="table-actions">
+              <a class="button-link" href="{{ url_for('web.admin_score_student', student_id=student.id) }}">Scores</a>
+              {% if student.uploaded_filename %}
+                <a class="button-link" href="{{ url_for('web.admin_download_essay', student_id=student.id) }}">Download</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script type="module">
+    import DataTable from 'https://cdn.datatables.net/2.0.3/js/dataTables.mjs';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      new DataTable('#uploads-table', {
+        paging: true,
+        pageLength: 25,
+        order: [[0, 'asc']],
+        responsive: true,
+        layout: {
+          topStart: 'search',
+          topEnd: 'pageLength',
+          bottomStart: 'info',
+          bottomEnd: 'paging'
+        }
+      });
+    });
+  </script>
+{% endblock %}

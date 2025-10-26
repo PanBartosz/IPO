@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ batch.name }} · Teacher Packet</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        margin: 24px;
+        color: #111827;
+      }
+      h1 {
+        font-size: 1.75rem;
+        margin-bottom: 0.5rem;
+      }
+      h2 {
+        font-size: 1.3rem;
+        margin-top: 1.5rem;
+        margin-bottom: 0.25rem;
+      }
+      .meta {
+        font-size: 0.95rem;
+        color: #4b5563;
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+      }
+      th, td {
+        border: 1px solid #d1d5db;
+        padding: 0.5rem;
+        font-size: 0.95rem;
+      }
+      th {
+        background: #e5e7eb;
+        text-align: left;
+      }
+      .teacher-section {
+        page-break-inside: avoid;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>{{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }}</h1>
+    <div class="meta">
+      <p>Status: {{ batch.status.value.title() }} · Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      <p>Teachers included: {{ schedules|length }}</p>
+    </div>
+
+    {% for entry in schedules %}
+      <section class="teacher-section">
+        <h2>{{ entry.teacher.first_name }} {{ entry.teacher.last_name }}</h2>
+        <div class="meta">
+          <p>Country: {{ entry.teacher.country }} · Languages: {{ entry.teacher.languages }}</p>
+          <p>Group: {{ entry.group.name }} ({{ entry.group.language }}) · Role: {{ entry.role.value.title() }}</p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Essay ID</th>
+              <th>Student</th>
+              <th>Country</th>
+              <th>Language</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for assignment in entry.assignments %}
+              <tr>
+                <td>{{ assignment.student.id }}</td>
+                <td>{{ assignment.student.first_name }} {{ assignment.student.last_name }}</td>
+                <td>{{ assignment.student.country }}</td>
+                <td>{{ assignment.student.essay_language }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="4">No essays assigned yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+  </body>
+</html>

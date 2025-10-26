@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Help & Workflow · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Admin help & workflow</h2>
+      <a class="button-link" href="{{ url_for('web.admin_dashboard') }}">Back to dashboard</a>
+    </div>
+    <p class="fine-print">Use this guide when running an IPO edition. It explains what each tab does, how to move through the competition stages, and what to watch for if you are new to the system.</p>
+
+    <section class="help-section">
+      <h3>Quick glossary</h3>
+      <ul class="help-list">
+        <li><strong>Batch</strong> — a Stage 1 reading plan. Only one batch can be published at a time.</li>
+        <li><strong>Group</strong> — a reading team (typically 4 teachers) handling a set of essays.</li>
+        <li><strong>Finalized essay</strong> — a student upload locked by the student; cannot be replaced without admin help.</li>
+        <li><strong>Finalized score</strong> — a teacher-submitted score locked for the portal until an admin clicks <em>Unlock</em> on the scoring page.</li>
+        <li><strong>Extra reader</strong> — an additional evaluator assigned when Stage 1 scores are far apart.</li>
+        <li><strong>Admin override</strong> — a score saved by staff (status tags show “Admin entered” or “Admin override”).</li>
+        <li><strong>Grading lock</strong> — an admin toggle that pauses score editing for a single student or an entire stage until reopened.</li>
+      </ul>
+    </section>
+
+    <section class="help-section">
+      <h3>1. Before registrations open</h3>
+      <ol>
+        <li><strong>Create admin accounts</strong> via <code>ADMIN_USERS</code> or database insert so organizers can sign in.</li>
+        <li><strong>Review Settings</strong>: deadlines, SLA hours, packet print mode, SendGrid credentials.</li>
+        <li><strong>Confirm upload directory</strong> (Settings → Uploads) and that disk space is available.</li>
+        <li><strong>Share registration links</strong> (top navigation) with delegations.</li>
+        <li>Optional: load mock data in a staging copy using <code>python scripts/seed_mock_data.py --reset</code>.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>2. Registration period</h3>
+      <ol>
+        <li>Watch the <strong>Students</strong> and <strong>Teachers</strong> tabs for new entries; edit records if delegations request corrections.</li>
+        <li>If automated emails are enabled, confirm SendGrid shows deliveries (spot check participants if unsure).</li>
+        <li>Use <strong>Messages</strong> to email broad instructions (e.g., upload deadlines) to all teachers.</li>
+        <li>The <strong>Dashboard</strong> should show rising counts in the Students/Teachers cards; alerts will flag “students without uploads” once deadlines approach.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>3. Essay upload window</h3>
+      <ol>
+        <li>Students log in under “Essay upload” and submit PDFs. They can preview the exact stored copy and must click <strong>Mark essay as finished</strong> when satisfied.</li>
+        <li>The <strong>Uploads</strong> table shows status tags:
+          <ul>
+            <li><span class="status-tag warning">Pending</span> — no upload yet.</li>
+            <li><span class="status-tag">Uploaded</span> — a file exists but is editable.</li>
+            <li><span class="status-tag success">Finished</span> — student locked the essay.</li>
+          </ul>
+        </li>
+        <li>Remind students near the deadline using Messages; the Dashboard alerts list will include “students without uploads”.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>4. Stage 1 planning</h3>
+      <ol>
+        <li>Open the <strong>Planner</strong> tab. Create or load the Stage 1 batch, add groups, and assign teachers. Red warnings mark groups with fewer than four active readers.</li>
+        <li>Use “Auto-generate groups” or “Auto-assign essays” to quickly populate from available teachers/essays; review manually afterwards.</li>
+        <li>When satisfied, click <strong>Publish</strong>. Only one batch may be published at a time; publishing copies the plan to teachers.</li>
+        <li>Generate reader packets (PDF). If Settings → packet print mode is set to “double sided”, the export inserts blank pages so each title sheet starts on the front of a paper and every essay begins on a new page.</li>
+        <li>Notify teachers via Messages that packets are available. Quick “Message” buttons appear next to teacher names throughout the app.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>5. Stage 1 scoring</h3>
+      <ol>
+        <li>From <strong>Uploads</strong>, choose a student and click “Scores”. Enter or edit each reader’s score. If the spread exceeds 3 points, the app recommends an extra reader; assign one via the same page.</li>
+        <li>Status tags highlight progress: <span class="status-tag">Draft saved</span>, <span class="status-tag success">Teacher finalized</span>, <span class="status-tag">Admin entered</span>, <span class="status-tag warning">Admin override</span>, or <span class="status-tag warning">Locked by admin</span>. Click <em>Unlock</em> next to a reader to reopen a finalized score.</li>
+        <li>The “Lock assignment grading” button pauses edits for that student; the Dashboard provides global Stage 1/Stage 2 locks when you need a freeze across the board.</li>
+        <li>When all required scores are present, use “Mark Stage 2 qualified” to flag the essay (automatically clears the “Needs extra” tag if average ≥ 7). The save button only logs updates when a score actually changes.</li>
+        <li>The Dashboard Stage 1 card updates automatically (completed vs expected scores, pending count, completion percentage).</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>6. Stage 2 and beyond</h3>
+      <ol>
+        <li>Use the <strong>Stage 2</strong> tab to view promoted essays, average scores, spreads, and Stage 3 recommendations.</li>
+        <li>Assign Stage 2 readers and generate Stage 2 packets; workflow mirrors Stage 1. The actions column again offers <em>Unlock</em> to reopen finalized teacher scores and “Lock assignment grading” to pause edits.</li>
+        <li>Post logistics updates (ceremony times, translation sessions) via Messages.</li>
+        <li>After scoring closes, visit <strong>Exports</strong> to download the SQL dump and essay ZIP (optionally only finalized essays). Store these securely.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>Dashboard details</h3>
+      <p>The dashboard provides live status:</p>
+      <ul class="help-list">
+        <li><strong>Students card</strong> — total registered, uploads pending/complete, absent count.</li>
+        <li><strong>Teachers card</strong> — active teachers, teachers still missing scores, absent count.</li>
+        <li><strong>Stage 1 card</strong> — completed vs. total assignments, pending essays, entered vs. expected scores, completion percentage.</li>
+        <li><strong>Stage 2 card</strong> — assignments completed, candidate count, pending, completion percentage, spread for Stage 2 scores.</li>
+        <li>Both Stage cards include quick buttons to lock/unlock grading portal-wide for that stage.</li>
+        <li><strong>Alerts panel</strong> — auto-generated reminders such as “students without uploads”, “teachers pending scores”, “understaffed groups”, “Stage 2 essays awaiting readers”. Click an alert to jump to the relevant tab.</li>
+        <li><strong>Deadlines & SLA</strong> — displays configured deadlines and SLA windows with time-remaining (overdue items marked warning).</li>
+        <li><strong>Teacher workload</strong> — top teachers with high pending/assigned counts; use to rebalance groups.</li>
+        <li><strong>Students without uploads</strong> — latest registrations missing essays (top 10).</li>
+        <li><strong>Stage 1 essays needing scores</strong> — essays with incomplete reader submissions (top 8).</li>
+      </ul>
+    </section>
+
+    <section class="help-section">
+      <h3>Tab reference</h3>
+      <ul class="help-list">
+        <li><strong>Planner</strong> — manage Stage 1 batches, groups, assignments, packets. Tools for auto-generation and understaffed warnings.</li>
+        <li><strong>Students</strong> & <strong>Teachers</strong> — browse/edit records; quick “Message” buttons next to teachers.</li>
+        <li><strong>Uploads</strong> — monitor essay status, download PDFs, jump to scoring.</li>
+        <li><strong>Stage 2</strong> — monitor promotion candidates, assign Stage 2 readers, generate packets.</li>
+        <li><strong>Messages</strong> — compose announcements (with optional email), load templates, archive/restore, view teacher board.</li>
+        <li><strong>Logs</strong> — searchable audit trail for registrations, packets, messages, exports.</li>
+        <li><strong>Exports</strong> — download SQL dump (MySQL/MariaDB via <code>mysqldump</code> or SQLite copy) and essay ZIP with manifest; activity logged.</li>
+        <li><strong>Settings</strong> — configure deadlines, SLA, duplex printing, email automation/templates.</li>
+        <li><strong>Help</strong> — this page.</li>
+      </ul>
+    </section>
+
+    <section class="help-section">
+      <h3>Roles & contingency tips</h3>
+      <ul class="help-list">
+        <li><strong>Head organizer</strong> — keeps Settings current, monitors Dashboard alerts, approves packet publication.</li>
+        <li><strong>Registration desk</strong> — watches Students/Teachers tabs, corrects data, checks for missing essays.</li>
+        <li><strong>Scoring supervisor</strong> — enters reader scores, schedules extra readers, promotes Stage 2 candidates.</li>
+        <li><strong>Communications lead</strong> — posts Messages, confirms SendGrid deliveries, coordinates teacher acknowledgments.</li>
+        <li><strong>If SendGrid fails</strong> — disable automatic emails in Settings, resend instructions manually; Logs confirm what was attempted.</li>
+        <li><strong>If duplex printing misaligns</strong> — verify packet print mode is set appropriately; regenerate packets after changing the setting.</li>
+        <li><strong>After exports</strong> — move downloaded SQL/ZIP to encrypted storage; consider deleting temporary backup files from the server.</li>
+      </ul>
+    </section>
+
+    <section class="help-section">
+      <h3>Additional reminders</h3>
+      <ul class="help-list">
+        <li>Automated emails only send when both <code>SENDGRID_API_KEY</code> and <code>SENDGRID_FROM_EMAIL</code> are set and the toggle is enabled.</li>
+        <li>Students preview the server-stored PDF, so once marked finished the file exactly matches what teachers receive.</li>
+        <li>Packet duplex mode inserts blank pages where needed so duplex printers start each title page and essay on the front side.</li>
+        <li>Exports and Messages create audit log entries — consult Logs whenever you need to trace actions.</li>
+        <li>Teacher portal disabled? Locks and unlocks still update internal state; they take effect the moment you re-enable the portal.</li>
+        <li>Refer to <code>share/International Philosophy Olympiad Statute.html</code> for official rules and procedures.</li>
+      </ul>
+    </section>
+  </div>
+{% endblock %}

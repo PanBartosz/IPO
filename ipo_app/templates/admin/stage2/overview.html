@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Stage 2 · Overview{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Stage 2 Candidates</h2>
+      <a class="button-link" href="{{ url_for('web.admin_uploads') }}">Back to uploads</a>
+    </div>
+    {% if assignments %}
+      <table class="data-table display" id="stage2-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Country</th>
+            <th>Language</th>
+            <th>Stage 1 avg</th>
+            <th>Score spread</th>
+            <th>Stage 3</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for assignment in assignments %}
+            {% set status = status_map[assignment.student_id] %}
+            <tr>
+              <td>{{ assignment.student.id }}</td>
+              <td>{{ assignment.student.first_name }} {{ assignment.student.last_name }}</td>
+              <td>{{ assignment.student.country }}</td>
+              <td>{{ assignment.student.essay_language }}</td>
+              <td>{{ status.average_score if status.average_score is not none else '—' }}</td>
+              <td>{{ status.score_range if status.score_range is not none else '—' }}</td>
+              <td>{% if assignment.stage_three_recommended %}<span class="status-tag">Recommended</span>{% else %}—{% endif %}</td>
+              <td class="table-actions">
+                <a class="button-link" href="{{ url_for('web.admin_stage2_score_student', student_id=assignment.student.id) }}">Score</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No students qualified for Stage 2 yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script type="module">
+    import DataTable from 'https://cdn.datatables.net/2.0.3/js/dataTables.mjs';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const table = document.getElementById('stage2-table');
+      if (table) {
+        new DataTable(table, {
+          paging: true,
+          pageLength: 25,
+          order: [[0, 'asc']],
+                  });
+      }
+    });
+  </script>
+{% endblock %}

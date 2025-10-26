@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Message · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Edit message</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_messages') }}">Back to messages</a>
+      </div>
+    </div>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.title.label }}
+        {{ form.title() }}
+        {% for error in form.title.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.body.label }}
+        {{ form.body(rows=5) }}
+        {% for error in form.body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.priority.label }}
+        {{ form.priority() }}
+      </div>
+      <div class="form-field">
+        {{ form.teacher_id.label }}
+        {{ form.teacher_id() }}
+      </div>
+      <div class="form-field">
+        {{ form.category.label }}
+        {{ form.category() }}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

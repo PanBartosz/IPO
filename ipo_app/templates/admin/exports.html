@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Exports · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Data exports</h2>
+      <a class="button-link" href="{{ url_for('web.admin_dashboard') }}">Back to dashboard</a>
+    </div>
+    <p class="fine-print">Use these tools to take offline snapshots of competition data. Ensure files are stored securely.</p>
+    <div class="export-actions">
+      <div class="export-item">
+        <h3>Database dump</h3>
+        <p class="fine-print">Generates an SQL dump of the IPO database.</p>
+        {% if database_available %}
+          <form method="post" action="{{ url_for('web.admin_export_database') }}">
+            <button type="submit" class="button">Download database SQL</button>
+          </form>
+        {% else %}
+          <p class="field-error">Database exports are only supported for MySQL/MariaDB and SQLite deployments.</p>
+        {% endif %}
+      </div>
+      <div class="export-item">
+        <h3>Teacher portal cards</h3>
+        <p class="fine-print">Reset portal passwords and print individual login cards for teachers.</p>
+        {% if teacher_portal_enabled %}
+          <a class="button" href="{{ url_for('web.admin_teacher_cards_pdf') }}">Download teacher cards PDF</a>
+          <p class="fine-print">Generating cards issues new temporary passwords for every teacher.</p>
+        {% else %}
+          <p class="field-error">Enable the teacher portal in Settings to generate login cards.</p>
+        {% endif %}
+      </div>
+      <div class="export-item">
+        <h3>Essay archive</h3>
+        <p class="fine-print">Download all stored essays with a manifest CSV.</p>
+        <form method="post" action="{{ url_for('web.admin_export_essays') }}">
+          <label class="checkbox" style="margin-bottom: 0.5rem;">
+            <input type="checkbox" name="finalized_only" value="1">
+            Only include finalized essays
+          </label>
+          <button type="submit" class="button">Download essay ZIP</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}

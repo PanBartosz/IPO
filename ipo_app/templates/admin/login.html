@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Sign In · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card" style="max-width: 480px; margin: 3rem auto;">
+    <h2>Admin access</h2>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      {% if next_url %}
+        <input type="hidden" name="next" value="{{ next_url }}">
+      {% endif %}
+      <div class="form-field full-width">
+        {{ form.username.label }}
+        {{ form.username(autocomplete="username") }}
+        {% for error in form.username.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.password.label }}
+        {{ form.password(type="password", autocomplete="current-password") }}
+        {% for error in form.password.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Teacher Message Board · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Teacher message board</h2>
+      <div class="table-actions">
+        {% if is_admin %}
+          <a class="button-link" href="{{ url_for('web.admin_messages') }}">Manage messages</a>
+        {% endif %}
+        <a class="button-link" href="{{ url_for('web.teacher_board_logout') }}">Logout</a>
+      </div>
+    </div>
+    {% if portal_teacher and not is_admin %}
+      <p class="fine-print">
+        Showing announcements for all teachers plus messages addressed to {{ portal_teacher.first_name }} {{ portal_teacher.last_name }}.
+        Use the <a href="{{ url_for('teacher_portal.dashboard') }}">teacher portal</a> for scoring tasks.
+      </p>
+    {% else %}
+      <form method="get" class="board-filter">
+        <div class="filter-group">
+          <label>Priority
+            <select name="priority">
+              <option value="">All</option>
+              {% for priority in priorities %}
+                <option value="{{ priority.value }}"{% if filters.priority == priority.value %} selected{% endif %}>{{ priority.name.title() }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <div class="filter-group">
+          <label>Target teacher
+            <select name="teacher_id">
+              <option value="0"{% if filters.teacher_id == 0 %} selected{% endif %}>Everyone</option>
+              {% for teacher in teachers %}
+                <option value="{{ teacher.id }}"{% if filters.teacher_id == teacher.id %} selected{% endif %}>{{ teacher.first_name }} {{ teacher.last_name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <div class="filter-group">
+          <label>Category
+            <input type="text" name="category" value="{{ filters.category }}" placeholder="Any category">
+          </label>
+        </div>
+        <div class="filter-group">
+          <label>Search
+            <input type="search" name="q" value="{{ filters.q }}" placeholder="Search text">
+          </label>
+        </div>
+        <div class="filter-actions">
+          <button type="submit" class="button secondary">Apply</button>
+          <a href="{{ url_for('web.teacher_board') }}" class="button-link">Reset</a>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+
+  <section class="message-board">
+    {% if messages %}
+      {% for message in messages %}
+        <article class="message-card priority-{{ message.priority.value }}">
+          <header>
+            <h3>{{ message.title }}</h3>
+            <div class="message-tags">
+              <span class="audience-tag">
+                {% if message.deliver_to_all %}
+                  All teachers
+                {% elif message.teacher %}
+                  {{ message.teacher.first_name }} {{ message.teacher.last_name }}
+                {% else %}
+                  Selected teacher
+                {% endif %}
+              </span>
+              <span class="priority-tag">{{ message.priority.name.title() }}</span>
+            </div>
+          </header>
+          <p class="message-body">{{ message.body|replace('\n', '<br>')|safe }}</p>
+          <footer>
+            <div>
+              {% if message.category %}
+                <span class="message-meta">Category: {{ message.category }}</span>
+              {% endif %}
+            </div>
+            <div class="message-timestamp">Posted {{ message.created_at.strftime('%Y-%m-%d %H:%M') if message.created_at else '—' }}</div>
+          </footer>
+        </article>
+      {% endfor %}
+    {% else %}
+      <p class="fine-print" style="margin-top: 1rem;">No active messages at the moment.</p>
+    {% endif %}
+  </section>
+{% endblock %}

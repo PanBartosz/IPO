@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Teacher Portal · IPO{% endblock %}
+
+{% block content %}
+  <section class="portal-hero">
+    <div>
+      <h2>Welcome, {{ teacher.first_name }} {{ teacher.last_name }}</h2>
+      <p class="fine-print">Download essays, save draft scores, and finalize your assessments here.</p>
+    </div>
+    <div class="portal-actions">
+      <a class="button secondary" href="{{ url_for('web.teacher_board') }}">Message board</a>
+      <a class="button" href="{{ url_for('teacher_portal.logout') }}">Sign out</a>
+    </div>
+  </section>
+
+  <section class="portal-summary-grid">
+    <div class="portal-summary-card">
+      <h3>Stage 1 assignments</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ stage1_summary.total }}</li>
+        <li><strong>Finalized:</strong> {{ stage1_summary.finalized }}</li>
+        <li><strong>Draft saved:</strong> {{ stage1_summary.in_progress }}</li>
+        <li><strong>Awaiting student finalization:</strong> {{ stage1_summary.awaiting_finalization }}</li>
+        <li><strong>Awaiting essay upload:</strong> {{ stage1_summary.waiting_upload }}</li>
+        <li><strong>Not started:</strong> {{ stage1_summary.pending }}</li>
+      </ul>
+    </div>
+    <div class="portal-summary-card">
+      <h3>Stage 2 assignments</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ stage2_summary.total }}</li>
+        <li><strong>Finalized:</strong> {{ stage2_summary.finalized }}</li>
+        <li><strong>Draft saved:</strong> {{ stage2_summary.in_progress }}</li>
+        <li><strong>Awaiting student finalization:</strong> {{ stage2_summary.awaiting_finalization }}</li>
+        <li><strong>Awaiting essay upload:</strong> {{ stage2_summary.waiting_upload }}</li>
+        <li><strong>Not started:</strong> {{ stage2_summary.pending }}</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="portal-columns">
+    <section class="portal-assignments">
+      <h3>Stage 1 essays</h3>
+      {% if stage1_entries %}
+        <ul class="portal-assignment-list">
+          {% for entry in stage1_entries %}
+            <li class="portal-assignment-card status-{{ entry.status }}">
+              <header>
+                <div>
+                  <h4>{{ entry.display_label }}</h4>
+                  <p class="fine-print">Group {{ entry.group_label }}</p>
+                </div>
+                <span class="stage-chip">{{ stage_labels[entry.stage] }}</span>
+              </header>
+              <dl class="assignment-meta">
+                <div>
+                  <dt>Status</dt>
+                  <dd>
+                    {{ entry.status_label }}
+                    {% if entry.status_timestamp %}
+                      <div class="fine-print">
+                        {% if entry.status == "finalized" %}
+                          Finalized on {{ entry.status_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                        {% else %}
+                          Updated {{ entry.status_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                        {% endif %}
+                      </div>
+                    {% elif entry.status == "awaiting_finalization" %}
+                      <div class="fine-print">Student must finalize their submission.</div>
+                    {% elif entry.status == "waiting_upload" %}
+                      <div class="fine-print">Awaiting essay upload.</div>
+                    {% endif %}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Score</dt>
+                  <dd>
+                    {% if entry.score_record and entry.score_record.score is not none %}
+                      {{ "%.2f"|format(entry.score_record.score) }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Last update</dt>
+                  <dd>
+                    {% if entry.updated_at %}
+                      {{ entry.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </dd>
+                </div>
+              </dl>
+              <footer>
+                {% if entry.download_url %}
+                  <a class="button secondary" href="{{ entry.download_url }}">Download essay</a>
+                {% endif %}
+                <a class="button" href="{{ url_for('teacher_portal.assignment_detail', assignment_id=entry.assignment_id, stage=entry.stage.value) }}">
+                  Open scoring page
+                </a>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No Stage 1 assignments currently assigned.</p>
+      {% endif %}
+
+      <h3>Stage 2 essays</h3>
+      {% if stage2_entries %}
+        <ul class="portal-assignment-list">
+          {% for entry in stage2_entries %}
+            <li class="portal-assignment-card status-{{ entry.status }}">
+              <header>
+                <div>
+                  <h4>{{ entry.display_label }}</h4>
+                  <p class="fine-print">Group {{ entry.group_label }}</p>
+                </div>
+                <span class="stage-chip">{{ stage_labels[entry.stage] }}</span>
+              </header>
+              <dl class="assignment-meta">
+                <div>
+                  <dt>Status</dt>
+                  <dd>
+                    {{ entry.status_label }}
+                    {% if entry.status_timestamp %}
+                      <div class="fine-print">
+                        {% if entry.status == "finalized" %}
+                          Finalized on {{ entry.status_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                        {% else %}
+                          Updated {{ entry.status_timestamp.strftime('%Y-%m-%d %H:%M') }}
+                        {% endif %}
+                      </div>
+                    {% elif entry.status == "awaiting_finalization" %}
+                      <div class="fine-print">Student must finalize their submission.</div>
+                    {% elif entry.status == "waiting_upload" %}
+                      <div class="fine-print">Awaiting essay upload.</div>
+                    {% endif %}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Score</dt>
+                  <dd>
+                    {% if entry.score_record and entry.score_record.score is not none %}
+                      {{ "%.2f"|format(entry.score_record.score) }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Last update</dt>
+                  <dd>
+                    {% if entry.updated_at %}
+                      {{ entry.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </dd>
+                </div>
+              </dl>
+              <footer>
+                {% if entry.download_url %}
+                  <a class="button secondary" href="{{ entry.download_url }}">Download essay</a>
+                {% endif %}
+                <a class="button" href="{{ url_for('teacher_portal.assignment_detail', assignment_id=entry.assignment_id, stage=entry.stage.value) }}">
+                  Open scoring page
+                </a>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No Stage 2 assignments currently assigned.</p>
+      {% endif %}
+    </section>
+
+    <aside class="portal-board">
+      <h3>Latest announcements</h3>
+      {% if messages %}
+        <ul class="portal-message-list">
+          {% for message in messages %}
+            <li class="portal-message-card priority-{{ message.priority.value }}">
+              <header>
+                <h4>{{ message.title }}</h4>
+                <span class="priority-tag">{{ message.priority.name.title() }}</span>
+              </header>
+              <p>{{ message.body|replace('\n', '<br>')|safe }}</p>
+              <footer>
+                {% if message.category %}
+                  <span class="message-meta">{{ message.category }}</span>
+                {% endif %}
+                <time>{{ message.created_at.strftime('%Y-%m-%d %H:%M') if message.created_at else '—' }}</time>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No announcements yet. Check back later.</p>
+      {% endif %}
+      <a class="button-link" href="{{ url_for('web.teacher_board') }}">View full message archive →</a>
+    </aside>
+  </div>
+{% endblock %}

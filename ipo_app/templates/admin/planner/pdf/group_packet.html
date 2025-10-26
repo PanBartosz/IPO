@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ batch.name }} · Group Packet</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        margin: 24px;
+        color: #111827;
+      }
+      h1, h2, h3 {
+        margin: 0;
+      }
+      h1 {
+        font-size: 1.75rem;
+        margin-bottom: 0.5rem;
+      }
+      h2 {
+        font-size: 1.35rem;
+        margin-top: 2rem;
+      }
+      .meta {
+        margin-bottom: 1.5rem;
+        font-size: 0.95rem;
+        color: #4b5563;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.75rem;
+      }
+      th, td {
+        border: 1px solid #d1d5db;
+        padding: 0.5rem;
+        font-size: 0.95rem;
+      }
+      th {
+        background: #e5e7eb;
+        text-align: left;
+      }
+      .section {
+        page-break-inside: avoid;
+      }
+      .assignments-table td:first-child {
+        width: 10%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>{{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }}</h1>
+    <div class="meta">
+      <p>Status: {{ batch.status.value.title() }} · Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+      <p>Total groups: {{ groups|length }}</p>
+    </div>
+
+    {% for group in groups %}
+      <section class="section">
+        <h2>{{ group.name }} · {{ group.language }}</h2>
+        <p class="meta">Target essays: {{ group.target_essay_load }} · Locked: {{ 'Yes' if group.locked else 'No' }}</p>
+
+        <h3>Readers</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Country</th>
+              <th>Role</th>
+              <th>Languages</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for member in group.members %}
+              <tr>
+                <td>{{ member.teacher.first_name }} {{ member.teacher.last_name }}</td>
+                <td>{{ member.teacher.country }}</td>
+                <td>{{ member.role.value.title() }}{% if not member.active %} (inactive){% endif %}</td>
+                <td>{{ member.teacher.languages }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <h3>Assigned essays</h3>
+        <table class="assignments-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Student</th>
+              <th>Country</th>
+              <th>Language</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for assignment in group.assignments %}
+              <tr>
+                <td>{{ assignment.student.id }}</td>
+                <td>{{ assignment.student.first_name }} {{ assignment.student.last_name }}</td>
+                <td>{{ assignment.student.country }}</td>
+                <td>{{ assignment.student.essay_language }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="4">No essays assigned yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+  </body>
+</html>

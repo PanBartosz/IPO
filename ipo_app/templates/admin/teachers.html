@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "admin/partials/quick_message_modal.html" import render_quick_message_modal %}
+
+{% block title %}Teachers · Admin · IPO{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.0.3/css/dataTables.dataTables.min.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "jquery": "https://cdn.jsdelivr.net/npm/jquery@3.7.1/+esm"
+      }
+    }
+  </script>
+{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Registered teachers</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.export_teachers') }}">Export XLSX</a>
+        {% if teacher_portal_enabled %}
+          <a class="button-link" href="{{ url_for('web.admin_teacher_cards_pdf') }}">Portal cards PDF</a>
+        {% endif %}
+      </div>
+    </div>
+    <table id="teachers-table" class="data-table display">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Country</th>
+          <th>First name</th>
+          <th>Last name</th>
+          <th>Email</th>
+          <th>School</th>
+          <th>Gender</th>
+          <th>Languages</th>
+          <th>IPO veteran</th>
+          <th>Meal preference</th>
+          <th>T-shirt size</th>
+          <th>Delegation leader</th>
+          <th>Special needs</th>
+          <th>Absent</th>
+          <th>Created at</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for teacher in teachers %}
+          <tr>
+            <td>{{ teacher.id }}</td>
+            <td>{{ teacher.country }}</td>
+            <td>{{ teacher.first_name }}</td>
+            <td>{{ teacher.last_name }}</td>
+            <td>{{ teacher.email }}</td>
+            <td>{{ teacher.school }}</td>
+            <td>{{ teacher.gender }}</td>
+            <td>{{ teacher.languages }}</td>
+            <td>{% if teacher.prior_ipo_assessor %}<span class="badge">IPO veteran</span>{% else %}—{% endif %}</td>
+            <td>{{ teacher.meal_preference }}</td>
+            <td>{{ teacher.tshirt_size }}</td>
+            <td>{{ "Yes" if teacher.delegation_leader else "No" }}</td>
+            <td>{{ teacher.special_needs or '—' }}</td>
+            <td>{% if teacher.is_absent %}<span class="status-tag warning">Absent</span>{% else %}—{% endif %}</td>
+            <td>{{ teacher.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="table-actions">
+              <button
+                type="button"
+                class="icon-button message-launch"
+                data-teacher-id="{{ teacher.id }}"
+                data-teacher-name="{{ teacher.first_name }} {{ teacher.last_name }}"
+                aria-label="Message {{ teacher.first_name }} {{ teacher.last_name }}"
+              >
+                Message
+              </button>
+              <a class="button-link" href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}">Edit</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ render_quick_message_modal(quick_message_form, quick_message_templates, quick_message_templates_data) }}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script type="module">
+    import DataTable from 'https://cdn.datatables.net/2.0.3/js/dataTables.mjs';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      new DataTable('#teachers-table', {
+        paging: true,
+        pageLength: 25,
+        lengthMenu: [10, 25, 50, 100],
+        order: [[0, 'desc']],
+        searching: true,
+        info: true,
+        responsive: true,
+        layout: {
+          topStart: 'search',
+          topEnd: 'pageLength',
+          bottomStart: 'info',
+          bottomEnd: 'paging'
+        }
+      });
+    });
+  </script>
+{% endblock %}

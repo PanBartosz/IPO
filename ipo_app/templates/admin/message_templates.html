@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Message Templates · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Message templates</h2>
+      <div class="table-actions">
+        <a class="button-link secondary" href="{{ url_for('web.admin_messages') }}">Back to messages</a>
+        <a class="button-link" href="{{ url_for('web.admin_message_template_new') }}">New template</a>
+      </div>
+    </div>
+    {% if templates %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Default title</th>
+            <th>Category</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for template in templates %}
+            <tr>
+              <td>{{ template.name }}</td>
+              <td>{{ template.title }}</td>
+              <td>{{ template.category or '—' }}</td>
+              <td>{{ template.updated_at.strftime('%Y-%m-%d %H:%M') if template.updated_at else '—' }}</td>
+              <td class="table-actions">
+                <a class="button-link" href="{{ url_for('web.admin_message_template_edit', template_id=template.id) }}">Edit</a>
+                <form method="post" action="{{ url_for('web.admin_message_template_delete', template_id=template.id) }}" onsubmit="return confirm('Delete this template?');">
+                  <button type="submit" class="button-link danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No templates configured yet. <a href="{{ url_for('web.admin_message_template_new') }}">Create the first template.</a></p>
+    {% endif %}
+  </div>
+{% endblock %}

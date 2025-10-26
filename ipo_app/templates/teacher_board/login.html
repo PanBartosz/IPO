@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Teacher Board Login · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card" style="max-width: 420px; margin: 2rem auto;">
+    <h2>Teacher message board login</h2>
+    <p class="fine-print">Enter the password shared by the organizing team to view teacher messages.</p>
+    <form method="post" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.password.label }}
+        {{ form.password(type="password") }}
+        {% for error in form.password.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+  {% if teacher_portal_enabled %}
+    <div class="table-card" style="max-width: 420px; margin: 2rem auto;">
+      <h3>Have individual credentials?</h3>
+      <p class="fine-print">
+        Use your personal username and password to access the full teacher portal, download assigned essays, and submit scores.
+      </p>
+      <a class="button secondary" href="{{ url_for('teacher_portal.login', next=request.args.get('next')) }}">Go to teacher portal</a>
+    </div>
+  {% endif %}
+{% endblock %}
