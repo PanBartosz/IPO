@@ -26,9 +26,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chmod +x /app/entrypoint.sh
+# Keep entrypoint outside the app volume so production deployments
+# that omit the bind mount can still locate it, while dev setups that
+# mount the repository continue to work.
+RUN cp /app/entrypoint.sh /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
 EXPOSE 5000
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
