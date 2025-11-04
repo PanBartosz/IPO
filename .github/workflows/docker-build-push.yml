@@ -35,4 +35,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/panbartosz/ipo:${{ github.sha }}
+          tags: |
+            ghcr.io/panbartosz/ipo:${{ github.sha }}
+            ghcr.io/panbartosz/ipo:latest
