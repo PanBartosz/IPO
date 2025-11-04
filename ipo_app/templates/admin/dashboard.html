@@ -51,6 +51,28 @@
         <li>{{ metrics.students.uploads_complete }} uploaded</li>
         <li>{{ metrics.students.absent }} marked absent</li>
       </ul>
+      <p>
+        <strong>Upload module:</strong>
+        {% if upload_state.enabled %}
+          <span class="status-tag success">Enabled</span>
+        {% else %}
+          <span class="status-tag warning">Disabled</span>
+        {% endif %}
+      </p>
+      <p>
+        <strong>Manual lock:</strong>
+        {% if upload_state.locked %}
+          <span class="status-tag warning">Locked</span>
+        {% else %}
+          <span class="status-tag success">Unlocked</span>
+        {% endif %}
+      </p>
+      <form method="post" action="{{ url_for('web.admin_toggle_upload_lock') }}">
+        <input type="hidden" name="state" value="{{ 'unlock' if upload_state.locked else 'lock' }}">
+        <button type="submit" class="button secondary"{% if not upload_state.enabled %} disabled{% endif %}>
+          {% if upload_state.locked %}Unlock essay uploads{% else %}Lock essay uploads{% endif %}
+        </button>
+      </form>
     </article>
     <article class="dashboard-card">
       <h3>Teachers</h3>

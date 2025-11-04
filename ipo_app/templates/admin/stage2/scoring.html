@@ -34,8 +34,20 @@
       {% endif %}
     </p>
     <p><strong>Scores:</strong> {{ stage1_status.entered_scores }} / {{ stage1_status.expected_scores }}</p>
-    <p><strong>Average:</strong> {{ stage1_status.average_score if stage1_status.average_score is not none else '—' }}</p>
-    <p><strong>Spread:</strong> {{ stage1_status.score_range if stage1_status.score_range is not none else '—' }}</p>
+    <p><strong>Average:</strong>
+      {% if stage1_status.average_score is not none %}
+        {{ "%.2f"|format(stage1_status.average_score) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
+    <p><strong>Spread:</strong>
+      {% if stage1_status.score_range is not none %}
+        {{ "%.2f"|format(stage1_status.score_range) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
     <p><strong>Recommendation:</strong> {{ stage1_status.recommendation }}</p>
     <p>
       <strong>Grading access:</strong>
@@ -316,8 +328,20 @@
   <div class="table-card table-card-wide">
     <h3>Stage 2 status</h3>
     <p><strong>Scores:</strong> {{ stage2_status.entered_scores }} / {{ stage2_status.expected_scores }}</p>
-    <p><strong>Average:</strong> {{ stage2_status.average_score if stage2_status.average_score is not none else '—' }}</p>
-    <p><strong>Spread:</strong> {{ stage2_status.score_range if stage2_status.score_range is not none else '—' }}</p>
+    <p><strong>Average:</strong>
+      {% if stage2_status.average_score is not none %}
+        {{ "%.2f"|format(stage2_status.average_score) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
+    <p><strong>Spread:</strong>
+      {% if stage2_status.score_range is not none %}
+        {{ "%.2f"|format(stage2_status.score_range) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
     <p>
       <strong>Grading access:</strong>
       {% if stage2_global_lock %}

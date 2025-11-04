@@ -15,11 +15,14 @@
       <ul class="help-list">
         <li><strong>Batch</strong> — a Stage 1 reading plan. Only one batch can be published at a time.</li>
         <li><strong>Group</strong> — a reading team (typically 4 teachers) handling a set of essays.</li>
+        <li><strong>Survey</strong> — a questionnaire created under the Surveys tab and assigned to students, teachers, or both.</li>
+        <li><strong>Survey assignment</strong> — an individual student/teacher’s survey entry; shows progress in their portal and on Surveys dashboards.</li>
         <li><strong>Finalized essay</strong> — a student upload locked by the student; cannot be replaced without admin help.</li>
         <li><strong>Finalized score</strong> — a teacher-submitted score locked for the portal until an admin clicks <em>Unlock</em> on the scoring page.</li>
         <li><strong>Extra reader</strong> — an additional evaluator assigned when Stage 1 scores are far apart.</li>
         <li><strong>Admin override</strong> — a score saved by staff (status tags show “Admin entered” or “Admin override”).</li>
         <li><strong>Grading lock</strong> — an admin toggle that pauses score editing for a single student or an entire stage until reopened.</li>
+        <li><strong>Reset link</strong> — an email link that a participant or teacher uses to generate a new portal password. Links expire automatically after 24 hours.</li>
       </ul>
     </section>
 
@@ -40,6 +43,7 @@
         <li>Watch the <strong>Students</strong> and <strong>Teachers</strong> tabs for new entries; edit records if delegations request corrections.</li>
         <li>If automated emails are enabled, confirm SendGrid shows deliveries (spot check participants if unsure).</li>
         <li>Use <strong>Messages</strong> to email broad instructions (e.g., upload deadlines) to all teachers.</li>
+        <li>Use <strong>Communication</strong> for targeted announcements (filter by role/country) and review the SendGrid preview before dispatching.</li>
         <li>The <strong>Dashboard</strong> should show rising counts in the Students/Teachers cards; alerts will flag “students without uploads” once deadlines approach.</li>
       </ol>
     </section>
@@ -76,6 +80,7 @@
         <li>From <strong>Uploads</strong>, choose a student and click “Scores”. Enter or edit each reader’s score. If the spread exceeds 3 points, the app recommends an extra reader; assign one via the same page.</li>
         <li>Status tags highlight progress: <span class="status-tag">Draft saved</span>, <span class="status-tag success">Teacher finalized</span>, <span class="status-tag">Admin entered</span>, <span class="status-tag warning">Admin override</span>, or <span class="status-tag warning">Locked by admin</span>. Click <em>Unlock</em> next to a reader to reopen a finalized score.</li>
         <li>The “Lock assignment grading” button pauses edits for that student; the Dashboard provides global Stage 1/Stage 2 locks when you need a freeze across the board.</li>
+        <li>While a stage lock is active, teachers cannot download essays or submit scores for that stage. Unlock when you are ready for jurors to resume work.</li>
         <li>When all required scores are present, use “Mark Stage 2 qualified” to flag the essay (automatically clears the “Needs extra” tag if average ≥ 7). The save button only logs updates when a score actually changes.</li>
         <li>The Dashboard Stage 1 card updates automatically (completed vs expected scores, pending count, completion percentage).</li>
       </ol>
@@ -86,8 +91,31 @@
       <ol>
         <li>Use the <strong>Stage 2</strong> tab to view promoted essays, average scores, spreads, and Stage 3 recommendations.</li>
         <li>Assign Stage 2 readers and generate Stage 2 packets; workflow mirrors Stage 1. The actions column again offers <em>Unlock</em> to reopen finalized teacher scores and “Lock assignment grading” to pause edits.</li>
+        <li>Stage 2 locks block essay downloads in the teacher portal. Disable the lock once the steering committee or readers should regain access.</li>
+        <li>For steering committee reviews, open <strong>Stage 3 packets</strong> from the Stage 2 header, enter committee member names, select the recommended essays, and download the ad-hoc packets with comment-ready overlays.</li>
         <li>Post logistics updates (ceremony times, translation sessions) via Messages.</li>
         <li>After scoring closes, visit <strong>Exports</strong> to download the SQL dump and essay ZIP (optionally only finalized essays). Store these securely.</li>
+      </ol>
+    </section>
+
+    <section class="help-section">
+      <h3>Grades export</h3>
+      <ul class="help-list">
+        <li>Use <strong>Grades export</strong> to pull anonymised (or named) reports of Stage 1 and Stage 2 scores, with an option to limit the data to Stage 3 recommendations.</li>
+        <li>Filters allow you to select specific countries, include/exclude absent participants, switch between all scores or finalised scores only, and choose whether to keep timestamps.</li>
+        <li>Download Excel workbooks (with optional per-country worksheets) or a PDF summary showing counts, averages, spreads, and reader-level details. A compact table layout is available for both formats.</li>
+        <li>Anonymise students and teachers independently to suit the audience—IDs remain available when you need to share named reports internally.</li>
+      </ul>
+    </section>
+
+    <section class="help-section">
+      <h3>7. Surveys & feedback</h3>
+      <ol>
+        <li>Open the <strong>Surveys</strong> tab to draft questionnaires for teachers, students, or mixed audiences. Add questions (short/long text, multiple choice, select, date) and include help text where needed.</li>
+        <li>When publishing, choose whether to target everyone or select individuals. Survey assignments appear instantly in the student and teacher portals.</li>
+        <li>Enable the “Send notification email” option to deliver the survey invitation using the customizable templates in Settings. Automatic reminders can be issued the same way.</li>
+        <li>Monitor completion status on the Surveys dashboard; you can filter to outstanding responses and export summaries.</li>
+        <li>Respondents see open surveys on their portal home page, can save partial progress, and submit when ready. Locked surveys show in both the admin and portal histories.</li>
       </ol>
     </section>
 
@@ -112,13 +140,15 @@
       <h3>Tab reference</h3>
       <ul class="help-list">
         <li><strong>Planner</strong> — manage Stage 1 batches, groups, assignments, packets. Tools for auto-generation and understaffed warnings.</li>
-        <li><strong>Students</strong> & <strong>Teachers</strong> — browse/edit records; quick “Message” buttons next to teachers.</li>
+        <li><strong>Students</strong> &amp; <strong>Teachers</strong> — browse/edit records, trigger password resets, and access quick “Message” buttons.</li>
         <li><strong>Uploads</strong> — monitor essay status, download PDFs, jump to scoring.</li>
         <li><strong>Stage 2</strong> — monitor promotion candidates, assign Stage 2 readers, generate packets.</li>
+        <li><strong>Surveys</strong> — design questionnaires, publish to selected audiences, issue reminders, and track completion.</li>
         <li><strong>Messages</strong> — compose announcements (with optional email), load templates, archive/restore, view teacher board.</li>
-        <li><strong>Logs</strong> — searchable audit trail for registrations, packets, messages, exports.</li>
+        <li><strong>Communication</strong> — build SendGrid email campaigns with rich-text editor, filter recipients by role/country, preview counts, and inspect send history.</li>
+        <li><strong>Logs</strong> — searchable audit trail for registrations, password resets, packets, messages, exports.</li>
         <li><strong>Exports</strong> — download SQL dump (MySQL/MariaDB via <code>mysqldump</code> or SQLite copy) and essay ZIP with manifest; activity logged.</li>
-        <li><strong>Settings</strong> — configure deadlines, SLA, duplex printing, email automation/templates.</li>
+        <li><strong>Settings</strong> — configure deadlines, SLA, duplex printing, survey/password email templates, automation, and enable/disable the essay upload module.</li>
         <li><strong>Help</strong> — this page.</li>
       </ul>
     </section>
@@ -127,9 +157,9 @@
       <h3>Roles & contingency tips</h3>
       <ul class="help-list">
         <li><strong>Head organizer</strong> — keeps Settings current, monitors Dashboard alerts, approves packet publication.</li>
-        <li><strong>Registration desk</strong> — watches Students/Teachers tabs, corrects data, checks for missing essays.</li>
+        <li><strong>Registration desk</strong> — watches Students/Teachers tabs, corrects data, checks for missing essays, triggers password resets for participants on request.</li>
         <li><strong>Scoring supervisor</strong> — enters reader scores, schedules extra readers, promotes Stage 2 candidates.</li>
-        <li><strong>Communications lead</strong> — posts Messages, confirms SendGrid deliveries, coordinates teacher acknowledgments.</li>
+        <li><strong>Communications lead</strong> — posts Messages, assembles Communication campaigns (with SendGrid previews), schedules survey announcements/reminders, confirms deliveries, coordinates teacher acknowledgments.</li>
         <li><strong>If SendGrid fails</strong> — disable automatic emails in Settings, resend instructions manually; Logs confirm what was attempted.</li>
         <li><strong>If duplex printing misaligns</strong> — verify packet print mode is set appropriately; regenerate packets after changing the setting.</li>
         <li><strong>After exports</strong> — move downloaded SQL/ZIP to encrypted storage; consider deleting temporary backup files from the server.</li>
@@ -140,9 +170,12 @@
       <h3>Additional reminders</h3>
       <ul class="help-list">
         <li>Automated emails only send when both <code>SENDGRID_API_KEY</code> and <code>SENDGRID_FROM_EMAIL</code> are set and the toggle is enabled.</li>
+        <li>Forgot password links are available on student and teacher login pages; resets only apply after the recipient opens the emailed link (tokens expire after 24 hours and are logged).</li>
         <li>Students preview the server-stored PDF, so once marked finished the file exactly matches what teachers receive.</li>
         <li>Packet duplex mode inserts blank pages where needed so duplex printers start each title page and essay on the front side.</li>
         <li>Exports and Messages create audit log entries — consult Logs whenever you need to trace actions.</li>
+        <li>Keep the essay upload module disabled outside the competition window (Admin → Settings) and use the dashboard manual lock when you need a short pause during the upload session.</li>
+        <li>Survey invitations and reminder emails use templates in Settings; update the copy there before publishing a new questionnaire.</li>
         <li>Teacher portal disabled? Locks and unlocks still update internal state; they take effect the moment you re-enable the portal.</li>
         <li>Refer to <code>share/International Philosophy Olympiad Statute.html</code> for official rules and procedures.</li>
       </ul>

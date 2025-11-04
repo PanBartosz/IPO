@@ -3,17 +3,6 @@
 
 {% block title %}Teachers · Admin · IPO{% endblock %}
 
-{% block extra_head %}
-  <link rel="stylesheet" href="https://cdn.datatables.net/2.0.3/css/dataTables.dataTables.min.css">
-  <script type="importmap">
-    {
-      "imports": {
-        "jquery": "https://cdn.jsdelivr.net/npm/jquery@3.7.1/+esm"
-      }
-    }
-  </script>
-{% endblock %}
-
 {% block main_class %}container-wide{% endblock %}
 
 {% block content %}
@@ -66,19 +55,22 @@
             <td>{{ teacher.special_needs or '—' }}</td>
             <td>{% if teacher.is_absent %}<span class="status-tag warning">Absent</span>{% else %}—{% endif %}</td>
             <td>{{ teacher.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="table-actions">
-              <button
-                type="button"
-                class="icon-button message-launch"
-                data-teacher-id="{{ teacher.id }}"
-                data-teacher-name="{{ teacher.first_name }} {{ teacher.last_name }}"
-                aria-label="Message {{ teacher.first_name }} {{ teacher.last_name }}"
-              >
-                Message
-              </button>
-              <a class="button-link" href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}">Edit</a>
-            </td>
-          </tr>
+          <td class="table-actions">
+            <button
+              type="button"
+              class="icon-button message-launch"
+              data-teacher-id="{{ teacher.id }}"
+              data-teacher-name="{{ teacher.first_name }} {{ teacher.last_name }}"
+              aria-label="Message {{ teacher.first_name }} {{ teacher.last_name }}"
+            >
+              Message
+            </button>
+            <a class="button-link" href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}">Edit</a>
+            <form method="post" action="{{ url_for('web.admin_teacher_reset_password', teacher_id=teacher.id) }}" onsubmit="return confirm('Reset portal password for {{ teacher.first_name }} {{ teacher.last_name }}?');">
+              <button type="submit" class="button-link secondary">Reset password</button>
+            </form>
+          </td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -87,20 +79,25 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script type="module">
-    import DataTable from 'https://cdn.datatables.net/2.0.3/js/dataTables.mjs';
-
+  <script
+    src="https://code.jquery.com/jquery-3.7.1.min.js"
+    integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+    crossorigin="anonymous"></script>
+  <link href="https://cdn.datatables.net/v/dt/dt-2.3.4/b-3.2.5/b-colvis-3.2.5/cr-2.1.2/fc-5.0.5/fh-4.0.4/r-3.0.7/sc-2.4.3/sp-2.3.5/sl-3.1.3/datatables.min.css" rel="stylesheet" integrity="sha384-7V4sHeZ5gBkojusGF2JLcv5cLqptUs610odNxbc3x9CDXveYAMGNVAjXEPsu3drR" crossorigin="anonymous">
+  <script src="https://cdn.datatables.net/v/dt/dt-2.3.4/b-3.2.5/b-colvis-3.2.5/cr-2.1.2/fc-5.0.5/fh-4.0.4/r-3.0.7/sc-2.4.3/sp-2.3.5/sl-3.1.3/datatables.min.js" integrity="sha384-SRYEBMMalIqxjYashh81gN6nl6xSAUmF3zogz3k7AUNRFF/5NyVvztDKav+RTweM" crossorigin="anonymous"></script>
+  <script>
     document.addEventListener('DOMContentLoaded', () => {
       new DataTable('#teachers-table', {
         paging: true,
-        pageLength: 25,
+        pageLength: 10,
         lengthMenu: [10, 25, 50, 100],
         order: [[0, 'desc']],
-        searching: true,
-        info: true,
-        responsive: true,
+        responsive: false,
+        scrollX: true,
+        scrollY: 600,
         layout: {
-          topStart: 'search',
+          top1Start: 'search',
+          top2: 'searchPanes',
           topEnd: 'pageLength',
           bottomStart: 'info',
           bottomEnd: 'paging'

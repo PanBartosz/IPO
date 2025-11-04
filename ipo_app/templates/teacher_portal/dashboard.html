@@ -14,6 +14,18 @@
     </div>
   </section>
 
+  {% if stage1_locked or stage2_locked %}
+    <div class="portal-alert warning">
+      {% if stage1_locked and stage2_locked %}
+        Stage 1 and Stage 2 are currently locked by the organizers. Essay downloads and scoring are paused until the lock is lifted.
+      {% elif stage1_locked %}
+        Stage 1 is currently locked by the organizers. Essay downloads and scoring are paused until the lock is lifted.
+      {% elif stage2_locked %}
+        Stage 2 is currently locked by the organizers. Essay downloads and scoring are paused until the lock is lifted.
+      {% endif %}
+    </div>
+  {% endif %}
+
   <section class="portal-summary-grid">
     <div class="portal-summary-card">
       <h3>Stage 1 assignments</h3>
@@ -36,6 +48,16 @@
         <li><strong>Awaiting essay upload:</strong> {{ stage2_summary.waiting_upload }}</li>
         <li><strong>Not started:</strong> {{ stage2_summary.pending }}</li>
       </ul>
+    </div>
+    <div class="portal-summary-card">
+      <h3>Surveys</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ survey_summary.total }}</li>
+        <li><strong>Completed:</strong> {{ survey_summary.completed }}</li>
+        <li><strong>Outstanding:</strong> {{ survey_summary.outstanding }}</li>
+        <li><strong>Closed:</strong> {{ survey_summary.closed }}</li>
+      </ul>
+      <a class="button-link" href="{{ url_for('teacher_portal.surveys') }}">Open survey list →</a>
     </div>
   </section>
 
@@ -202,6 +224,25 @@
         <p class="fine-print">No announcements yet. Check back later.</p>
       {% endif %}
       <a class="button-link" href="{{ url_for('web.teacher_board') }}">View full message archive →</a>
+      <section class="portal-survey-sidebar">
+        <h4>Outstanding surveys</h4>
+        {% if survey_outstanding %}
+          <ul class="portal-survey-mini-list">
+            {% for item in survey_outstanding %}
+              <li>
+                <span>{{ item.survey.title }}</span>
+                {% if item.survey.close_at %}
+                  <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+                <a class="button secondary" href="{{ item.detail_url }}">Respond</a>
+              </li>
+            {% endfor %}
+          </ul>
+          <a class="button-link" href="{{ url_for('teacher_portal.surveys') }}">See all surveys →</a>
+        {% else %}
+          <p class="fine-print">All surveys completed. Thank you!</p>
+        {% endif %}
+      </section>
     </aside>
   </div>
 {% endblock %}

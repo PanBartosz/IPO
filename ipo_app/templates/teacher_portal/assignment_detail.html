@@ -20,6 +20,8 @@
           <span class="button disabled">
             {% if status_info.code == "awaiting_finalization" %}
               Awaiting student finalization
+            {% elif status_info.code == "locked" %}
+              Stage locked by admins
             {% else %}
               Essay not available yet
             {% endif %}

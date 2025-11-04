@@ -6,6 +6,15 @@
   <div class="table-card" style="max-width: 480px; margin: 2rem auto;">
     <h2>Upload login</h2>
     <p>Please use the personal username and password from your participant card.</p>
+    {% if not upload_module_enabled %}
+      <div class="portal-alert warning" style="margin-bottom: 1rem;">
+        Essay uploads are currently disabled. The organizers will enable this portal during the competition window.
+      </div>
+    {% elif upload_locked %}
+      <div class="portal-alert warning" style="margin-bottom: 1rem;">
+        Essay uploads are temporarily locked by the organizing team. Please try again soon.
+      </div>
+    {% endif %}
     <form method="post" class="form-grid" novalidate>
       {{ form.hidden_tag() }}
       <div class="form-field full-width">
@@ -26,5 +35,8 @@
         {{ form.submit(class_="button") }}
       </div>
     </form>
+    <p class="fine-print" style="margin-top: 1rem;">
+      <a href="{{ url_for('web.student_reset_password_request') }}">Forgot your password?</a>
+    </p>
   </div>
 {% endblock %}

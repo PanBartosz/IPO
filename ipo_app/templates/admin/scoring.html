@@ -10,7 +10,7 @@
     <div class="table-header">
       <h2>Scores · {{ student.first_name }} {{ student.last_name }}</h2>
       <div class="table-actions">
-        <a class="button-link" href="{{ url_for('web.admin_uploads') }}">Back to uploads</a>
+        <a class="button-link" href="{{ url_for('web.admin_uploads') }}">Back to Stage 1</a>
         <a class="button-link" href="{{ url_for('web.admin_extra_reader_packet', assignment_id=assignment.id) }}">Extra reader packet</a>
       </div>
     </div>
@@ -169,8 +169,20 @@
   <div class="table-card table-card-wide">
     <h3>Stage 1 status</h3>
     <p><strong>Entered scores:</strong> {{ status.entered_scores }} / {{ status.expected_scores }}</p>
-    <p><strong>Average:</strong> {{ status.average_score if status.average_score is not none else '—' }}</p>
-    <p><strong>Maximum difference:</strong> {{ status.score_range if status.score_range is not none else '—' }}</p>
+    <p><strong>Average:</strong>
+      {% if status.average_score is not none %}
+        {{ "%.2f"|format(status.average_score) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
+    <p><strong>Maximum difference:</strong>
+      {% if status.score_range is not none %}
+        {{ "%.2f"|format(status.score_range) }}
+      {% else %}
+        —
+      {% endif %}
+    </p>
     <p><strong>Recommended action:</strong> {{ status.recommendation }}</p>
     <p>
       <strong>Grading access:</strong>

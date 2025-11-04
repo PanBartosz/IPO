@@ -576,7 +576,7 @@ def _unique_email(base: str, domain: str, cache: dict[str, int]) -> str:
 
 def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
     base = f"{_slugify(entry['first'])}.{_slugify(entry['last'])}"
-    email = _unique_email(base, "ipo.test", _teacher_email_counts)
+    email = _unique_email(base, "ipo.ts", _teacher_email_counts)
     teacher = Teacher(
         first_name=entry["first"],
         last_name=entry["last"],
@@ -598,7 +598,7 @@ def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
 
 def create_student(entry: dict, language: str, index: int) -> Student:
     base = f"{_slugify(entry['first'])}.{_slugify(entry['last'])}"
-    email = _unique_email(base, "school.test", _student_email_counts)
+    email = _unique_email(base, "school.ts", _student_email_counts)
     birth_year = 2006 if index % 2 == 0 else 2005
     student = Student(
         first_name=entry["first"],

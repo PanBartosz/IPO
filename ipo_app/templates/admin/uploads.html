@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Essay Uploads · Admin{% endblock %}
+{% block title %}Stage 1 · Admin{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="https://cdn.datatables.net/2.0.3/css/dataTables.dataTables.min.css">
@@ -26,7 +26,7 @@
 
   <div class="table-card table-card-wide">
     <div class="table-header">
-      <h2>Essay uploads overview</h2>
+      <h2>Stage 1 overview</h2>
       <div class="table-actions">
         <a class="button-link" href="{{ url_for('web.admin_student_cards_pdf') }}">Participant cards PDF</a>
       </div>
@@ -41,12 +41,16 @@
           <th>Username</th>
           <th>Essay status</th>
           <th>Uploaded at</th>
+          <th>Stage 1 scores</th>
+          <th>Stage 1 avg</th>
+          <th>Stage 1 spread</th>
           <th>Stage 1 status</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for student in students %}
+          {% set status = status_map[student.id] %}
           <tr>
             <td>{{ student.id }}</td>
             <td>{{ student.first_name }} {{ student.last_name }}</td>
@@ -69,12 +73,27 @@
                 —
               {% endif %}
             </td>
+            <td>{{ status.entered_scores }}/{{ status.expected_scores }}</td>
             <td>
-              {% if status_map[student.id].stage_two %}
+              {% if status.average_score is not none %}
+                {{ "%.2f"|format(status.average_score) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if status.score_range is not none %}
+                {{ "%.2f"|format(status.score_range) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if status.stage_two %}
                 <span class="status-tag">Stage 2</span>
-              {% elif status_map[student.id].needs_extra %}
+              {% elif status.needs_extra %}
                 <span class="status-tag warning">Needs extra reader</span>
-              {% elif status_map[student.id].completed %}
+              {% elif status.completed %}
                 <span class="status-tag">Stage 1 complete</span>
               {% else %}
                 <span class="status-tag warning">Incomplete</span>

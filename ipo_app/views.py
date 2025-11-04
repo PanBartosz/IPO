@@ -2,13 +2,17 @@ import csv
 import io
 import math
 import os
+import re
 import secrets
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta
+from html import unescape
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Iterable, Callable, Any, Optional
 
 from flask import (
     Blueprint,
@@ -25,11 +29,12 @@ from flask import (
     session,
     url_for,
 )
-from sqlalchemy import or_, cast, String
+from sqlalchemy import or_, cast, String, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.engine.url import make_url
 from openpyxl import Workbook
+from openpyxl.styles import Font
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -52,11 +57,22 @@ from .forms import (
     TeacherRegistrationForm,
     DashboardSettingsForm,
     TeacherMessageForm,
-   TeacherMessageTemplateForm,
-   QuickTeacherMessageForm,
-   TeacherBoardLoginForm,
+    TeacherMessageTemplateForm,
+    QuickTeacherMessageForm,
+    TeacherBoardLoginForm,
     TeacherPortalLoginForm,
     TeacherScoreForm,
+    SurveyForm,
+    SurveyQuestionForm,
+    SurveyPublishForm,
+    SurveyResponseForm,
+    PasswordResetRequestForm,
+    PasswordResetConfirmForm,
+    CommunicationComposeForm,
+    CommunicationSendForm,
+    CommunicationRetryForm,
+    Stage3PacketForm,
+    GradesExportForm,
     LANGUAGE_CHOICES,
 )
 from .models import (
@@ -78,6 +94,22 @@ from .models import (
     TeacherMessagePriority,
     TeacherMessageStatus,
     TeacherMessageTemplate,
+    Survey,
+    SurveyAssignment,
+    SurveyAssignmentStatus,
+    SurveyAudience,
+    SurveyQuestion,
+    SurveyQuestionType,
+    SurveyResponse,
+    SurveyStatus,
+    PasswordResetAudience,
+    PasswordResetToken,
+    CommunicationCampaign,
+    CommunicationStatus,
+    CommunicationAudience,
+    CommunicationRecipient,
+    CommunicationRecipientRole,
+    CommunicationRecipientStatus,
 )
 
 web_bp = Blueprint("web", __name__)
@@ -89,9 +121,12 @@ ADMIN_MODULES = [
     ("Planner", "web.admin_planner"),
     ("Students", "web.admin_students"),
     ("Teachers", "web.admin_teachers"),
-    ("Uploads", "web.admin_uploads"),
+    ("Stage 1", "web.admin_uploads"),
     ("Stage 2", "web.admin_stage2_overview"),
     ("Messages", "web.admin_messages"),
+    ("Communication", "web.admin_communications"),
+    ("Grades export", "web.admin_grades_export"),
+    ("Surveys", "web.admin_surveys"),
     ("Logs", "web.admin_logs"),
     ("Exports", "web.admin_exports"),
     ("Help", "web.admin_help"),
@@ -100,6 +135,7 @@ ADMIN_MODULES = [
 
 
 LOG_PAGE_SIZE = 100
+RESET_TOKEN_EXPIRY_HOURS = 24
 
 
 SETTING_EMAIL_AUTOMATION_ENABLED = "email_auto_enabled"
@@ -109,12 +145,30 @@ SETTING_EMAIL_TEACHER_SUBJECT = "email_teacher_subject"
 SETTING_EMAIL_TEACHER_BODY = "email_teacher_body"
 SETTING_EMAIL_MESSAGE_SUBJECT = "email_message_subject"
 SETTING_EMAIL_MESSAGE_BODY = "email_message_body"
+SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT = "email_student_reset_link_subject"
+SETTING_EMAIL_STUDENT_RESET_LINK_BODY = "email_student_reset_link_body"
+SETTING_EMAIL_STUDENT_RESET_SUBJECT = "email_student_reset_subject"
+SETTING_EMAIL_STUDENT_RESET_BODY = "email_student_reset_body"
+SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT = "email_teacher_reset_link_subject"
+SETTING_EMAIL_TEACHER_RESET_LINK_BODY = "email_teacher_reset_link_body"
+SETTING_EMAIL_TEACHER_RESET_SUBJECT = "email_teacher_reset_subject"
+SETTING_EMAIL_TEACHER_RESET_BODY = "email_teacher_reset_body"
+SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT = "email_survey_publish_subject"
+SETTING_EMAIL_SURVEY_PUBLISH_BODY = "email_survey_publish_body"
+SETTING_EMAIL_SURVEY_REMINDER_SUBJECT = "email_survey_reminder_subject"
+SETTING_EMAIL_SURVEY_REMINDER_BODY = "email_survey_reminder_body"
 SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
 
 DEFAULT_EMAIL_SUBJECTS = {
     SETTING_EMAIL_STUDENT_SUBJECT: "IPO registration confirmed for {{ first_name }} {{ last_name }}",
     SETTING_EMAIL_TEACHER_SUBJECT: "IPO teacher registration confirmed for {{ first_name }} {{ last_name }}",
     SETTING_EMAIL_MESSAGE_SUBJECT: "New IPO teacher board message: {{ title }}",
+    SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT: "Reset your IPO portal password",
+    SETTING_EMAIL_STUDENT_RESET_SUBJECT: "IPO portal password reset",
+    SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT: "Reset your IPO teacher portal password",
+    SETTING_EMAIL_TEACHER_RESET_SUBJECT: "IPO teacher portal password reset",
+    SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT: "New survey: {{ survey_title }}",
+    SETTING_EMAIL_SURVEY_REMINDER_SUBJECT: "Reminder: please complete {{ survey_title }}",
 }
 
 DEFAULT_EMAIL_BODIES = {
@@ -129,6 +183,13 @@ DEFAULT_EMAIL_BODIES = {
   <li><strong>Meal preference:</strong> {{ meal_preference }}</li>
   {% if special_needs %}<li><strong>Special needs:</strong> {{ special_needs }}</li>{% endif %}
 </ul>
+<p>Your essay upload portal credentials:</p>
+<ul>
+  <li><strong>Username:</strong> {{ portal_username }}</li>
+  <li><strong>Password:</strong> {{ portal_password }}</li>
+</ul>
+<p>You can access the portal here: <a href="{{ portal_link }}">{{ portal_link }}</a><br>
+Login directly: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
 <p>If any information changes, please contact the organizing team as soon as possible.</p>
 <p>We are looking forward to seeing you at the Olympiad!</p>
 """,
@@ -145,14 +206,71 @@ DEFAULT_EMAIL_BODIES = {
   <li><strong>Delegation leader:</strong> {{ 'Yes' if delegation_leader else 'No' }}</li>
   <li><strong>Prior IPO assessor:</strong> {{ 'Yes' if prior_ipo_assessor else 'No' }}</li>
 </ul>
+<p>Your teacher portal credentials:</p>
+<ul>
+  <li><strong>Username:</strong> {{ portal_username }}</li>
+  <li><strong>Password:</strong> {{ portal_password }}</li>
+</ul>
+<p>Access the portal: <a href="{{ portal_link }}">{{ portal_link }}</a><br>
+Login page: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
 <p>We appreciate your support and participation. Please reach out if anything needs to be updated.</p>
 """,
     SETTING_EMAIL_MESSAGE_BODY: """
 <p>Hello {{ teacher_first_name }} {{ teacher_last_name }},</p>
 <p>A new message has been posted on the IPO teacher board.</p>
-<p><strong>{{ title }}</strong><br>{{ body|replace('\n', '<br>') }}</p>
+<p><strong>{{ title }}</strong><br>{{ body|replace('\\n', '<br>') }}</p>
 <p>Priority: {{ priority|title }}</p>
 <p>You can also read this message online: <a href="{{ board_url }}">Teacher Board</a>.</p>
+""",
+    SETTING_EMAIL_STUDENT_RESET_LINK_BODY: """
+<p>Hello {{ first_name }} {{ last_name }},</p>
+<p>We received a request to reset your IPO essay upload portal password. Please use the link below within the next 24 hours to continue:</p>
+<p><a href="{{ reset_link }}">Reset your password</a></p>
+<p>If you did not request this change, you can safely ignore this email — your password will remain the same.</p>
+<p>Upload login page: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
+<p>This link expires automatically after 24 hours for security.</p>
+""",
+    SETTING_EMAIL_STUDENT_RESET_BODY: """
+<p>Hello {{ first_name }} {{ last_name }},</p>
+<p>Your IPO essay upload portal password has been reset.</p>
+<ul>
+  <li><strong>Username:</strong> {{ portal_username }}</li>
+  <li><strong>New password:</strong> {{ portal_password }}</li>
+</ul>
+<p>Access the portal: <a href="{{ portal_link }}">{{ portal_link }}</a><br>
+Login page: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
+""",
+    SETTING_EMAIL_TEACHER_RESET_LINK_BODY: """
+<p>Hello {{ first_name }} {{ last_name }},</p>
+<p>We received a request to reset your IPO teacher portal password. Use the link below within the next 24 hours to continue:</p>
+<p><a href="{{ reset_link }}">Reset your password</a></p>
+<p>If you did not request this, simply ignore this email and your password will stay the same.</p>
+<p>Teacher portal login: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
+<p>This link expires automatically after 24 hours.</p>
+""",
+    SETTING_EMAIL_TEACHER_RESET_BODY: """
+<p>Hello {{ first_name }} {{ last_name }},</p>
+<p>Your IPO teacher portal password has been reset.</p>
+<ul>
+  <li><strong>Username:</strong> {{ portal_username }}</li>
+  <li><strong>New password:</strong> {{ portal_password }}</li>
+</ul>
+<p>Visit the portal: <a href="{{ portal_link }}">{{ portal_link }}</a><br>
+Login page: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
+""",
+    SETTING_EMAIL_SURVEY_PUBLISH_BODY: """
+<p>Hello {{ recipient_name }},</p>
+<p>A new survey has been published for you: <strong>{{ survey_title }}</strong>.</p>
+{% if survey_description %}<p>{{ survey_description }}</p>{% endif %}
+{% if survey_deadline %}<p><strong>Deadline:</strong> {{ survey_deadline }}</p>{% endif %}
+<p><a href="{{ survey_link }}">Open this survey</a> or visit your portal: <a href="{{ portal_link }}">{{ portal_link }}</a>.</p>
+""",
+    SETTING_EMAIL_SURVEY_REMINDER_BODY: """
+<p>Hello {{ recipient_name }},</p>
+<p>This is a friendly reminder to complete the survey <strong>{{ survey_title }}</strong>.</p>
+{% if survey_description %}<p>{{ survey_description }}</p>{% endif %}
+{% if survey_deadline %}<p><strong>Deadline:</strong> {{ survey_deadline }}</p>{% endif %}
+<p><a href="{{ survey_link }}">Resume the survey</a> or visit your portal: <a href="{{ portal_link }}">{{ portal_link }}</a>.</p>
 """,
 }
 
@@ -178,6 +296,8 @@ SETTING_STAGE1_SLA = "dashboard_stage1_sla_hours"
 SETTING_STAGE2_SLA = "dashboard_stage2_sla_hours"
 SETTING_STAGE1_LOCK = "grading_stage1_locked"
 SETTING_STAGE2_LOCK = "grading_stage2_locked"
+SETTING_UPLOAD_MODULE_ENABLED = "essay_upload_enabled"
+SETTING_UPLOAD_LOCK = "upload_locked"
 SETTING_PACKET_PRINT_MODE = "packet_print_mode"
 
 UPLOAD_ALLOWED_EXTENSIONS = {"pdf"}
@@ -210,6 +330,7 @@ def inject_globals():
         "ADMIN_MODULES": ADMIN_MODULES,
         "admin_modules": ADMIN_MODULES,
         "teacher_portal_enabled": _teacher_portal_enabled(),
+        "essay_upload_enabled": _is_upload_module_enabled(),
     }
 
 
@@ -327,6 +448,198 @@ def _filtered_activity_logs(filters: dict):
     return query
 
 
+def _communication_country_choices() -> list[tuple[str, str]]:
+    countries: set[str] = set()
+    teacher_rows = (
+        db.session.query(Teacher.country)
+        .filter(Teacher.country.isnot(None))
+        .distinct()
+    )
+    for (country,) in teacher_rows:
+        if country:
+            countries.add(country.strip())
+    student_rows = (
+        db.session.query(Student.country)
+        .filter(Student.country.isnot(None))
+        .distinct()
+    )
+    for (country,) in student_rows:
+        if country:
+            countries.add(country.strip())
+    return sorted((country, country) for country in countries if country)
+
+
+def _build_campaign_recipients(
+    audience: CommunicationAudience,
+    countries: list[str],
+    include_absent: bool,
+) -> list[CommunicationRecipient]:
+    selected_countries = {country.strip() for country in countries or [] if country and country.strip()}
+    filter_by_country = bool(selected_countries)
+    recipients: list[CommunicationRecipient] = []
+    seen_emails: set[str] = set()
+
+    def add_recipient(recipient: CommunicationRecipient) -> None:
+        email = (recipient.email or "").strip()
+        if not email:
+            return
+        normalized_email = email.lower()
+        if normalized_email in seen_emails:
+            return
+        seen_emails.add(normalized_email)
+        recipient.email = email
+        recipients.append(recipient)
+
+    include_teachers = audience in {CommunicationAudience.TEACHER, CommunicationAudience.BOTH}
+    include_students = audience in {CommunicationAudience.STUDENT, CommunicationAudience.BOTH}
+
+    if include_teachers:
+        teacher_query = Teacher.query
+        if filter_by_country:
+            teacher_query = teacher_query.filter(Teacher.country.in_(selected_countries))
+        if not include_absent:
+            teacher_query = teacher_query.filter(Teacher.is_absent.is_(False))
+        teacher_query = teacher_query.order_by(Teacher.country.asc(), Teacher.last_name.asc())
+        for teacher in teacher_query:
+            recipient = CommunicationRecipient(
+                role=CommunicationRecipientRole.TEACHER,
+                teacher_id=teacher.id,
+                email=teacher.email,
+                first_name=teacher.first_name,
+                last_name=teacher.last_name,
+                country=teacher.country,
+                status=CommunicationRecipientStatus.PENDING,
+            )
+            add_recipient(recipient)
+
+    if include_students:
+        student_query = Student.query
+        if filter_by_country:
+            student_query = student_query.filter(Student.country.in_(selected_countries))
+        if not include_absent:
+            student_query = student_query.filter(Student.is_absent.is_(False))
+        student_query = student_query.order_by(Student.country.asc(), Student.last_name.asc())
+        for student in student_query:
+            recipient = CommunicationRecipient(
+                role=CommunicationRecipientRole.STUDENT,
+                student_id=student.id,
+                email=student.email,
+                first_name=student.first_name,
+                last_name=student.last_name,
+                country=student.country,
+                status=CommunicationRecipientStatus.PENDING,
+            )
+            add_recipient(recipient)
+
+    return recipients
+
+
+def _campaign_recipient_stats(campaign_ids: Iterable[int]) -> dict[int, dict[str, int]]:
+    ids = [int(campaign_id) for campaign_id in campaign_ids]
+    if not ids:
+        return {}
+    rows = (
+        db.session.query(
+            CommunicationRecipient.campaign_id,
+            CommunicationRecipient.status,
+            func.count(CommunicationRecipient.id),
+        )
+        .filter(CommunicationRecipient.campaign_id.in_(ids))
+        .group_by(CommunicationRecipient.campaign_id, CommunicationRecipient.status)
+        .all()
+    )
+    stats: dict[int, dict[str, int]] = {campaign_id: {} for campaign_id in ids}
+    for campaign_id, status, count in rows:
+        stats.setdefault(campaign_id, {})
+        stats[campaign_id][status.value if hasattr(status, "value") else status] = count
+    return stats
+
+
+def _campaign_role_counts(campaign: CommunicationCampaign) -> dict[str, int]:
+    counts = {
+        CommunicationRecipientRole.TEACHER.value: 0,
+        CommunicationRecipientRole.STUDENT.value: 0,
+    }
+    for recipient in campaign.recipients:
+        counts[recipient.role.value] = counts.get(recipient.role.value, 0) + 1
+    return counts
+
+
+def _campaign_sample_recipients(
+    campaign: CommunicationCampaign,
+    limit: int = 10,
+) -> list[CommunicationRecipient]:
+    return campaign.recipients[:limit]
+
+
+def _deliver_campaign(
+    campaign: CommunicationCampaign,
+    *,
+    only_failed: bool = False,
+) -> dict[str, int]:
+    if not _sendgrid_configured():
+        return {"sent": 0, "failed": 0, "skipped": len(campaign.recipients)}
+
+    target_status = (
+        CommunicationRecipientStatus.FAILED
+        if only_failed
+        else CommunicationRecipientStatus.PENDING
+    )
+    recipients = [
+        recipient
+        for recipient in campaign.recipients
+        if recipient.status == target_status
+    ]
+    if not recipients:
+        return {"sent": 0, "failed": 0, "skipped": 0}
+
+    sent = 0
+    failed = 0
+    for recipient in recipients:
+        success, message_id, error = _send_email(
+            recipient.email,
+            campaign.subject,
+            campaign.html_body,
+            plain_text_content=campaign.text_body or None,
+        )
+        if success:
+            recipient.status = CommunicationRecipientStatus.SENT
+            recipient.sent_at = datetime.utcnow()
+            recipient.message_id = message_id
+            recipient.error = None
+            sent += 1
+        else:
+            recipient.status = CommunicationRecipientStatus.FAILED
+            recipient.sent_at = None
+            recipient.message_id = None
+            recipient.error = error or "unknown-error"
+            failed += 1
+
+    campaign.sent_count = sum(
+        1
+        for recipient in campaign.recipients
+        if recipient.status == CommunicationRecipientStatus.SENT
+    )
+    campaign.failed_count = sum(
+        1
+        for recipient in campaign.recipients
+        if recipient.status == CommunicationRecipientStatus.FAILED
+    )
+    campaign.total_recipients = len(campaign.recipients)
+
+    if campaign.sent_count and not campaign.sent_at:
+        campaign.sent_at = datetime.utcnow()
+
+    if campaign.failed_count and campaign.sent_count:
+        campaign.status = CommunicationStatus.FAILED
+    elif campaign.failed_count:
+        campaign.status = CommunicationStatus.FAILED
+    else:
+        campaign.status = CommunicationStatus.SENT
+
+    return {"sent": sent, "failed": failed, "skipped": 0}
+
+
 def _teacher_can_grade(student: Student, teacher: Teacher, language: str | None) -> bool:
     if not teacher or teacher.is_absent:
         return False
@@ -439,6 +752,9 @@ def _ensure_teacher_portal_credentials(teacher: Teacher, *, reset_password: bool
         plain_password = secrets.token_urlsafe(8)
         teacher.portal_password_hash = generate_password_hash(plain_password)
         teacher.portal_token = _generate_unique_teacher_token()
+        teacher.__dict__["_plain_portal_password"] = plain_password
+    elif "_plain_portal_password" in teacher.__dict__:
+        teacher.__dict__.pop("_plain_portal_password", None)
 
     if username_generated or plain_password is not None:
         db.session.flush()
@@ -448,6 +764,83 @@ def _ensure_teacher_portal_credentials(teacher: Teacher, *, reset_password: bool
 
 def _slugify(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _generate_reset_token_value() -> str:
+    for _ in range(10):
+        token_candidate = secrets.token_urlsafe(32)[:64]
+        existing = PasswordResetToken.query.filter(PasswordResetToken.token == token_candidate).first()
+        if not existing:
+            return token_candidate
+    raise RuntimeError("Unable to generate unique password reset token")
+
+
+def _invalidate_open_reset_tokens(
+    audience: PasswordResetAudience, *, student_id: int | None = None, teacher_id: int | None = None
+) -> None:
+    query = PasswordResetToken.query.filter(
+        PasswordResetToken.audience == audience,
+        PasswordResetToken.used_at.is_(None),
+    )
+    if student_id is not None:
+        query = query.filter(PasswordResetToken.student_id == student_id)
+    if teacher_id is not None:
+        query = query.filter(PasswordResetToken.teacher_id == teacher_id)
+
+    for entry in query:
+        entry.used_at = datetime.utcnow()
+
+
+def _create_student_reset_token(student: Student) -> PasswordResetToken:
+    _invalidate_open_reset_tokens(PasswordResetAudience.STUDENT, student_id=student.id)
+    reset_token = PasswordResetToken(
+        audience=PasswordResetAudience.STUDENT,
+        student=student,
+        token=_generate_reset_token_value(),
+        expires_at=datetime.utcnow() + timedelta(hours=RESET_TOKEN_EXPIRY_HOURS),
+    )
+    db.session.add(reset_token)
+    return reset_token
+
+
+def _create_teacher_reset_token(teacher: Teacher) -> PasswordResetToken:
+    _invalidate_open_reset_tokens(PasswordResetAudience.TEACHER, teacher_id=teacher.id)
+    reset_token = PasswordResetToken(
+        audience=PasswordResetAudience.TEACHER,
+        teacher=teacher,
+        token=_generate_reset_token_value(),
+        expires_at=datetime.utcnow() + timedelta(hours=RESET_TOKEN_EXPIRY_HOURS),
+    )
+    db.session.add(reset_token)
+    return reset_token
+
+
+def _load_reset_token(token_value: str, audience: PasswordResetAudience) -> PasswordResetToken | None:
+    return (
+        PasswordResetToken.query.options(
+            joinedload(PasswordResetToken.student),
+            joinedload(PasswordResetToken.teacher),
+        )
+        .filter(
+            PasswordResetToken.token == token_value,
+            PasswordResetToken.audience == audience,
+        )
+        .first()
+    )
+
+
+def _reset_token_status(entry: PasswordResetToken | None) -> tuple[bool, str | None]:
+    if not entry:
+        return False, "invalid"
+    if entry.used_at is not None:
+        return False, "used"
+    if entry.expires_at < datetime.utcnow():
+        return False, "expired"
+    if entry.audience == PasswordResetAudience.STUDENT and not entry.student:
+        return False, "invalid"
+    if entry.audience == PasswordResetAudience.TEACHER and not entry.teacher:
+        return False, "invalid"
+    return True, None
 
 
 def _get_upload_folder() -> Path:
@@ -654,13 +1047,15 @@ def _teacher_portal_assignments(teacher: Teacher, stage: Stage) -> list[SimpleNa
             status_timestamp=status_info.timestamp,
             updated_at=score_record.updated_at if score_record else None,
             finalized=bool(score_record.teacher_finalized) if score_record else False,
-            download_url=url_for(
-                "teacher_portal.download_assignment",
-                assignment_id=assignment.id,
-                stage=stage.value,
-            )
-            if essay_available
-            else None,
+            download_url=(
+                url_for(
+                    "teacher_portal.download_assignment",
+                    assignment_id=assignment.id,
+                    stage=stage.value,
+                )
+                if essay_available and not (assignment_locked or global_stage_locked)
+                else None
+            ),
         )
         entries.append(entry)
 
@@ -710,6 +1105,401 @@ def _stage_assessors(assignment: EssayAssignment | None, stage: Stage, include_g
         seen.add(teacher.id)
 
     return assessors
+
+
+GRADE_STAGE_SLOTS = {
+    Stage.STAGE_1.value: 5,
+    Stage.STAGE_2.value: 2,
+}
+
+
+def _grade_score_stats(values: list[float]) -> dict[str, float | int | None]:
+    if not values:
+        return {"count": 0, "average": None, "spread": None}
+    count = len(values)
+    average = sum(values) / count
+    spread = max(values) - min(values) if count >= 2 else 0.0
+    return {"count": count, "average": average, "spread": spread}
+
+
+def _grade_export_rows(
+    *,
+    selected_stages: set[Stage],
+    stage3_only: bool,
+    countries: set[str] | None,
+    include_absent: bool,
+    finalized_only: bool,
+) -> list[dict]:
+    query = (
+        db.session.query(
+            EssayScore,
+            EssayAssignment,
+            Student,
+            Teacher,
+        )
+        .join(EssayAssignment, EssayScore.assignment_id == EssayAssignment.id)
+        .join(Student, EssayAssignment.student_id == Student.id)
+        .join(Teacher, EssayScore.teacher_id == Teacher.id)
+        .filter(EssayScore.score.isnot(None))
+    )
+
+    if not include_absent:
+        query = query.filter(Student.is_absent.is_(False))
+    if finalized_only:
+        query = query.filter(EssayScore.teacher_finalized.is_(True))
+    if countries:
+        query = query.filter(Student.country.in_(countries))
+
+    rows: list[dict] = []
+    for score_record, assignment, student, teacher in query:
+        stage_enum: Stage = score_record.stage
+        if stage_enum not in selected_stages:
+            continue
+        if stage_enum == Stage.STAGE_2 and not assignment.stage_two_candidate:
+            continue
+        rows.append(
+            {
+                "student_id": student.id,
+                "student_name": f"{student.first_name} {student.last_name}",
+                "student_country": student.country or "",
+                "student_absent": bool(student.is_absent),
+                "stage": stage_enum,
+                "score": float(score_record.score) if score_record.score is not None else None,
+                "finalized": bool(score_record.teacher_finalized),
+                "submitted_at": score_record.submitted_at,
+                "updated_at": score_record.updated_at,
+                "teacher_id": teacher.id,
+                "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+                "teacher_country": teacher.country or "",
+                "assignment_id": assignment.id,
+                "stage_two_candidate": bool(assignment.stage_two_candidate),
+                "stage_three_recommended": bool(assignment.stage_three_recommended),
+            }
+        )
+
+    if stage3_only:
+        rows = [row for row in rows if row["stage_three_recommended"]]
+    return rows
+
+
+def _summarize_grade_rows(rows: list[dict]) -> list[dict]:
+    students: dict[int, dict] = {}
+    for row in rows:
+        student_entry = students.setdefault(
+            row["student_id"],
+            {
+                "student_id": row["student_id"],
+                "student_name": row["student_name"],
+                "student_country": row["student_country"],
+                "recommended": False,
+                "stages": {},
+                "all_scores": [],
+            },
+        )
+        stage_enum: Stage = row["stage"]
+        stage_key = stage_enum.value
+        stage_bucket = student_entry["stages"].setdefault(
+            stage_key,
+            {"scores": [], "values": []},
+        )
+        stage_bucket["scores"].append(row)
+        if row["score"] is not None:
+            stage_bucket["values"].append(row["score"])
+            student_entry["all_scores"].append(row["score"])
+        if row["stage_three_recommended"]:
+            student_entry["recommended"] = True
+
+    summarized: list[dict] = []
+    for entry in students.values():
+        stage_summary: dict[str, dict] = {}
+        for stage_key, data in entry["stages"].items():
+            stats = _grade_score_stats(data["values"])
+            sorted_scores = sorted(
+                data["scores"],
+                key=lambda item: (
+                    item["teacher_id"],
+                    item["submitted_at"] or item["updated_at"] or datetime.min,
+                ),
+            )
+            for index, score_entry in enumerate(sorted_scores, start=1):
+                score_entry["reader_alias"] = f"R{index}"
+            stage_summary[stage_key] = {
+                "scores": sorted_scores,
+                "count": stats["count"],
+                "average": stats["average"],
+                "spread": stats["spread"],
+            }
+        combined_stats = _grade_score_stats(entry["all_scores"])
+        summarized.append(
+            {
+                "student_id": entry["student_id"],
+                "student_name": entry["student_name"],
+                "student_country": entry["student_country"],
+                "recommended": entry["recommended"],
+                "stages": stage_summary,
+                "combined_count": combined_stats["count"],
+                "combined_average": combined_stats["average"],
+                "combined_spread": combined_stats["spread"],
+            }
+        )
+
+    return summarized
+
+
+def _grades_sort_key(entry: dict, sort_key: str) -> tuple:
+    if sort_key == "stage1_avg":
+        value = entry["stages"].get(Stage.STAGE_1.value, {}).get("average")
+    elif sort_key == "stage2_avg":
+        value = entry["stages"].get(Stage.STAGE_2.value, {}).get("average")
+    elif sort_key == "combined_avg":
+        value = entry.get("combined_average")
+    else:
+        value = entry["student_id"]
+
+    if value is None:
+        value = float("-inf") if sort_key != "student_id" else entry["student_id"]
+    return (value, entry["student_id"])
+
+
+def _safe_sheet_title(base: str, existing: set[str]) -> str:
+    clean = re.sub(r"[\\/*?:\[\]]", "", base).strip() or "Sheet"
+    clean = clean[:28]
+    candidate = clean
+    index = 2
+    while candidate in existing:
+        suffix = f"-{index}"
+        candidate = f"{clean[:28 - len(suffix)]}{suffix}"
+        index += 1
+    existing.add(candidate)
+    return candidate
+
+
+def _format_score_value(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:.2f}"
+
+
+def _apply_column_bold(sheet, column_indexes: list[int]) -> None:
+    if not column_indexes or sheet.max_row < 2:
+        return
+    bold_font = Font(bold=True)
+    for row_idx in range(2, sheet.max_row + 1):
+        for col_idx in column_indexes:
+            cell = sheet.cell(row=row_idx, column=col_idx)
+            cell.font = bold_font
+
+
+def _grades_export_xlsx(students: list[dict], options: dict) -> Any:
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Summary"
+
+    anonymize_students = options.get("anonymize_students", False)
+    anonymize_teachers = options.get("anonymize_teachers", True)
+    include_countries = options.get("include_countries", False)
+    include_timestamps = options.get("include_timestamps", True)
+    group_by_country = options.get("group_by_country", False)
+    compact_view = options.get("compact_view", False)
+    stage_order = options.get("stage_order", [Stage.STAGE_1.value, Stage.STAGE_2.value])
+
+    summary_header_entries: list[tuple[str, str | None]] = [("Student ID", None)]
+    if not anonymize_students:
+        summary_header_entries.append(("Student name", None))
+    if include_countries:
+        summary_header_entries.append(("Country", None))
+    for stage_key in stage_order:
+        stage_label = STAGE_LABELS[Stage(stage_key)]
+        summary_header_entries.append((f"{stage_label} scores", None))
+        summary_header_entries.append((f"{stage_label} average", "avg"))
+        summary_header_entries.append((f"{stage_label} spread", None))
+    summary_header_entries.append(("All scores count", None))
+    summary_header_entries.append(("All scores average", "avg"))
+    summary_header_entries.append(("All scores spread", None))
+    summary_header_entries.append(("Stage 3 recommended", None))
+
+    summary_sheet.append([text for text, _ in summary_header_entries])
+    summary_avg_columns = [idx + 1 for idx, (_, kind) in enumerate(summary_header_entries) if kind == "avg"]
+
+    for student in students:
+        row = [student["student_id"]]
+        if not anonymize_students:
+            row.append(student["student_name"])
+        if include_countries:
+            row.append(student["student_country"])
+        for stage_key in stage_order:
+            stage_info = student["stages"].get(stage_key, {})
+            row.append(stage_info.get("count", 0))
+            row.append(_format_score_value(stage_info.get("average")))
+            row.append(_format_score_value(stage_info.get("spread")))
+        row.append(student["combined_count"])
+        row.append(_format_score_value(student["combined_average"]))
+        row.append(_format_score_value(student["combined_spread"]))
+        row.append("Yes" if student["recommended"] else "No")
+        summary_sheet.append(row)
+
+    _apply_column_bold(summary_sheet, summary_avg_columns)
+
+    if group_by_country and include_countries:
+        existing_titles = {summary_sheet.title}
+        countries = sorted({student["student_country"] for student in students if student["student_country"]})
+        for country in countries:
+            sheet = workbook.create_sheet(_safe_sheet_title(country, existing_titles))
+            sheet.append([text for text, _ in summary_header_entries])
+            for student in students:
+                if student["student_country"] != country:
+                    continue
+                row = [student["student_id"]]
+                if not anonymize_students:
+                    row.append(student["student_name"])
+                if include_countries:
+                    row.append(student["student_country"])
+                for stage_key in stage_order:
+                    stage_info = student["stages"].get(stage_key, {})
+                    row.append(stage_info.get("count", 0))
+                    row.append(_format_score_value(stage_info.get("average")))
+                    row.append(_format_score_value(stage_info.get("spread")))
+                row.append(student["combined_count"])
+                row.append(_format_score_value(student["combined_average"]))
+                row.append(_format_score_value(student["combined_spread"]))
+                row.append("Yes" if student["recommended"] else "No")
+                sheet.append(row)
+            _apply_column_bold(sheet, summary_avg_columns)
+
+    detail_headers = ["Student ID"]
+    if not anonymize_students:
+        detail_headers.append("Student name")
+    if include_countries:
+        detail_headers.append("Student country")
+    detail_headers.extend(["Stage", "Score", "Finalized"])
+    if include_timestamps:
+        detail_headers.append("Submitted at")
+        detail_headers.append("Last update")
+    if anonymize_teachers:
+        detail_headers.append("Reader")
+    else:
+        detail_headers.append("Teacher ID")
+        detail_headers.append("Teacher name")
+        if include_countries:
+            detail_headers.append("Teacher country")
+
+    detail_sheet = workbook.create_sheet("Details")
+    detail_sheet.append(detail_headers)
+
+    for student in students:
+        for stage_key in stage_order:
+            stage_info = student["stages"].get(stage_key)
+            if not stage_info:
+                continue
+            for score_entry in stage_info["scores"]:
+                row = [student["student_id"]]
+                if not anonymize_students:
+                    row.append(student["student_name"])
+                if include_countries:
+                    row.append(student["student_country"])
+                row.append(STAGE_LABELS[Stage(stage_key)])
+                row.append(_format_score_value(score_entry["score"]))
+                row.append("Yes" if score_entry["finalized"] else "No")
+                if include_timestamps:
+                    submitted_at = score_entry["submitted_at"] or score_entry["updated_at"]
+                    row.append(submitted_at.strftime("%Y-%m-%d %H:%M") if submitted_at else "")
+                    row.append(score_entry["updated_at"].strftime("%Y-%m-%d %H:%M") if score_entry["updated_at"] else "")
+                if anonymize_teachers:
+                    row.append(score_entry.get("reader_alias", ""))
+                else:
+                    row.append(score_entry["teacher_id"])
+                    row.append(score_entry["teacher_name"])
+                    if include_countries:
+                        row.append(score_entry["teacher_country"])
+                detail_sheet.append(row)
+
+    if compact_view:
+        stage_slots = GRADE_STAGE_SLOTS
+        compact_header_entries: list[tuple[str, str | None]] = [("Student ID", None)]
+        if not anonymize_students:
+            compact_header_entries.append(("Student name", None))
+        if include_countries:
+            compact_header_entries.append(("Country", None))
+        for stage_key in stage_order:
+            stage_label = STAGE_LABELS[Stage(stage_key)]
+            slots = stage_slots.get(stage_key, 0)
+            for index in range(slots):
+                compact_header_entries.append((f"{stage_label} reader {index + 1}", None))
+            compact_header_entries.append((f"{stage_label} average", "avg"))
+            compact_header_entries.append((f"{stage_label} spread", None))
+        compact_header_entries.append(("Combined average", "avg"))
+        compact_header_entries.append(("Combined spread", None))
+        compact_header_entries.append(("Stage 3 recommended", None))
+
+        compact_sheet = workbook.create_sheet("Compact")
+        compact_sheet.append([text for text, _ in compact_header_entries])
+        compact_avg_columns = [idx + 1 for idx, (_, kind) in enumerate(compact_header_entries) if kind == "avg"]
+
+        for student in students:
+            row = [student["student_id"]]
+            if not anonymize_students:
+                row.append(student["student_name"])
+            if include_countries:
+                row.append(student["student_country"])
+            for stage_key in stage_order:
+                stage_info = student["stages"].get(stage_key)
+                slots = stage_slots.get(stage_key, 0)
+                scores = stage_info["scores"] if stage_info else []
+                for index in range(slots):
+                    value = ""
+                    if stage_info and index < len(scores):
+                        score_entry = scores[index]
+                        formatted = _format_score_value(score_entry["score"])
+                        if formatted:
+                            if anonymize_teachers:
+                                alias = score_entry.get("reader_alias")
+                                formatted = f"{formatted} ({alias})" if alias else formatted
+                            else:
+                                formatted = f"{formatted} (T{score_entry['teacher_id']})"
+                        value = formatted or ""
+                    row.append(value)
+                if stage_info:
+                    row.append(_format_score_value(stage_info["average"]))
+                    row.append(_format_score_value(stage_info["spread"]))
+                else:
+                    row.extend(["", ""])
+            row.append(_format_score_value(student["combined_average"]))
+            row.append(_format_score_value(student["combined_spread"]))
+            row.append("Yes" if student["recommended"] else "No")
+            compact_sheet.append(row)
+
+        _apply_column_bold(compact_sheet, compact_avg_columns)
+        workbook.active = workbook.sheetnames.index(compact_sheet.title)
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name="grades-export.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def _grades_export_pdf(students: list[dict], options: dict) -> Any:
+    stage_order = options.get("stage_order", [Stage.STAGE_1.value, Stage.STAGE_2.value])
+    stage_order_labels = [(stage_key, STAGE_LABELS[Stage(stage_key)]) for stage_key in stage_order]
+    context = {
+        "students": students,
+        "anonymize_students": options.get("anonymize_students", False),
+        "anonymize_teachers": options.get("anonymize_teachers", True),
+        "include_countries": options.get("include_countries", False),
+        "include_timestamps": options.get("include_timestamps", True),
+        "stage_order": stage_order_labels,
+        "generated_at": datetime.utcnow(),
+        "stage_slots": {
+            Stage.STAGE_1.value: 5,
+            Stage.STAGE_2.value: 2,
+        },
+    }
+    template = "admin/grades/pdf/report_compact.html" if options.get("compact_view") else "admin/grades/pdf/report.html"
+    return _render_pdf(template, "grades-report.pdf", **context)
 
 
 def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNamespace:
@@ -824,15 +1614,23 @@ def _apply_stage_one_rules(assignment: EssayAssignment) -> None:
             assignment.stage_two_candidate = False
 
 
-def _ensure_student_credentials(student: Student) -> None:
+def _ensure_student_credentials(student: Student, *, reset_password: bool = False) -> tuple[str, str | None]:
+    username_generated = False
     if not student.upload_username:
         student.upload_username = _generate_unique_username(student.first_name, student.last_name)
-    if not student.upload_password_hash or not student.upload_token:
-        raw_password = secrets.token_urlsafe(8)
-        student.upload_password_hash = generate_password_hash(raw_password)
-        student.upload_token = raw_password
-        student.__dict__["_plain_upload_password"] = raw_password
-    db.session.flush()
+        username_generated = True
+
+    plain_password: str | None = None
+    if reset_password or not student.upload_password_hash or not student.upload_token:
+        plain_password = secrets.token_urlsafe(8)
+        student.upload_password_hash = generate_password_hash(plain_password)
+        student.upload_token = plain_password
+        student.__dict__["_plain_upload_password"] = plain_password
+
+    if username_generated or plain_password is not None:
+        db.session.flush()
+
+    return student.upload_username, plain_password
 
 
 def _student_from_session() -> Student | None:
@@ -960,6 +1758,62 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
     return PdfReader(buffer)
 
 
+def _create_committee_title_page(member_name: str, committee_label: str, essay_ids: list[int]) -> PdfReader:
+    buffer = BytesIO()
+    width, height = A4
+    c = canvas.Canvas(buffer, pagesize=A4)
+    margin = 40
+
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(margin, height - margin - 10, "IPO Stage 3 Packet")
+    c.setFont("Helvetica", 14)
+    c.drawString(margin, height - margin - 36, f"Committee: {committee_label}")
+
+    info_rows = [
+        ("Member", member_name or "—"),
+        ("Committee", committee_label),
+    ]
+
+    table_top = height - margin - 70
+    row_height = 26
+    col_widths = [150, width - 2 * margin - 150]
+    c.setLineWidth(1)
+    y = table_top
+    for label, value in info_rows:
+        c.rect(margin, y - row_height, col_widths[0], row_height)
+        c.rect(margin + col_widths[0], y - row_height, col_widths[1], row_height)
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin + 6, y - row_height + 8, str(label))
+        c.setFont("Helvetica", 12)
+        c.drawString(margin + col_widths[0] + 6, y - row_height + 8, str(value))
+        y -= row_height
+
+    essay_table_top = y - 20
+    header_height = 26
+    essay_row_height = 24
+    columns = [180, width - 2 * margin - 180]
+    c.rect(margin, essay_table_top - header_height, columns[0], header_height)
+    c.rect(margin + columns[0], essay_table_top - header_height, columns[1], header_height)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin + 6, essay_table_top - header_height + 8, "Essay ID")
+    c.drawString(margin + columns[0] + 6, essay_table_top - header_height + 8, "Comments")
+
+    y = essay_table_top - header_height
+    c.setFont("Helvetica", 12)
+    entries = essay_ids or ["—"]
+    for essay_id in entries:
+        c.rect(margin, y - essay_row_height, columns[0], essay_row_height)
+        c.rect(margin + columns[0], y - essay_row_height, columns[1], essay_row_height)
+        c.drawString(margin + 6, y - essay_row_height + 8, str(essay_id))
+        y -= essay_row_height
+        if y < margin + 40:
+            break
+
+    c.save()
+    buffer.seek(0)
+    return PdfReader(buffer)
+
+
 def _add_blank_page(writer: PdfWriter, template_page=None) -> None:
     if template_page is not None:
         width = float(template_page.mediabox.right - template_page.mediabox.left)
@@ -985,6 +1839,15 @@ def _teacher_portal_enabled() -> bool:
     return flag.lower() == "true"
 
 
+def _is_upload_module_enabled() -> bool:
+    flag = _get_setting(SETTING_UPLOAD_MODULE_ENABLED, "false") or "false"
+    return flag.lower() == "true"
+
+
+def _sendgrid_configured() -> bool:
+    return bool(current_app.config.get("SENDGRID_API_KEY") and current_app.config.get("SENDGRID_FROM_EMAIL"))
+
+
 def _get_email_subject(key: str) -> str:
     return _get_setting(key) or DEFAULT_EMAIL_SUBJECTS[key]
 
@@ -993,20 +1856,98 @@ def _get_email_body(key: str) -> str:
     return _get_setting(key) or DEFAULT_EMAIL_BODIES[key]
 
 
-def _send_email(to_email: str, subject: str, html_content: str) -> None:
+class _PlainTextHTMLParser(HTMLParser):
+    _BREAK_TAGS = {"br"}
+    _BLOCK_TAGS = {
+        "p",
+        "div",
+        "li",
+        "section",
+        "article",
+        "table",
+        "tr",
+        "td",
+        "th",
+        "header",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+        if tag.lower() in self._BREAK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.parts.append(data)
+
+
+def _html_to_text(value: str | None) -> str:
+    if not value:
+        return ""
+    parser = _PlainTextHTMLParser()
+    parser.feed(value)
+    parser.close()
+    text = unescape("".join(parser.parts))
+    text = text.replace("\r\n", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    cleaned: list[str] = []
+    previous_blank = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if not previous_blank and cleaned:
+                cleaned.append("")
+            previous_blank = True
+            continue
+        cleaned.append(stripped)
+        previous_blank = False
+    return "\n".join(cleaned).strip()
+
+
+def _send_email(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    *,
+    plain_text_content: str | None = None,
+) -> tuple[bool, str | None, str | None]:
     if not to_email:
-        return
+        return False, None, "missing-recipient"
     api_key = current_app.config.get("SENDGRID_API_KEY")
     from_email = current_app.config.get("SENDGRID_FROM_EMAIL")
     if not api_key or not from_email:
         current_app.logger.debug("SendGrid not configured; skipping email to %s", to_email)
-        return
+        return False, None, "sendgrid-not-configured"
     try:
         sg = SendGridAPIClient(api_key)
-        message = Mail(from_email=from_email, to_emails=to_email, subject=subject, html_content=html_content)
-        sg.send(message)
+        message = Mail(
+            from_email=from_email,
+            to_emails=to_email,
+            subject=subject,
+            html_content=html_content,
+            plain_text_content=plain_text_content,
+        )
+        response = sg.send(message)
+        headers = getattr(response, "headers", {}) or {}
+        message_id = headers.get("X-Message-Id") or headers.get("x-message-id")
+        return True, message_id, None
     except Exception as exc:
         current_app.logger.warning("SendGrid error sending to %s: %s", to_email, exc)
+        return False, None, str(exc)
 
 
 def _send_templated_email(to_email: str, subject_key: str, body_key: str, context: dict) -> None:
@@ -1022,6 +1963,7 @@ def _send_templated_email(to_email: str, subject_key: str, body_key: str, contex
 def _send_student_confirmation_email(student: Student) -> None:
     if not _auto_email_enabled() or not student.email:
         return
+    portal_password = getattr(student, "_plain_upload_password", None)
     context = {
         "first_name": student.first_name,
         "last_name": student.last_name,
@@ -1032,6 +1974,10 @@ def _send_student_confirmation_email(student: Student) -> None:
         "keyboard_preference": student.keyboard_preference,
         "meal_preference": student.meal_preference,
         "special_needs": student.special_needs or "",
+        "portal_username": student.upload_username,
+        "portal_password": portal_password or "",
+        "portal_link": url_for("web.student_portal", _external=True),
+        "portal_login_link": url_for("web.student_login", _external=True),
     }
     _send_templated_email(student.email, SETTING_EMAIL_STUDENT_SUBJECT, SETTING_EMAIL_STUDENT_BODY, context)
 
@@ -1039,6 +1985,7 @@ def _send_student_confirmation_email(student: Student) -> None:
 def _send_teacher_confirmation_email(teacher: Teacher) -> None:
     if not _auto_email_enabled() or not teacher.email:
         return
+    portal_password = getattr(teacher, "_plain_portal_password", None)
     context = {
         "first_name": teacher.first_name,
         "last_name": teacher.last_name,
@@ -1051,8 +1998,74 @@ def _send_teacher_confirmation_email(teacher: Teacher) -> None:
         "special_needs": teacher.special_needs or "",
         "delegation_leader": teacher.delegation_leader,
         "prior_ipo_assessor": teacher.prior_ipo_assessor,
+        "portal_username": teacher.portal_username,
+        "portal_password": portal_password or "",
+        "portal_link": url_for("teacher_portal.dashboard", _external=True),
+        "portal_login_link": url_for("teacher_portal.login", _external=True),
     }
     _send_templated_email(teacher.email, SETTING_EMAIL_TEACHER_SUBJECT, SETTING_EMAIL_TEACHER_BODY, context)
+
+
+def _send_student_reset_link_email(student: Student, reset_token: PasswordResetToken) -> None:
+    if not _auto_email_enabled() or not student.email:
+        return
+    context = {
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "reset_link": url_for("web.student_reset_password_token", token=reset_token.token, _external=True),
+        "portal_login_link": url_for("web.student_login", _external=True),
+    }
+    _send_templated_email(
+        student.email,
+        SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT,
+        SETTING_EMAIL_STUDENT_RESET_LINK_BODY,
+        context,
+    )
+
+
+def _send_student_reset_email(student: Student, plain_password: str) -> None:
+    if not _auto_email_enabled() or not student.email:
+        return
+    context = {
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "portal_username": student.upload_username,
+        "portal_password": plain_password,
+        "portal_link": url_for("web.student_portal", _external=True),
+        "portal_login_link": url_for("web.student_login", _external=True),
+    }
+    _send_templated_email(student.email, SETTING_EMAIL_STUDENT_RESET_SUBJECT, SETTING_EMAIL_STUDENT_RESET_BODY, context)
+
+
+def _send_teacher_reset_link_email(teacher: Teacher, reset_token: PasswordResetToken) -> None:
+    if not _auto_email_enabled() or not teacher.email:
+        return
+    context = {
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
+        "reset_link": url_for("teacher_portal.reset_token", token=reset_token.token, _external=True),
+        "portal_login_link": url_for("teacher_portal.login", _external=True),
+    }
+    _send_templated_email(
+        teacher.email,
+        SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT,
+        SETTING_EMAIL_TEACHER_RESET_LINK_BODY,
+        context,
+    )
+
+
+def _send_teacher_reset_email(teacher: Teacher, plain_password: str) -> None:
+    if not _auto_email_enabled() or not teacher.email:
+        return
+    context = {
+        "first_name": teacher.first_name,
+        "last_name": teacher.last_name,
+        "portal_username": teacher.portal_username,
+        "portal_password": plain_password,
+        "portal_link": url_for("teacher_portal.dashboard", _external=True),
+        "portal_login_link": url_for("teacher_portal.login", _external=True),
+    }
+    _send_templated_email(teacher.email, SETTING_EMAIL_TEACHER_RESET_SUBJECT, SETTING_EMAIL_TEACHER_RESET_BODY, context)
 
 
 def _send_teacher_message_notifications(message: TeacherMessage) -> None:
@@ -1090,7 +2103,14 @@ def _send_teacher_message_notifications(message: TeacherMessage) -> None:
         _send_templated_email(teacher.email, SETTING_EMAIL_MESSAGE_SUBJECT, SETTING_EMAIL_MESSAGE_BODY, context)
 
 
-def _create_essay_overlay_page(page, group: ReadingGroup, assignment: EssayAssignment) -> PdfReader:
+def _create_essay_overlay_page(
+    page,
+    group: ReadingGroup | None,
+    assignment: EssayAssignment,
+    *,
+    header_text: str = "IPO Essay",
+    labels: list[tuple[str, str]] | None = None,
+) -> PdfReader:
     buffer = BytesIO()
     width = float(page.mediabox.right - page.mediabox.left)
     height = float(page.mediabox.top - page.mediabox.bottom)
@@ -1103,20 +2123,24 @@ def _create_essay_overlay_page(page, group: ReadingGroup, assignment: EssayAssig
     c.setStrokeColor(colors.black)
     c.setLineWidth(1)
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, top + 4, "IPO Essay")
+    c.drawString(margin, top + 4, header_text)
 
     c.rect(margin, top - table_height, table_width, table_height)
     col_width = table_width / 3
     for i in range(1, 3):
         c.line(margin + col_width * i, top - table_height, margin + col_width * i, top)
 
-    group_label = getattr(group, "name", None) or getattr(group, "id", "—")
-    essay_id = assignment.student.id if assignment.student else "—"
-    labels = [
-        ("Group", group_label),
-        ("Essay", essay_id),
-        ("Score", "     /10"),
-    ]
+    if labels is None:
+        group_label = getattr(group, "name", None) if group is not None else None
+        if not group_label:
+            group_label = getattr(group, "id", None) if group is not None else None
+        group_label = group_label or "—"
+        essay_id = assignment.student.id if assignment.student else "—"
+        labels = [
+            ("Group", group_label),
+            ("Essay", essay_id),
+            ("Score", "     /10"),
+        ]
 
     for idx, (label, value) in enumerate(labels):
         x = margin + col_width * idx + 6
@@ -1884,8 +2908,135 @@ def student_login():
                 details={"username": student.upload_username},
             )
             db.session.commit()
-            return redirect(url_for("web.student_upload"))
-    return render_template("student/login.html", form=form)
+            next_param = request.args.get("next")
+            target = next_param if next_param else url_for("web.student_portal")
+            return redirect(target)
+    return render_template(
+        "student/login.html",
+        form=form,
+        upload_module_enabled=_is_upload_module_enabled(),
+        upload_locked=_is_upload_locked(),
+    )
+
+
+@web_bp.route("/participant/reset", methods=["GET", "POST"])
+def student_reset_password_request():
+    form = PasswordResetRequestForm()
+    submitted = False
+    email_sent = False
+    token_generated = False
+    if form.validate_on_submit():
+        email = form.email.data.lower().strip()
+        student = Student.query.filter_by(email=email, is_absent=False).first()
+        if student:
+            reset_token = _create_student_reset_token(student)
+            db.session.flush()
+            log_activity(
+                "student_password_reset_requested",
+                f"Student {student.first_name} {student.last_name} requested portal reset",
+                object_type="student",
+                object_id=student.id,
+                details={"email": student.email, "reset_token_id": reset_token.id},
+            )
+            db.session.commit()
+            token_generated = True
+            if _auto_email_enabled() and student.email:
+                _send_student_reset_link_email(student, reset_token)
+                email_sent = True
+        submitted = True
+    return render_template(
+        "student/reset_request.html",
+        form=form,
+        submitted=submitted,
+        email_sent=email_sent,
+        auto_email_enabled=_auto_email_enabled(),
+        token_generated=token_generated,
+    )
+
+
+@web_bp.route("/participant/reset/<string:token>", methods=["GET", "POST"])
+def student_reset_password_token(token: str):
+    form = PasswordResetConfirmForm()
+    reset_token = _load_reset_token(token, PasswordResetAudience.STUDENT)
+    is_valid, reason = _reset_token_status(reset_token)
+    state = "ready" if is_valid else "invalid"
+    plain_password: str | None = None
+    email_sent = False
+    auto_email_enabled = _auto_email_enabled()
+
+    if form.validate_on_submit():
+        if not is_valid or not reset_token or not reset_token.student:
+            state = "invalid"
+        else:
+            _, plain_password = _ensure_student_credentials(reset_token.student, reset_password=True)
+            reset_token.used_at = datetime.utcnow()
+            db.session.flush()
+            log_activity(
+                "student_password_reset_completed",
+                f"Student {reset_token.student.first_name} {reset_token.student.last_name} completed portal reset",
+                object_type="student",
+                object_id=reset_token.student.id,
+                details={
+                    "email": reset_token.student.email,
+                    "upload_username": reset_token.student.upload_username,
+                    "reset_token_id": reset_token.id,
+                },
+            )
+            db.session.commit()
+            if plain_password and auto_email_enabled and reset_token.student.email:
+                _send_student_reset_email(reset_token.student, plain_password)
+                email_sent = True
+            state = "completed"
+            reason = None
+            is_valid = False
+
+    return render_template(
+        "student/reset_token.html",
+        form=form,
+        state=state,
+        reason=reason,
+        token_entry=reset_token,
+        plain_password=plain_password,
+        email_sent=email_sent,
+        auto_email_enabled=auto_email_enabled,
+    )
+
+
+@web_bp.route("/participant/portal")
+def student_portal():
+    student = _student_from_session()
+    if not student or student.is_absent:
+        flash("Please log in to access the student portal.", "error")
+        return redirect(url_for("web.student_login", next=request.full_path))
+
+    survey_assignments = _survey_assignments_for_user(student=student)
+    survey_items, survey_summary = _prepare_survey_assignment_view(
+        survey_assignments,
+        lambda assignment_id: url_for("web.student_survey_detail", assignment_id=assignment_id),
+    )
+    survey_outstanding = [item for item in survey_items if not item.is_completed and not item.state.locked][:5]
+
+    upload_status = SimpleNamespace(
+        has_upload=bool(student.uploaded_filename),
+        finalized=bool(student.essay_finalized),
+        uploaded_at=student.uploaded_at,
+        finalized_at=student.essay_finalized_at,
+    )
+    upload_module_enabled = _is_upload_module_enabled()
+    upload_locked = _is_upload_locked()
+    upload_available = upload_module_enabled and not upload_locked
+
+    return render_template(
+        "student/portal.html",
+        student=student,
+        survey_summary=survey_summary,
+        survey_outstanding=survey_outstanding,
+        survey_items=survey_items,
+        upload_status=upload_status,
+        upload_module_enabled=upload_module_enabled,
+        upload_locked=upload_locked,
+        upload_available=upload_available,
+    )
 
 
 @web_bp.route("/participant/logout")
@@ -1912,6 +3063,16 @@ def student_upload():
         return redirect(url_for("web.student_login"))
     form = StudentUploadForm()
     action = request.form.get("action", "upload").strip()
+    module_enabled = _is_upload_module_enabled()
+    upload_locked = _is_upload_locked()
+
+    if request.method == "POST":
+        if not module_enabled:
+            flash("Essay uploads are currently disabled by the organizing team.", "error")
+            return redirect(url_for("web.student_upload"))
+        if upload_locked:
+            flash("Essay uploads are currently locked by the organizing team.", "error")
+            return redirect(url_for("web.student_upload"))
 
     if request.method == "POST" and action == "finalize":
         if student.essay_finalized:
@@ -1934,7 +3095,13 @@ def student_upload():
         return redirect(url_for("web.student_upload"))
 
     if student.essay_finalized:
-        return render_template("student/upload.html", form=form, student=student)
+        return render_template(
+            "student/upload.html",
+            form=form,
+            student=student,
+            upload_locked=upload_locked,
+            upload_module_enabled=module_enabled,
+        )
 
     if form.validate_on_submit():
         file = form.essay.data
@@ -1974,7 +3141,13 @@ def student_upload():
         db.session.commit()
         flash("Essay uploaded successfully.", "success")
         return redirect(url_for("web.student_upload"))
-    return render_template("student/upload.html", form=form, student=student)
+    return render_template(
+        "student/upload.html",
+        form=form,
+        student=student,
+        upload_locked=upload_locked,
+        upload_module_enabled=module_enabled,
+    )
 
 
 @web_bp.route("/participant/upload/preview")
@@ -1988,6 +3161,91 @@ def student_upload_preview():
     response = send_file(str(pdf_path), mimetype="application/pdf")
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@web_bp.route("/participant/surveys")
+def student_surveys():
+    student = _student_from_session()
+    if not student or student.is_absent:
+        flash("Please log in to access surveys.", "error")
+        return redirect(url_for("web.student_login", next=request.full_path))
+
+    assignments = _survey_assignments_for_user(student=student)
+    items, summary = _prepare_survey_assignment_view(
+        assignments,
+        lambda assignment_id: url_for("web.student_survey_detail", assignment_id=assignment_id),
+    )
+    outstanding = [item for item in items if not item.is_completed and not item.state.locked]
+    closed = [item for item in items if not item.is_completed and item.state.locked]
+    completed = [item for item in items if item.is_completed]
+
+    return render_template(
+        "student/surveys.html",
+        student=student,
+        assignments=items,
+        summary=summary,
+        outstanding=outstanding,
+        closed=closed,
+        completed=completed,
+    )
+
+
+@web_bp.route("/participant/surveys/<int:assignment_id>", methods=["GET", "POST"])
+def student_survey_detail(assignment_id: int):
+    student = _student_from_session()
+    if not student or student.is_absent:
+        flash("Please log in to access surveys.", "error")
+        return redirect(url_for("web.student_login", next=request.full_path))
+
+    assignment = _load_survey_assignment(assignment_id, student=student)
+    if not assignment or not assignment.survey:
+        abort(404)
+    survey = assignment.survey
+    if survey.status == SurveyStatus.DRAFT:
+        abort(404)
+
+    questions = _ordered_survey_questions(survey)
+    existing_data = _survey_display_data(assignment.response.response_data if assignment.response else {})
+    state = _survey_assignment_state(assignment)
+    form = SurveyResponseForm()
+    errors: dict[int, str] = {}
+
+    if form.validate_on_submit():
+        if state.locked:
+            flash("This survey is not available for editing.", "info")
+        else:
+            answers, errors = _parse_survey_submission(questions, request.form)
+            if not errors:
+                _save_survey_response(
+                    assignment,
+                    answers,
+                    respondent_type="student",
+                    respondent_id=student.id,
+                    actor=student.upload_username or student.email or f"student-{student.id}",
+                )
+                db.session.commit()
+                flash("Survey response saved.", "success")
+                return redirect(url_for("web.student_survey_detail", assignment_id=assignment.id))
+            existing_data = _survey_display_data(answers)
+            flash("Please correct the errors below.", "error")
+        state = _survey_assignment_state(assignment)
+
+    button_label = "Update response" if assignment.status == SurveyAssignmentStatus.COMPLETED else "Submit response"
+
+    return render_template(
+        "student/survey_detail.html",
+        student=student,
+        assignment=assignment,
+        survey=survey,
+        questions=questions,
+        form=form,
+        existing_data=existing_data,
+        errors=errors,
+        state=state,
+        button_label=button_label,
+        SurveyQuestionType=SurveyQuestionType,
+        SurveyAssignmentStatus=SurveyAssignmentStatus,
+    )
 
 
 @web_bp.route("/register/student", methods=["GET", "POST"])
@@ -2109,6 +3367,9 @@ def admin_dashboard():
     ]
     stage1_locked = _is_stage_locked(Stage.STAGE_1)
     stage2_locked = _is_stage_locked(Stage.STAGE_2)
+    upload_module_enabled = _is_upload_module_enabled()
+    upload_locked = _is_upload_locked()
+    upload_state = SimpleNamespace(enabled=upload_module_enabled, locked=upload_locked)
 
     return render_template(
         "admin/dashboard.html",
@@ -2123,6 +3384,7 @@ def admin_dashboard():
             "stage_1": stage1_locked,
             "stage_2": stage2_locked,
         },
+        upload_state=upload_state,
         Stage=Stage,
         last_refreshed=datetime.utcnow(),
         **_quick_message_context(),
@@ -2164,6 +3426,35 @@ def admin_toggle_grading_lock():
     stage_label = STAGE_LABELS.get(stage, stage.value.title())
     flash(f"{stage_label} grading {'locked' if desired_lock else 'unlocked'}.", "success")
 
+    redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
+    return redirect(redirect_target)
+
+
+@web_bp.route("/admin/uploads/lock", methods=["POST"])
+def admin_toggle_upload_lock():
+    if not _current_admin():
+        abort(403)
+
+    target_state = request.form.get("state")
+    if target_state not in {"lock", "unlock"}:
+        abort(400)
+
+    desired_lock = target_state == "lock"
+    _set_upload_lock(desired_lock)
+
+    log_activity(
+        "essay_upload_lock",
+        f"Essay uploads locked: {desired_lock}",
+        object_type="uploads",
+        details={
+            "locked": desired_lock,
+            "actor": _current_admin(),
+        },
+    )
+
+    db.session.commit()
+
+    flash(f"Essay uploads {'locked' if desired_lock else 'unlocked'}.", "success")
     redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
     return redirect(redirect_target)
 
@@ -2495,6 +3786,14 @@ def _set_stage_lock(stage: Stage, locked: bool) -> None:
     _set_setting(_stage_lock_key(stage), "true" if locked else "false")
 
 
+def _is_upload_locked() -> bool:
+    return _parse_bool(_get_setting(SETTING_UPLOAD_LOCK, "false"))
+
+
+def _set_upload_lock(locked: bool) -> None:
+    _set_setting(SETTING_UPLOAD_LOCK, "true" if locked else "false")
+
+
 def _collect_dashboard_deadlines(now: datetime) -> list[dict]:
     config = current_app.config
     deadlines: list[dict] = []
@@ -2589,6 +3888,7 @@ def admin_settings():
         _set_setting(SETTING_STAGE1_SLA, stage1_sla_value)
         _set_setting(SETTING_STAGE2_SLA, stage2_sla_value)
         _set_setting(SETTING_PACKET_PRINT_MODE, form.packet_print_mode.data)
+        _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
         _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
         _set_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "true" if form.email_auto_enabled.data else "false")
         _set_setting(SETTING_EMAIL_STUDENT_SUBJECT, form.email_student_subject.data.strip() or None)
@@ -2597,6 +3897,18 @@ def admin_settings():
         _set_setting(SETTING_EMAIL_TEACHER_BODY, form.email_teacher_body.data.strip() or None)
         _set_setting(SETTING_EMAIL_MESSAGE_SUBJECT, form.email_message_subject.data.strip() or None)
         _set_setting(SETTING_EMAIL_MESSAGE_BODY, form.email_message_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT, form.email_survey_publish_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY, form.email_survey_publish_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT, form.email_survey_reminder_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY, form.email_survey_reminder_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT, form.email_student_reset_link_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY, form.email_student_reset_link_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT, form.email_student_reset_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_RESET_BODY, form.email_student_reset_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT, form.email_teacher_reset_link_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY, form.email_teacher_reset_link_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT, form.email_teacher_reset_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_RESET_BODY, form.email_teacher_reset_body.data.strip() or None)
         db.session.commit()
         flash("Dashboard settings updated.", "success")
         return redirect(url_for("web.admin_settings"))
@@ -2632,6 +3944,7 @@ def admin_settings():
         else:
             form.packet_print_mode.data = "single"
 
+        form.essay_upload_enabled.data = _is_upload_module_enabled()
         teacher_portal_flag = (_get_setting(SETTING_TEACHER_PORTAL_ENABLED, "false") or "false").lower() == "true"
         form.teacher_portal_enabled.data = teacher_portal_flag
         email_enabled_flag = (_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false").lower() == "true"
@@ -2642,6 +3955,18 @@ def admin_settings():
         form.email_teacher_body.data = _get_setting(SETTING_EMAIL_TEACHER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_BODY]
         form.email_message_subject.data = _get_setting(SETTING_EMAIL_MESSAGE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_MESSAGE_SUBJECT]
         form.email_message_body.data = _get_setting(SETTING_EMAIL_MESSAGE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_MESSAGE_BODY]
+        form.email_survey_publish_subject.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT]
+        form.email_survey_publish_body.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_PUBLISH_BODY]
+        form.email_survey_reminder_subject.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_REMINDER_SUBJECT]
+        form.email_survey_reminder_body.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_REMINDER_BODY]
+        form.email_student_reset_link_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT]
+        form.email_student_reset_link_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_LINK_BODY]
+        form.email_student_reset_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_SUBJECT]
+        form.email_student_reset_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_BODY]
+        form.email_teacher_reset_link_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT]
+        form.email_teacher_reset_link_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_LINK_BODY]
+        form.email_teacher_reset_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_SUBJECT]
+        form.email_teacher_reset_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_BODY]
 
     return render_template("admin/settings.html", form=form, config=config)
 
@@ -3046,6 +4371,1132 @@ def admin_message_delete(message_id: int):
     return redirect(url_for("web.admin_messages"))
 
 
+@web_bp.route("/admin/communications")
+def admin_communications():
+    if not _current_admin():
+        abort(403)
+
+    campaigns = (
+        CommunicationCampaign.query.order_by(CommunicationCampaign.created_at.desc()).all()
+    )
+    stats = _campaign_recipient_stats(campaign.id for campaign in campaigns)
+
+    return render_template(
+        "admin/communications/index.html",
+        campaigns=campaigns,
+        stats=stats,
+        CommunicationStatus=CommunicationStatus,
+        CommunicationRecipientStatus=CommunicationRecipientStatus,
+        sendgrid_ready=_sendgrid_configured(),
+    )
+
+
+@web_bp.route("/admin/communications/new", methods=["GET", "POST"])
+def admin_communications_new():
+    if not _current_admin():
+        abort(403)
+
+    form = CommunicationComposeForm()
+    country_choices = _communication_country_choices()
+    form.countries.choices = country_choices
+
+    if request.method == "GET" and not form.audience.data:
+        form.audience.data = CommunicationAudience.BOTH.value
+
+    if form.validate_on_submit():
+        try:
+            audience = CommunicationAudience(form.audience.data)
+        except ValueError:
+            form.audience.errors.append("Unknown audience selected.")
+        else:
+            selected_countries = [code for code in (form.countries.data or []) if code]
+            recipients = _build_campaign_recipients(
+                audience,
+                selected_countries,
+                bool(form.include_absent.data),
+            )
+            if not recipients:
+                flash("No recipients match the selected filters.", "warning")
+            else:
+                subject = form.subject.data.strip()
+                html_body = form.html_body.data or ""
+                plain_text = _html_to_text(html_body) or subject
+                campaign = CommunicationCampaign(
+                    subject=subject,
+                    html_body=html_body,
+                    text_body=plain_text,
+                    audience=audience,
+                    country_filter=sorted(selected_countries) if selected_countries else None,
+                    include_absent=bool(form.include_absent.data),
+                    status=CommunicationStatus.DRAFT,
+                    created_by=_current_admin(),
+                    total_recipients=len(recipients),
+                    sent_count=0,
+                    failed_count=0,
+                )
+                for recipient in recipients:
+                    campaign.recipients.append(recipient)
+                db.session.add(campaign)
+                db.session.flush()
+                log_activity(
+                    "communication_campaign_created",
+                    f"Campaign '{campaign.subject}' drafted",
+                    object_type="communication_campaign",
+                    object_id=campaign.id,
+                    details={
+                        "audience": campaign.audience.value,
+                        "total_recipients": campaign.total_recipients,
+                        "countries": campaign.country_filter or [],
+                        "include_absent": campaign.include_absent,
+                    },
+                )
+                db.session.commit()
+                flash(
+                    f"Draft created with {campaign.total_recipients} recipient(s). Review the email before sending.",
+                    "success",
+                )
+                return redirect(url_for("web.admin_communications_preview", campaign_id=campaign.id))
+
+    return render_template(
+        "admin/communications/new.html",
+        form=form,
+        campaign=None,
+        sendgrid_ready=_sendgrid_configured(),
+    )
+
+
+@web_bp.route("/admin/communications/<int:campaign_id>/edit", methods=["GET", "POST"])
+def admin_communications_edit(campaign_id: int):
+    if not _current_admin():
+        abort(403)
+    campaign = db.session.get(CommunicationCampaign, campaign_id)
+    if not campaign:
+        abort(404)
+    if campaign.status not in {CommunicationStatus.DRAFT, CommunicationStatus.FAILED}:
+        flash("Only draft or failed campaigns can be edited.", "error")
+        return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+    form = CommunicationComposeForm()
+    country_choices = _communication_country_choices()
+    existing_countries = set(country for country, _ in country_choices)
+    selected_countries = campaign.country_filter or []
+    for country in selected_countries:
+        if country and country not in existing_countries:
+            country_choices.append((country, country))
+            existing_countries.add(country)
+    country_choices.sort(key=lambda item: item[1])
+    form.countries.choices = country_choices
+    form.submit_preview.label.text = "Save changes"
+
+    if request.method == "GET":
+        form.subject.data = campaign.subject
+        form.html_body.data = campaign.html_body
+        form.audience.data = campaign.audience.value
+        form.countries.data = selected_countries
+        form.include_absent.data = bool(campaign.include_absent)
+
+    if form.validate_on_submit():
+        try:
+            audience = CommunicationAudience(form.audience.data)
+        except ValueError:
+            form.audience.errors.append("Unknown audience selected.")
+        else:
+            selected_countries = [code for code in (form.countries.data or []) if code]
+            recipients = _build_campaign_recipients(
+                audience,
+                selected_countries,
+                bool(form.include_absent.data),
+            )
+            if not recipients:
+                flash("No recipients match the selected filters.", "warning")
+            else:
+                subject = form.subject.data.strip()
+                html_body = form.html_body.data or ""
+                plain_text = _html_to_text(html_body) or subject
+
+                # reset recipient list
+                campaign.recipients.clear()
+                db.session.flush()
+                for recipient in recipients:
+                    campaign.recipients.append(recipient)
+
+                campaign.subject = subject
+                campaign.html_body = html_body
+                campaign.text_body = plain_text
+                campaign.audience = audience
+                campaign.country_filter = sorted(selected_countries) if selected_countries else None
+                campaign.include_absent = bool(form.include_absent.data)
+                campaign.total_recipients = len(recipients)
+                campaign.sent_count = 0
+                campaign.failed_count = 0
+                campaign.sent_at = None
+                campaign.sent_by = None
+                campaign.status = CommunicationStatus.DRAFT
+
+                db.session.flush()
+                log_activity(
+                    "communication_campaign_updated",
+                    f"Campaign '{campaign.subject}' updated",
+                    object_type="communication_campaign",
+                    object_id=campaign.id,
+                    details={
+                        "audience": campaign.audience.value,
+                        "total_recipients": campaign.total_recipients,
+                        "countries": campaign.country_filter or [],
+                        "include_absent": campaign.include_absent,
+                    },
+                )
+                db.session.commit()
+                flash("Draft updated. Review the email before sending.", "success")
+                return redirect(url_for("web.admin_communications_preview", campaign_id=campaign.id))
+
+    return render_template(
+        "admin/communications/new.html",
+        form=form,
+        campaign=campaign,
+        sendgrid_ready=_sendgrid_configured(),
+    )
+
+
+@web_bp.route("/admin/communications/<int:campaign_id>/preview", methods=["GET", "POST"])
+def admin_communications_preview(campaign_id: int):
+    if not _current_admin():
+        abort(403)
+    campaign = db.session.get(CommunicationCampaign, campaign_id)
+    if not campaign:
+        abort(404)
+
+    form = CommunicationSendForm()
+    recipients = list(campaign.recipients)
+    role_counts = _campaign_role_counts(campaign)
+    status_counts = {status.value: 0 for status in CommunicationRecipientStatus}
+    for recipient in recipients:
+        status_counts[recipient.status.value] = status_counts.get(recipient.status.value, 0) + 1
+
+    if form.validate_on_submit():
+        if campaign.status not in {CommunicationStatus.DRAFT, CommunicationStatus.FAILED}:
+            flash("This campaign has already been processed.", "info")
+            return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+        if not _sendgrid_configured():
+            flash("SendGrid is not configured. Update the settings before sending.", "error")
+            return redirect(url_for("web.admin_communications_preview", campaign_id=campaign.id))
+        campaign.sent_by = _current_admin()
+        campaign.status = CommunicationStatus.SENDING
+        db.session.flush()
+        result = _deliver_campaign(campaign, only_failed=False)
+        if result["sent"]:
+            campaign.sent_at = datetime.utcnow()
+        db.session.flush()
+        log_activity(
+            "communication_campaign_sent",
+            f"Campaign '{campaign.subject}' dispatched",
+            object_type="communication_campaign",
+            object_id=campaign.id,
+            details={
+                "sent": result["sent"],
+                "failed": result["failed"],
+                "total": campaign.total_recipients,
+            },
+        )
+        db.session.commit()
+        if result["sent"] and not result["failed"]:
+            flash("Email sent to all recipients.", "success")
+        elif result["sent"]:
+            flash(
+                f"Email sent, but {result['failed']} recipient(s) failed. Review the campaign log for details.",
+                "warning",
+            )
+        else:
+            flash("No emails were sent. All recipients may have already been processed.", "info")
+        return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+    if request.method == "POST":
+        flash("Confirm the send before continuing.", "error")
+
+    return render_template(
+        "admin/communications/preview.html",
+        campaign=campaign,
+        form=form,
+        role_counts=role_counts,
+        status_counts=status_counts,
+        sample_recipients=_campaign_sample_recipients(campaign, limit=10),
+        sendgrid_ready=_sendgrid_configured(),
+        CommunicationRecipientStatus=CommunicationRecipientStatus,
+        CommunicationRecipientRole=CommunicationRecipientRole,
+    )
+
+
+@web_bp.route("/admin/communications/<int:campaign_id>")
+def admin_communications_detail(campaign_id: int):
+    if not _current_admin():
+        abort(403)
+    campaign = db.session.get(CommunicationCampaign, campaign_id)
+    if not campaign:
+        abort(404)
+
+    recipients = list(campaign.recipients)
+    status_counts = {status.value: 0 for status in CommunicationRecipientStatus}
+    for recipient in recipients:
+        status_counts[recipient.status.value] = status_counts.get(recipient.status.value, 0) + 1
+    role_counts = _campaign_role_counts(campaign)
+
+    status_filter_value = request.args.get("status")
+    status_filter = None
+    if status_filter_value:
+        try:
+            status_filter = CommunicationRecipientStatus(status_filter_value)
+        except ValueError:
+            status_filter = None
+    if status_filter:
+        recipients = [recipient for recipient in recipients if recipient.status == status_filter]
+
+    recipients.sort(
+        key=lambda recipient: (
+            recipient.role.value,
+            (recipient.last_name or "").lower(),
+            (recipient.first_name or "").lower(),
+            recipient.email.lower(),
+        )
+    )
+
+    retry_form = CommunicationRetryForm()
+
+    return render_template(
+        "admin/communications/detail.html",
+        campaign=campaign,
+        recipients=recipients,
+        status_counts=status_counts,
+        role_counts=role_counts,
+        status_filter=status_filter.value if status_filter else "all",
+        sendgrid_ready=_sendgrid_configured(),
+        retry_form=retry_form,
+        CommunicationRecipientStatus=CommunicationRecipientStatus,
+        CommunicationRecipientRole=CommunicationRecipientRole,
+    )
+
+
+@web_bp.route("/admin/communications/<int:campaign_id>/resend-failed", methods=["POST"])
+def admin_communications_resend_failed(campaign_id: int):
+    if not _current_admin():
+        abort(403)
+    form = CommunicationRetryForm()
+    if not form.validate_on_submit():
+        flash("Unable to process the request.", "error")
+        return redirect(url_for("web.admin_communications_detail", campaign_id=campaign_id))
+    campaign = db.session.get(CommunicationCampaign, campaign_id)
+    if not campaign:
+        abort(404)
+
+    failed_recipients = [recipient for recipient in campaign.recipients if recipient.status == CommunicationRecipientStatus.FAILED]
+    if not failed_recipients:
+        flash("There are no failed recipients to resend.", "info")
+        return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+    if not _sendgrid_configured():
+        flash("SendGrid is not configured. Update the settings before resending.", "error")
+        return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+    campaign.sent_by = _current_admin()
+    campaign.status = CommunicationStatus.SENDING
+    db.session.flush()
+    result = _deliver_campaign(campaign, only_failed=True)
+    if result["sent"]:
+        campaign.sent_at = datetime.utcnow()
+    db.session.flush()
+    log_activity(
+        "communication_campaign_resend_failed",
+        f"Resent failed recipients for campaign '{campaign.subject}'",
+        object_type="communication_campaign",
+        object_id=campaign.id,
+        details={
+            "resent": result["sent"],
+            "remaining_failures": campaign.failed_count,
+        },
+    )
+    db.session.commit()
+
+    if result["sent"] and not result["failed"]:
+        flash("Failed recipients resent successfully.", "success")
+    elif result["sent"]:
+        flash(
+            f"Retried {result['sent']} recipient(s), but {result['failed']} still failed.",
+            "warning",
+        )
+    else:
+        flash("No failed recipients were resent. Review the campaign details.", "info")
+    return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+
+@web_bp.route("/admin/surveys")
+def admin_surveys():
+    if not _current_admin():
+        abort(403)
+
+    surveys = (
+        Survey.query.options(
+            joinedload(Survey.assignments).joinedload(SurveyAssignment.teacher),
+            joinedload(Survey.assignments).joinedload(SurveyAssignment.student),
+        )
+        .order_by(Survey.created_at.desc())
+        .all()
+    )
+
+    survey_ids = [survey.id for survey in surveys]
+    response_counts: dict[int, int] = {}
+    if survey_ids:
+        rows = (
+            db.session.query(SurveyResponse.survey_id, func.count(SurveyResponse.id))
+            .filter(SurveyResponse.survey_id.in_(survey_ids))
+            .group_by(SurveyResponse.survey_id)
+            .all()
+        )
+        response_counts = {survey_id: count for survey_id, count in rows}
+
+    stats: dict[int, dict[str, int]] = {}
+    for survey in surveys:
+        total = len(survey.assignments)
+        completed = sum(1 for assignment in survey.assignments if assignment.status == SurveyAssignmentStatus.COMPLETED)
+        stats[survey.id] = {
+            "total": total,
+            "completed": completed,
+            "pending": total - completed,
+            "responses": response_counts.get(survey.id, 0),
+        }
+
+    return render_template(
+        "admin/surveys/index.html",
+        surveys=surveys,
+        stats=stats,
+        SurveyStatus=SurveyStatus,
+        SurveyAudience=SurveyAudience,
+    )
+
+
+@web_bp.route("/admin/surveys/new", methods=["GET", "POST"])
+def admin_new_survey():
+    if not _current_admin():
+        abort(403)
+
+    form = SurveyForm()
+    form.submit.label.text = "Create survey"
+
+    if form.validate_on_submit():
+        survey = Survey(
+            title=form.title.data.strip(),
+            description=(form.description.data.strip() or None) if form.description.data else None,
+            audience=SurveyAudience(form.audience.data),
+            allow_edit=bool(form.allow_edit.data),
+            open_at=form.open_at.data,
+            close_at=form.close_at.data,
+            status=SurveyStatus.DRAFT,
+            created_by=_current_admin(),
+        )
+        db.session.add(survey)
+        db.session.flush()
+        log_activity(
+            "survey_created",
+            f"Survey '{survey.title}' created",
+            object_type="survey",
+            object_id=survey.id,
+            details={
+                "audience": survey.audience.value,
+                "allow_edit": survey.allow_edit,
+            },
+        )
+        db.session.commit()
+        flash("Survey created. Add questions before publishing.", "success")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+
+    return render_template(
+        "admin/surveys/edit.html",
+        form=form,
+        question_form=None,
+        survey=None,
+        questions=[],
+        can_edit=True,
+        SurveyStatus=SurveyStatus,
+        responses_count=0,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/edit", methods=["GET", "POST"])
+def admin_edit_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+
+    form = SurveyForm(obj=survey)
+    form.submit.label.text = "Save changes"
+    question_form = SurveyQuestionForm()
+    question_form.submit.label.text = "Add question"
+    can_edit = survey.status == SurveyStatus.DRAFT
+    responses_count = (
+        db.session.query(func.count(SurveyResponse.id)).filter_by(survey_id=survey.id).scalar()
+    )
+
+    if request.method == "POST":
+        form_name = request.form.get("form_name")
+        if form_name == "survey":
+            if not can_edit:
+                flash("Published surveys cannot be edited.", "error")
+            elif form.validate():
+                survey.title = form.title.data.strip()
+                survey.description = (form.description.data.strip() or None) if form.description.data else None
+                survey.audience = SurveyAudience(form.audience.data)
+                survey.allow_edit = bool(form.allow_edit.data)
+                survey.open_at = form.open_at.data
+                survey.close_at = form.close_at.data
+                db.session.flush()
+                log_activity(
+                    "survey_updated",
+                    f"Survey '{survey.title}' updated",
+                    object_type="survey",
+                    object_id=survey.id,
+                    details={
+                        "audience": survey.audience.value,
+                        "allow_edit": survey.allow_edit,
+                    },
+                )
+                db.session.commit()
+                flash("Survey details updated.", "success")
+                return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+        elif form_name == "question":
+            if not can_edit:
+                flash("Questions cannot be modified once the survey is published.", "error")
+            elif question_form.validate():
+                question = SurveyQuestion(
+                    survey=survey,
+                    prompt=question_form.prompt.data.strip(),
+                    help_text=(question_form.help_text.data.strip() or None) if question_form.help_text.data else None,
+                    type=SurveyQuestionType(question_form.type.data),
+                    required=bool(question_form.required.data),
+                    options=_parse_survey_options(question_form.options_text.data, question_form.type.data),
+                )
+                question.position = _next_question_position(survey)
+                db.session.add(question)
+                db.session.flush()
+                log_activity(
+                    "survey_question_created",
+                    f"Question added to survey '{survey.title}'",
+                    object_type="survey_question",
+                    object_id=question.id,
+                    details={
+                        "survey_id": survey.id,
+                        "type": question.type.value,
+                        "required": question.required,
+                    },
+                )
+                db.session.commit()
+                flash("Question added.", "success")
+                return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+    questions = _ordered_survey_questions(survey)
+    if request.method == "GET":
+        form.open_at.data = survey.open_at
+        form.close_at.data = survey.close_at
+
+    return render_template(
+        "admin/surveys/edit.html",
+        survey=survey,
+        form=form,
+        question_form=question_form,
+        questions=questions,
+        can_edit=can_edit,
+        SurveyQuestionType=SurveyQuestionType,
+        SurveyStatus=SurveyStatus,
+        responses_count=responses_count,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/preview")
+def admin_preview_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    questions = _ordered_survey_questions(survey)
+    return render_template(
+        "admin/surveys/preview.html",
+        survey=survey,
+        questions=questions,
+        SurveyQuestionType=SurveyQuestionType,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/questions/<int:question_id>/edit", methods=["GET", "POST"])
+def admin_edit_survey_question(survey_id: int, question_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    question = db.session.get(SurveyQuestion, question_id)
+    if not survey or not question or question.survey_id != survey.id:
+        abort(404)
+    if survey.status != SurveyStatus.DRAFT:
+        flash("Published surveys cannot be edited.", "error")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+
+    form = SurveyQuestionForm(obj=question)
+    form.submit.label.text = "Save question"
+    if request.method == "GET":
+        form.options_text.data = "\n".join(question.options or [])
+
+    if form.validate_on_submit():
+        question.prompt = form.prompt.data.strip()
+        question.help_text = (form.help_text.data.strip() or None) if form.help_text.data else None
+        question.type = SurveyQuestionType(form.type.data)
+        question.required = bool(form.required.data)
+        question.options = _parse_survey_options(form.options_text.data, form.type.data)
+        db.session.flush()
+        log_activity(
+            "survey_question_updated",
+            f"Question '{question.prompt}' updated",
+            object_type="survey_question",
+            object_id=question.id,
+            details={
+                "survey_id": survey.id,
+                "type": question.type.value,
+                "required": question.required,
+            },
+        )
+        db.session.commit()
+        flash("Question updated.", "success")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+    return render_template(
+        "admin/surveys/question_edit.html",
+        survey=survey,
+        question=question,
+        form=form,
+        SurveyQuestionType=SurveyQuestionType,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/questions/<int:question_id>/delete", methods=["POST"])
+def admin_delete_survey_question(survey_id: int, question_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    question = db.session.get(SurveyQuestion, question_id)
+    if not survey or not question or question.survey_id != survey.id:
+        abort(404)
+    if survey.status != SurveyStatus.DRAFT:
+        flash("Published surveys cannot be modified.", "error")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+    db.session.delete(question)
+    _normalize_question_positions(survey)
+    db.session.flush()
+    log_activity(
+        "survey_question_deleted",
+        f"Question removed from survey '{survey.title}'",
+        object_type="survey_question",
+        object_id=question_id,
+        details={"survey_id": survey.id},
+    )
+    db.session.commit()
+    flash("Question deleted.", "success")
+    return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+
+@web_bp.route(
+    "/admin/surveys/<int:survey_id>/questions/<int:question_id>/move/<string:direction>",
+    methods=["POST"],
+)
+def admin_move_survey_question(survey_id: int, question_id: int, direction: str):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    question = db.session.get(SurveyQuestion, question_id)
+    if not survey or not question or question.survey_id != survey.id:
+        abort(404)
+    if survey.status != SurveyStatus.DRAFT:
+        flash("Published surveys cannot be modified.", "error")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+    direction = direction.lower()
+    if direction not in {"up", "down"}:
+        abort(400)
+
+    ordered = _ordered_survey_questions(survey)
+    current_index = next((index for index, item in enumerate(ordered) if item.id == question.id), None)
+    if current_index is None:
+        abort(404)
+    swap_index = current_index - 1 if direction == "up" else current_index + 1
+    if swap_index < 0 or swap_index >= len(ordered):
+        flash("Question already at the boundary.", "info")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+    ordered[current_index], ordered[swap_index] = ordered[swap_index], ordered[current_index]
+    for idx, item in enumerate(ordered, start=1):
+        item.position = idx
+    db.session.flush()
+    log_activity(
+        "survey_question_reordered",
+        f"Question reorder in survey '{survey.title}'",
+        object_type="survey_question",
+        object_id=question.id,
+        details={"survey_id": survey.id, "direction": direction},
+    )
+    db.session.commit()
+    flash("Question order updated.", "success")
+    return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/publish", methods=["GET", "POST"])
+def admin_publish_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    if survey.status != SurveyStatus.DRAFT:
+        flash("Only draft surveys can be published.", "error")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+    if not survey.questions:
+        flash("Add at least one question before publishing.", "error")
+        return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+
+    form = SurveyPublishForm()
+    teacher_choices: list[tuple[int, str]] = []
+    student_choices: list[tuple[int, str]] = []
+
+    if survey.audience in (SurveyAudience.TEACHER, SurveyAudience.MIXED):
+        teacher_choices = [
+            (teacher.id, f"{teacher.first_name} {teacher.last_name} — {teacher.country}")
+            for teacher in Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
+        ]
+    if survey.audience in (SurveyAudience.STUDENT, SurveyAudience.MIXED):
+        student_choices = [
+            (student.id, f"{student.first_name} {student.last_name} — {student.country}")
+            for student in Student.query.order_by(Student.last_name.asc(), Student.first_name.asc()).all()
+        ]
+
+    form.teacher_ids.choices = teacher_choices
+    form.student_ids.choices = student_choices
+    if not form.is_submitted():
+        form.notify_recipients.data = True
+
+    if form.validate_on_submit():
+        selected_teacher_ids: set[int] = set(form.teacher_ids.data or [])
+        selected_student_ids: set[int] = set(form.student_ids.data or [])
+
+        if survey.audience == SurveyAudience.TEACHER and (form.send_to_all_students.data or selected_student_ids):
+            form.student_ids.errors.append("This survey targets teachers only.")
+            return render_template(
+                "admin/surveys/publish.html",
+                survey=survey,
+                form=form,
+                teacher_choices=teacher_choices,
+                student_choices=student_choices,
+            )
+        if survey.audience == SurveyAudience.STUDENT and (form.send_to_all_teachers.data or selected_teacher_ids):
+            form.teacher_ids.errors.append("This survey targets students only.")
+            return render_template(
+                "admin/surveys/publish.html",
+                survey=survey,
+                form=form,
+                teacher_choices=teacher_choices,
+                student_choices=student_choices,
+            )
+
+        if form.send_to_all_teachers.data:
+            selected_teacher_ids = {choice[0] for choice in teacher_choices}
+        if form.send_to_all_students.data:
+            selected_student_ids = {choice[0] for choice in student_choices}
+
+        if not selected_teacher_ids and not selected_student_ids:
+            flash("No recipients available for the selected audience.", "error")
+            return render_template(
+                "admin/surveys/publish.html",
+                survey=survey,
+                form=form,
+                teacher_choices=teacher_choices,
+                student_choices=student_choices,
+            )
+
+        new_assignments = _create_survey_assignments(
+            survey,
+            teacher_ids=selected_teacher_ids,
+            student_ids=selected_student_ids,
+        )
+        if not new_assignments:
+            flash("All selected recipients already have assignments.", "warning")
+            return render_template(
+                "admin/surveys/publish.html",
+                survey=survey,
+                form=form,
+                teacher_choices=teacher_choices,
+                student_choices=student_choices,
+            )
+        survey.status = SurveyStatus.PUBLISHED
+        if not survey.open_at:
+            survey.open_at = datetime.utcnow()
+        db.session.flush()
+        log_activity(
+            "survey_published",
+            f"Survey '{survey.title}' published",
+            object_type="survey",
+            object_id=survey.id,
+            details={
+                "assignments": len(new_assignments),
+                "audience": survey.audience.value,
+            },
+        )
+        db.session.commit()
+
+        notify_sent = None
+        if form.notify_recipients.data:
+            notify_sent = _send_survey_emails(new_assignments, SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT, SETTING_EMAIL_SURVEY_PUBLISH_BODY)
+            if notify_sent > 0:
+                log_activity(
+                    "survey_notification_sent",
+                    f"Survey '{survey.title}' notifications sent",
+                    object_type="survey",
+                    object_id=survey.id,
+                    details={"recipients": notify_sent},
+                )
+                db.session.commit()
+
+        message = f"Survey published to {len(new_assignments)} recipients."
+        if notify_sent is not None:
+            if notify_sent == -1:
+                message += " Email notifications are disabled."
+            elif notify_sent == 0:
+                message += " No notification emails were sent."
+            else:
+                message += f" Notifications sent to {notify_sent} recipients."
+        flash(message, "success")
+        return redirect(url_for("web.admin_surveys"))
+
+    return render_template(
+        "admin/surveys/publish.html",
+        survey=survey,
+        form=form,
+        teacher_choices=teacher_choices,
+        student_choices=student_choices,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/close", methods=["POST"])
+def admin_close_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    if survey.status != SurveyStatus.PUBLISHED:
+        flash("Only published surveys can be closed.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    survey.status = SurveyStatus.CLOSED
+    if not survey.close_at:
+        survey.close_at = datetime.utcnow()
+    db.session.flush()
+    log_activity(
+        "survey_closed",
+        f"Survey '{survey.title}' closed",
+        object_type="survey",
+        object_id=survey.id,
+    )
+    db.session.commit()
+    flash("Survey closed.", "success")
+    return redirect(url_for("web.admin_surveys"))
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/reopen", methods=["POST"])
+def admin_reopen_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    if survey.status != SurveyStatus.CLOSED:
+        flash("Only closed surveys can be reopened.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    survey.status = SurveyStatus.PUBLISHED
+    survey.close_at = None
+    if not survey.open_at:
+        survey.open_at = datetime.utcnow()
+    db.session.flush()
+    log_activity(
+        "survey_reopened",
+        f"Survey '{survey.title}' reopened",
+        object_type="survey",
+        object_id=survey.id,
+    )
+    db.session.commit()
+    flash("Survey reopened.", "success")
+    return redirect(url_for("web.admin_surveys"))
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/unpublish", methods=["POST"])
+def admin_unpublish_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    if survey.status != SurveyStatus.PUBLISHED:
+        flash("Only published surveys can be unpublished.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    response_exists = (
+        db.session.query(SurveyResponse.id).filter_by(survey_id=survey.id).limit(1).first() is not None
+    )
+    if response_exists:
+        flash("This survey already has responses and cannot be unpublished.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    for assignment in list(survey.assignments):
+        db.session.delete(assignment)
+
+    survey.status = SurveyStatus.DRAFT
+    survey.open_at = None
+    survey.close_at = None
+    db.session.flush()
+    log_activity(
+        "survey_unpublished",
+        f"Survey '{survey.title}' reverted to draft",
+        object_type="survey",
+        object_id=survey.id,
+    )
+    db.session.commit()
+    flash("Survey moved back to draft. Assignments were removed.", "success")
+    return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/delete", methods=["POST"])
+def admin_delete_survey(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+    if survey.status != SurveyStatus.DRAFT:
+        flash("Only draft surveys can be deleted.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    title = survey.title
+    db.session.delete(survey)
+    db.session.flush()
+    log_activity(
+        "survey_deleted",
+        f"Survey '{title}' deleted",
+        object_type="survey",
+        object_id=survey_id,
+    )
+    db.session.commit()
+    flash("Survey deleted.", "success")
+    return redirect(url_for("web.admin_surveys"))
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/responses")
+def admin_survey_responses(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = (
+        Survey.query.options(joinedload(Survey.questions)).filter(Survey.id == survey_id).first()
+    )
+    if not survey:
+        abort(404)
+
+    questions = _ordered_survey_questions(survey)
+    rows = _survey_assignment_rows(survey)
+    audience_filter = request.args.get("audience", "all").lower()
+    if audience_filter not in {"all", "teacher", "student"}:
+        audience_filter = "all"
+    status_filter = request.args.get("status", "all").lower()
+    if status_filter not in {"all", "completed", "outstanding"}:
+        status_filter = "all"
+
+    filtered_rows = _filter_survey_rows(rows, audience_filter, status_filter)
+    summary = _survey_summary_from_rows(filtered_rows)
+    export_url = url_for(
+        "web.admin_survey_responses_export",
+        survey_id=survey.id,
+        audience=audience_filter,
+        status=status_filter,
+    )
+
+    return render_template(
+        "admin/surveys/responses.html",
+        survey=survey,
+        questions=questions,
+        rows=filtered_rows,
+        summary=summary,
+        audience_filter=audience_filter,
+        status_filter=status_filter,
+        export_url=export_url,
+        SurveyAssignmentStatus=SurveyAssignmentStatus,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/responses/<int:assignment_id>")
+def admin_survey_response_detail(survey_id: int, assignment_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+
+    assignment = (
+        SurveyAssignment.query.options(
+            joinedload(SurveyAssignment.response),
+            joinedload(SurveyAssignment.teacher),
+            joinedload(SurveyAssignment.student),
+            joinedload(SurveyAssignment.survey).joinedload(Survey.questions),
+        )
+        .filter(
+            SurveyAssignment.id == assignment_id,
+            SurveyAssignment.survey_id == survey_id,
+        )
+        .first()
+    )
+    if not assignment:
+        abort(404)
+
+    questions = _ordered_survey_questions(survey)
+    answers = _survey_display_data(assignment.response.response_data if assignment.response else {})
+    state = _survey_assignment_state(assignment)
+
+    if assignment.teacher:
+        respondent_type = "teacher"
+        respondent_name = f"{assignment.teacher.first_name} {assignment.teacher.last_name}"
+        respondent_email = assignment.teacher.email
+        respondent_country = assignment.teacher.country
+    elif assignment.student:
+        respondent_type = "student"
+        respondent_name = f"{assignment.student.first_name} {assignment.student.last_name}"
+        respondent_email = assignment.student.email
+        respondent_country = assignment.student.country
+    else:
+        respondent_type = "unknown"
+        respondent_name = "—"
+        respondent_email = None
+        respondent_country = None
+
+    audience_filter = request.args.get("audience", "all").lower()
+    if audience_filter not in {"all", "teacher", "student"}:
+        audience_filter = "all"
+    status_filter = request.args.get("status", "all").lower()
+    if status_filter not in {"all", "completed", "outstanding"}:
+        status_filter = "all"
+    back_url = url_for(
+        "web.admin_survey_responses",
+        survey_id=survey.id,
+        audience=audience_filter,
+        status=status_filter,
+    )
+
+    return render_template(
+        "admin/surveys/response_detail.html",
+        survey=survey,
+        assignment=assignment,
+        questions=questions,
+        answers=answers,
+        state=state,
+        respondent_type=respondent_type,
+        respondent_name=respondent_name,
+        respondent_email=respondent_email,
+        respondent_country=respondent_country,
+        audience_filter=audience_filter,
+        status_filter=status_filter,
+        back_url=back_url,
+        SurveyAssignmentStatus=SurveyAssignmentStatus,
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/responses.xlsx")
+def admin_survey_responses_export(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = (
+        Survey.query.options(joinedload(Survey.questions)).filter(Survey.id == survey_id).first()
+    )
+    if not survey:
+        abort(404)
+
+    questions = _ordered_survey_questions(survey)
+    audience_filter = request.args.get("audience", "all").lower()
+    if audience_filter not in {"all", "teacher", "student"}:
+        audience_filter = "all"
+    status_filter = request.args.get("status", "all").lower()
+    if status_filter not in {"all", "completed", "outstanding"}:
+        status_filter = "all"
+
+    rows = _filter_survey_rows(_survey_assignment_rows(survey), audience_filter, status_filter)
+    workbook = _survey_responses_workbook(survey, rows, questions)
+    filename = secure_filename(f"survey-{survey.id}-responses.xlsx") or "survey-responses.xlsx"
+    return send_file(
+        workbook,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@web_bp.route("/admin/surveys/<int:survey_id>/remind", methods=["POST"])
+def admin_survey_send_reminder(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    audience_filter = request.form.get("audience", "all").lower()
+    if audience_filter not in {"all", "teacher", "student"}:
+        audience_filter = "all"
+    status_filter = request.form.get("status", "outstanding").lower()
+    if status_filter not in {"all", "completed", "outstanding"}:
+        status_filter = "outstanding"
+
+    survey = (
+        Survey.query.options(joinedload(Survey.questions)).filter(Survey.id == survey_id).first()
+    )
+    if not survey:
+        abort(404)
+
+    back_url = url_for(
+        "web.admin_survey_responses",
+        survey_id=survey_id,
+        audience=audience_filter,
+        status=status_filter,
+    )
+
+    rows = _filter_survey_rows(_survey_assignment_rows(survey), audience_filter, status_filter)
+    assignments = [
+        row.assignment
+        for row in rows
+        if row.assignment.status != SurveyAssignmentStatus.COMPLETED and not row.state.locked
+    ]
+
+    if not assignments:
+        flash("No outstanding recipients found for the selected filters.", "info")
+        return redirect(back_url)
+
+    sent = _send_survey_emails(assignments, SETTING_EMAIL_SURVEY_REMINDER_SUBJECT, SETTING_EMAIL_SURVEY_REMINDER_BODY)
+    if sent == -1:
+        flash("Automatic emails are disabled. Enable them in Settings to send reminders.", "warning")
+        return redirect(back_url)
+    if sent == 0:
+        flash("No reminder emails were sent.", "info")
+        return redirect(back_url)
+
+    log_activity(
+        "survey_reminder_sent",
+        f"Survey '{survey.title}' reminders sent",
+        object_type="survey",
+        object_id=survey.id,
+        details={
+            "recipients": sent,
+            "audience_filter": audience_filter,
+            "status_filter": status_filter,
+        },
+    )
+    db.session.commit()
+    flash(f"Reminder emails sent to {sent} recipients.", "success")
+    return redirect(back_url)
+
+
 @web_bp.route("/admin/logs")
 def admin_logs():
     if not _current_admin():
@@ -3303,6 +5754,88 @@ def login():
     )
 
 
+@teacher_portal_bp.route("/reset", methods=["GET", "POST"])
+def reset_request():
+    form = PasswordResetRequestForm()
+    submitted = False
+    email_sent = False
+    token_generated = False
+    if form.validate_on_submit():
+        email = form.email.data.lower().strip()
+        teacher = Teacher.query.filter_by(email=email, is_absent=False).first()
+        if teacher:
+            reset_token = _create_teacher_reset_token(teacher)
+            db.session.flush()
+            log_activity(
+                "teacher_password_reset_requested",
+                f"Teacher {teacher.first_name} {teacher.last_name} requested portal reset",
+                object_type="teacher",
+                object_id=teacher.id,
+                details={"email": teacher.email, "portal_username": teacher.portal_username, "reset_token_id": reset_token.id},
+            )
+            db.session.commit()
+            token_generated = True
+            if _auto_email_enabled() and teacher.email:
+                _send_teacher_reset_link_email(teacher, reset_token)
+                email_sent = True
+        submitted = True
+    return render_template(
+        "teacher_portal/reset_request.html",
+        form=form,
+        submitted=submitted,
+        email_sent=email_sent,
+        auto_email_enabled=_auto_email_enabled(),
+        token_generated=token_generated,
+    )
+
+
+@teacher_portal_bp.route("/reset/<string:token>", methods=["GET", "POST"])
+def reset_token(token: str):
+    form = PasswordResetConfirmForm()
+    reset_token = _load_reset_token(token, PasswordResetAudience.TEACHER)
+    is_valid, reason = _reset_token_status(reset_token)
+    state = "ready" if is_valid else "invalid"
+    plain_password: str | None = None
+    email_sent = False
+    auto_email_enabled = _auto_email_enabled()
+
+    if form.validate_on_submit():
+        if not is_valid or not reset_token or not reset_token.teacher:
+            state = "invalid"
+        else:
+            _, plain_password = _ensure_teacher_portal_credentials(reset_token.teacher, reset_password=True)
+            reset_token.used_at = datetime.utcnow()
+            db.session.flush()
+            log_activity(
+                "teacher_password_reset_completed",
+                f"Teacher {reset_token.teacher.first_name} {reset_token.teacher.last_name} completed portal reset",
+                object_type="teacher",
+                object_id=reset_token.teacher.id,
+                details={
+                    "email": reset_token.teacher.email,
+                    "portal_username": reset_token.teacher.portal_username,
+                    "reset_token_id": reset_token.id,
+                },
+            )
+            db.session.commit()
+            if plain_password and auto_email_enabled and reset_token.teacher.email:
+                _send_teacher_reset_email(reset_token.teacher, plain_password)
+                email_sent = True
+            state = "completed"
+            reason = None
+            is_valid = False
+
+    return render_template(
+        "teacher_portal/reset_token.html",
+        form=form,
+        state=state,
+        reason=reason,
+        token_entry=reset_token,
+        plain_password=plain_password,
+        email_sent=email_sent,
+        auto_email_enabled=auto_email_enabled,
+    )
+
 @teacher_portal_bp.route("/logout")
 def logout():
     teacher = _teacher_portal_from_session()
@@ -3349,6 +5882,16 @@ def dashboard():
 
     stage1_summary = _summary(stage1_entries)
     stage2_summary = _summary(stage2_entries)
+    stage1_locked = _is_stage_locked(Stage.STAGE_1)
+    stage2_locked = _is_stage_locked(Stage.STAGE_2)
+    teacher_survey_assignments = _survey_assignments_for_user(teacher=teacher)
+    teacher_survey_items, teacher_survey_summary = _prepare_survey_assignment_view(
+        teacher_survey_assignments,
+        lambda assignment_id: url_for("teacher_portal.survey_detail", assignment_id=assignment_id),
+    )
+    teacher_survey_outstanding = [
+        item for item in teacher_survey_items if not item.is_completed and not item.state.locked
+    ][:3]
 
     messages = (
         TeacherMessage.query.filter(TeacherMessage.status == TeacherMessageStatus.ACTIVE)
@@ -3373,8 +5916,98 @@ def dashboard():
         stage2_entries=stage2_entries,
         stage1_summary=stage1_summary,
         stage2_summary=stage2_summary,
+        stage1_locked=stage1_locked,
+        stage2_locked=stage2_locked,
+        survey_assignments=teacher_survey_items,
+        survey_summary=teacher_survey_summary,
+        survey_outstanding=teacher_survey_outstanding,
         messages=messages,
         stage_labels=STAGE_LABELS,
+    )
+
+
+@teacher_portal_bp.route("/surveys")
+def surveys():
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+
+    assignments = _survey_assignments_for_user(teacher=teacher)
+    items, summary = _prepare_survey_assignment_view(
+        assignments,
+        lambda assignment_id: url_for("teacher_portal.survey_detail", assignment_id=assignment_id),
+    )
+    outstanding = [item for item in items if not item.is_completed and not item.state.locked]
+    closed = [item for item in items if not item.is_completed and item.state.locked]
+    completed = [item for item in items if item.is_completed]
+
+    return render_template(
+        "teacher_portal/surveys.html",
+        teacher=teacher,
+        assignments=items,
+        summary=summary,
+        outstanding=outstanding,
+        closed=closed,
+        completed=completed,
+    )
+
+
+@teacher_portal_bp.route("/surveys/<int:assignment_id>", methods=["GET", "POST"])
+def survey_detail(assignment_id: int):
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+
+    assignment = _load_survey_assignment(assignment_id, teacher=teacher)
+    if not assignment or not assignment.survey:
+        abort(404)
+    survey = assignment.survey
+    if survey.status == SurveyStatus.DRAFT:
+        abort(404)
+
+    questions = _ordered_survey_questions(survey)
+    existing_data = _survey_display_data(assignment.response.response_data if assignment.response else {})
+    state = _survey_assignment_state(assignment)
+    form = SurveyResponseForm()
+    errors: dict[int, str] = {}
+
+    if form.validate_on_submit():
+        if state.locked:
+            flash("This survey is not available for editing.", "info")
+        else:
+            answers, errors = _parse_survey_submission(questions, request.form)
+            if not errors:
+                _save_survey_response(
+                    assignment,
+                    answers,
+                    respondent_type="teacher",
+                    respondent_id=teacher.id,
+                    actor=teacher.portal_username or teacher.email,
+                )
+                db.session.commit()
+                flash("Survey response saved.", "success")
+                return redirect(url_for("teacher_portal.survey_detail", assignment_id=assignment.id))
+            existing_data = _survey_display_data(answers)
+            flash("Please correct the errors below.", "error")
+        state = _survey_assignment_state(assignment)
+
+    button_label = "Update response" if assignment.status == SurveyAssignmentStatus.COMPLETED else "Submit response"
+
+    return render_template(
+        "teacher_portal/survey_detail.html",
+        teacher=teacher,
+        assignment=assignment,
+        survey=survey,
+        questions=questions,
+        form=form,
+        existing_data=existing_data,
+        errors=errors,
+        state=state,
+        button_label=button_label,
+        SurveyQuestionType=SurveyQuestionType,
+        SurveyAssignmentStatus=SurveyAssignmentStatus,
     )
 
 
@@ -3430,9 +6063,10 @@ def assignment_detail(assignment_id: int, stage: str):
     status_info = _resolve_portal_status(student, score_record, pdf_available, locked=combined_lock)
     essay_available = status_info.code not in {"awaiting_finalization", "waiting_upload"}
     can_edit = essay_available and not combined_lock and (not score_record or not score_record.teacher_finalized)
+    download_allowed = essay_available and not (stage_global_lock or assignment_lock)
     download_url = (
         url_for("teacher_portal.download_assignment", assignment_id=assignment.id, stage=stage_enum.value)
-        if essay_available
+        if download_allowed
         else None
     )
     group_label = assignment.group.name or str(assignment.group.id) if assignment.group else "—"
@@ -3692,6 +6326,43 @@ def edit_student(student_id: int):
     )
 
 
+@web_bp.route("/admin/students/<int:student_id>/reset-password", methods=["POST"])
+def admin_student_reset_password(student_id: int):
+    if not _current_admin():
+        abort(403)
+    student = db.session.get(Student, student_id)
+    if not student:
+        abort(404)
+
+    _, plain_password = _ensure_student_credentials(student, reset_password=True)
+    db.session.flush()
+    log_activity(
+        "student_password_reset",
+        f"Student {student.first_name} {student.last_name} portal password reset",
+        object_type="student",
+        object_id=student.id,
+        details={"upload_username": student.upload_username},
+    )
+    db.session.commit()
+
+    if plain_password:
+        if _auto_email_enabled() and student.email:
+            _send_student_reset_email(student, plain_password)
+            flash(
+                f"Portal password reset and emailed to {student.email}. New password: {plain_password}",
+                "success",
+            )
+        else:
+            flash(
+                f"Portal password reset. Automatic email is disabled; share this password manually: {plain_password}",
+                "warning",
+            )
+    else:
+        flash("Portal password reset, but no password was generated.", "error")
+
+    return redirect(url_for("web.admin_students"))
+
+
 @web_bp.route("/admin/teachers/<int:teacher_id>/edit", methods=["GET", "POST"])
 def edit_teacher(teacher_id: int):
     teacher = db.session.get(Teacher, teacher_id)
@@ -3755,6 +6426,43 @@ def edit_teacher(teacher_id: int):
         form_title="Edit teacher",
         show_absence_toggle=True,
     )
+
+
+@web_bp.route("/admin/teachers/<int:teacher_id>/reset-password", methods=["POST"])
+def admin_teacher_reset_password(teacher_id: int):
+    if not _current_admin():
+        abort(403)
+    teacher = db.session.get(Teacher, teacher_id)
+    if not teacher:
+        abort(404)
+
+    username, plain_password = _ensure_teacher_portal_credentials(teacher, reset_password=True)
+    db.session.flush()
+    log_activity(
+        "teacher_password_reset",
+        f"Teacher {teacher.first_name} {teacher.last_name} portal password reset",
+        object_type="teacher",
+        object_id=teacher.id,
+        details={"portal_username": username},
+    )
+    db.session.commit()
+
+    if plain_password:
+        if _auto_email_enabled() and teacher.email:
+            _send_teacher_reset_email(teacher, plain_password)
+            flash(
+                f"Portal password reset and emailed to {teacher.email}. New password: {plain_password}",
+                "success",
+            )
+        else:
+            flash(
+                f"Portal password reset. Automatic email is disabled; share this password manually: {plain_password}",
+                "warning",
+            )
+    else:
+        flash("Portal password reset, but no password was generated.", "error")
+
+    return redirect(url_for("web.admin_teachers"))
 
 
 @web_bp.route("/admin/uploads")
@@ -4863,6 +7571,213 @@ def admin_stage2_packet(assignment_id: int):
     output.seek(0)
     filename = f'stage2-packet-assignment-{assignment.id}.pdf'
     return send_file(output, mimetype='application/pdf', as_attachment=True, download_name=filename)
+
+
+@web_bp.route("/admin/stage3/packets", methods=["GET", "POST"])
+def admin_stage3_packets():
+    if not _current_admin():
+        abort(403)
+
+    assignments = (
+        EssayAssignment.query.options(
+            joinedload(EssayAssignment.student),
+            joinedload(EssayAssignment.group),
+        )
+        .filter(EssayAssignment.stage_three_recommended.is_(True))
+        .order_by(EssayAssignment.student_id.asc())
+        .all()
+    )
+
+    assignment_choices: list[tuple[int, str]] = []
+    assignment_lookup: dict[int, EssayAssignment] = {}
+    for assignment in assignments:
+        student = assignment.student
+        if not student:
+            continue
+        label = f"Essay {student.id} – {student.first_name} {student.last_name} ({student.country})"
+        assignment_choices.append((assignment.id, label))
+        assignment_lookup[assignment.id] = assignment
+
+    form = Stage3PacketForm()
+    form.essay_ids.choices = assignment_choices
+    if request.method == "GET":
+        form.essay_ids.data = [assignment_id for assignment_id, _ in assignment_choices]
+
+    if form.validate_on_submit():
+        raw_names = form.member_names.data.replace(",", "\n")
+        member_names = [name.strip() for name in raw_names.splitlines() if name.strip()]
+        if not member_names:
+            form.member_names.errors.append("Provide at least one committee member.")
+        else:
+            selected_ids = [int(essay_id) for essay_id in form.essay_ids.data or []]
+            selected_assignments = [assignment_lookup.get(essay_id) for essay_id in selected_ids]
+            selected_assignments = [assignment for assignment in selected_assignments if assignment and assignment.student]
+            if not selected_assignments:
+                form.essay_ids.errors.append("Select at least one essay to include.")
+            else:
+                committee_label = form.committee_label.data.strip() or "Steering Committee"
+                writer = PdfWriter()
+                double_sided = _packets_double_sided()
+                missing_files: list[int] = []
+                essay_ids_for_table = [
+                    assignment.student.id
+                    for assignment in selected_assignments
+                    if assignment.student
+                ]
+
+                for member_name in member_names:
+                    title_reader = _create_committee_title_page(member_name, committee_label, essay_ids_for_table)
+                    writer.add_page(title_reader.pages[0])
+                    if double_sided and selected_assignments:
+                        _add_blank_page(writer, title_reader.pages[0])
+
+                    for assignment in selected_assignments:
+                        student = assignment.student
+                        if not student:
+                            continue
+                        pdf_path = _essay_pdf_path(student)
+                        if not pdf_path:
+                            missing_files.append(student.id)
+                            continue
+                        try:
+                            reader = PdfReader(str(pdf_path))
+                        except Exception:
+                            missing_files.append(student.id)
+                            continue
+
+                        overlay_labels = [
+                            ("Committee", committee_label),
+                            ("Essay", student.id),
+                            ("Comments", ""),
+                        ]
+                        overlay_reader = _create_essay_overlay_page(
+                            reader.pages[0],
+                            None,
+                            assignment,
+                            header_text="IPO Stage 3 Review",
+                            labels=overlay_labels,
+                        )
+                        first_page = reader.pages[0]
+                        first_page.merge_page(overlay_reader.pages[0])
+                        writer.add_page(first_page)
+                        for page in reader.pages[1:]:
+                            writer.add_page(page)
+
+                        if double_sided and len(reader.pages) % 2 != 0:
+                            _add_blank_page(writer, reader.pages[0])
+
+                if not writer.pages:
+                    flash("No packets could be generated. Verify that the selected essays have uploads.", "error")
+                else:
+                    output = BytesIO()
+                    writer.write(output)
+                    output.seek(0)
+                    filename_label = committee_label.lower().replace(" ", "-")
+                    filename = f"stage3-{filename_label}-packets.pdf"
+                    log_activity(
+                        "stage3_packets_generated",
+                        f"Stage 3 packets generated for {len(member_names)} committee member(s).",
+                        details={
+                            "committee": committee_label,
+                            "members": member_names,
+                            "essay_ids": essay_ids_for_table,
+                        },
+                    )
+                    if missing_files:
+                        flash(
+                            "Some essays are missing uploads: " + ", ".join(str(sid) for sid in sorted(set(missing_files))),
+                            "warning",
+                        )
+                    return send_file(
+                        output,
+                        mimetype="application/pdf",
+                        as_attachment=True,
+                        download_name=filename,
+                    )
+
+    return render_template(
+        "admin/stage2/stage3_packets.html",
+        form=form,
+        assignments=assignments,
+    )
+
+
+@web_bp.route("/admin/grades-export", methods=["GET", "POST"])
+def admin_grades_export():
+    if not _current_admin():
+        abort(403)
+
+    form = GradesExportForm()
+    country_rows = (
+        db.session.query(Student.country)
+        .filter(Student.country.isnot(None))
+        .distinct()
+        .order_by(Student.country.asc())
+        .all()
+    )
+    form.countries.choices = [(country, country) for (country,) in country_rows if country]
+
+    if not form.is_submitted():
+        form.stages.data = ["stage1", "stage2"]
+        form.anonymize_teachers.data = True
+        form.include_timestamps.data = True
+
+    if form.validate_on_submit():
+        country_filter = {value for value in form.countries.data if value}
+        if not country_filter:
+            country_filter = None
+
+        stage_codes = set(form.stages.data or [])
+        stage3_only = "stage3" in stage_codes
+        stage_codes.discard("stage3")
+
+        selected_stage_enums: set[Stage] = set()
+        if "stage1" in stage_codes:
+            selected_stage_enums.add(Stage.STAGE_1)
+        if "stage2" in stage_codes:
+            selected_stage_enums.add(Stage.STAGE_2)
+        if not selected_stage_enums:
+            selected_stage_enums = {Stage.STAGE_1, Stage.STAGE_2}
+        if stage3_only and not stage_codes:
+            selected_stage_enums = {Stage.STAGE_1, Stage.STAGE_2}
+
+        rows = _grade_export_rows(
+            selected_stages=selected_stage_enums,
+            stage3_only=stage3_only,
+            countries=country_filter,
+            include_absent=bool(form.include_absent.data),
+            finalized_only=bool(form.finalized_only.data),
+        )
+        if not rows:
+            flash("No scores found for the selected filters.", "warning")
+        else:
+            students = _summarize_grade_rows(rows)
+            if not students:
+                flash("No scores found for the selected filters.", "warning")
+            else:
+                stage_order = [stage.value for stage in sorted(selected_stage_enums, key=lambda item: item.value)]
+                sort_key = form.sort_by.data or "student_id"
+                students.sort(key=lambda entry: _grades_sort_key(entry, sort_key), reverse=sort_key != "student_id")
+                group_by_country = (
+                    bool(form.group_by_country.data)
+                    and form.export_type.data == "xlsx"
+                    and bool(form.include_countries.data)
+                )
+                options = {
+                    "anonymize_students": bool(form.anonymize_students.data),
+                    "anonymize_teachers": bool(form.anonymize_teachers.data),
+                    "include_countries": bool(form.include_countries.data),
+                    "include_timestamps": bool(form.include_timestamps.data),
+                    "group_by_country": group_by_country,
+                    "compact_view": bool(form.compact_view.data),
+                    "stage_order": stage_order,
+                    "stage_slots": GRADE_STAGE_SLOTS,
+                }
+                if form.export_type.data == "xlsx":
+                    return _grades_export_xlsx(students, options)
+                return _grades_export_pdf(students, options)
+
+    return render_template("admin/grades/export.html", form=form)
 @web_bp.route("/admin/uploads/<int:assignment_id>/extra-reader-packet.pdf")
 def admin_extra_reader_packet(assignment_id: int):
     assignment = (
@@ -4945,10 +7860,17 @@ def admin_stage2_overview():
     )
     candidates = [a for a in assignments if a.student and not a.student.is_absent]
 
+    stage1_status_map: dict[int, SimpleNamespace] = {}
+    stage2_status_map: dict[int, SimpleNamespace] = {}
+    for assignment in candidates:
+        stage1_status_map[assignment.student_id] = _compute_stage_one_status(assignment)
+        stage2_status_map[assignment.student_id] = _compute_stage_two_status(assignment)
+
     return render_template(
         'admin/stage2/overview.html',
         assignments=candidates,
-        status_map={a.student_id: _compute_stage_one_status(a) for a in candidates},
+        stage1_status_map=stage1_status_map,
+        stage2_status_map=stage2_status_map,
     )
 
 
@@ -5313,6 +8235,505 @@ def admin_stage2_score_student(student_id: int):
         stage2_global_lock=stage2_global_lock,
         **_quick_message_context(),
     )
+
+def _ordered_survey_questions(survey: Survey) -> list[SurveyQuestion]:
+    return sorted(survey.questions, key=lambda question: (question.position or 0, question.id))
+
+
+def _next_question_position(survey: Survey) -> int:
+    if not survey.questions:
+        return 1
+    return max((question.position or 0) for question in survey.questions) + 1
+
+
+def _normalize_question_positions(survey: Survey) -> None:
+    for index, question in enumerate(_ordered_survey_questions(survey), start=1):
+        question.position = index
+
+
+def _parse_survey_options(options_text: str | None, question_type_value: str) -> list[str] | None:
+    try:
+        question_type = SurveyQuestionType(question_type_value)
+    except ValueError:
+        question_type = SurveyQuestionType.SHORT_TEXT
+
+    if question_type in {SurveyQuestionType.RADIO, SurveyQuestionType.SELECT}:
+        options = [line.strip() for line in (options_text or "").splitlines() if line.strip()]
+        return options
+    return None
+
+
+def _create_survey_assignments(
+    survey: Survey,
+    *,
+    teacher_ids: Iterable[int],
+    student_ids: Iterable[int],
+) -> list[SurveyAssignment]:
+    existing_assignments = SurveyAssignment.query.filter_by(survey_id=survey.id).all()
+    existing_teacher_ids = {assignment.teacher_id for assignment in existing_assignments if assignment.teacher_id}
+    existing_student_ids = {assignment.student_id for assignment in existing_assignments if assignment.student_id}
+
+    created: list[SurveyAssignment] = []
+    for teacher_id in teacher_ids:
+        if teacher_id in existing_teacher_ids:
+            continue
+        assignment = SurveyAssignment(
+            survey_id=survey.id,
+            teacher_id=teacher_id,
+            status=SurveyAssignmentStatus.PENDING,
+        )
+        db.session.add(assignment)
+        created.append(assignment)
+
+    for student_id in student_ids:
+        if student_id in existing_student_ids:
+            continue
+        assignment = SurveyAssignment(
+            survey_id=survey.id,
+            student_id=student_id,
+            status=SurveyAssignmentStatus.PENDING,
+        )
+        db.session.add(assignment)
+        created.append(assignment)
+
+    return created
+
+
+def _survey_assignment_state(assignment: SurveyAssignment) -> SimpleNamespace:
+    survey = assignment.survey
+    now = datetime.utcnow()
+    reason = None
+    locked = False
+
+    if not survey or survey.status == SurveyStatus.DRAFT:
+        locked = True
+        reason = "unavailable"
+    elif survey.status == SurveyStatus.CLOSED:
+        locked = True
+        reason = "closed"
+    elif survey.open_at and now < survey.open_at:
+        locked = True
+        reason = "not_open"
+    elif survey.close_at and now > survey.close_at:
+        locked = True
+        reason = "past_due"
+    elif assignment.status == SurveyAssignmentStatus.COMPLETED and not survey.allow_edit:
+        locked = True
+        reason = "completed"
+
+    return SimpleNamespace(
+        locked=locked,
+        reason=reason,
+        can_submit=not locked,
+        allow_edit=bool(survey.allow_edit if survey else False),
+    )
+
+
+def _survey_assignments_for_user(
+    *,
+    teacher: Optional[Teacher] = None,
+    student: Optional[Student] = None,
+) -> list[SurveyAssignment]:
+    if teacher is None and student is None:
+        raise ValueError("Either teacher or student must be provided.")
+    query = (
+        SurveyAssignment.query.options(
+            joinedload(SurveyAssignment.survey),
+            joinedload(SurveyAssignment.response),
+        )
+        .join(Survey)
+        .filter(Survey.status != SurveyStatus.DRAFT)
+    )
+    if teacher is not None:
+        query = query.filter(SurveyAssignment.teacher_id == teacher.id)
+    if student is not None:
+        query = query.filter(SurveyAssignment.student_id == student.id)
+    order_clauses = [Survey.open_at.asc(), Survey.created_at.desc()]
+    return query.order_by(*order_clauses).all()
+
+
+def _load_survey_assignment(
+    assignment_id: int,
+    *,
+    teacher: Optional[Teacher] = None,
+    student: Optional[Student] = None,
+) -> Optional[SurveyAssignment]:
+    query = SurveyAssignment.query.options(
+        joinedload(SurveyAssignment.survey).joinedload(Survey.questions),
+        joinedload(SurveyAssignment.response),
+    ).filter(SurveyAssignment.id == assignment_id)
+    if teacher is not None:
+        query = query.filter(SurveyAssignment.teacher_id == teacher.id)
+    if student is not None:
+        query = query.filter(SurveyAssignment.student_id == student.id)
+    return query.first()
+
+
+def _parse_survey_submission(
+    questions: list[SurveyQuestion],
+    form_data: dict[str, Any],
+) -> tuple[dict[str, Any], dict[int, str]]:
+    answers: dict[str, Any] = {}
+    errors: dict[int, str] = {}
+
+    for question in questions:
+        field_name = f"question_{question.id}"
+        raw_value = form_data.get(field_name)
+        value: Optional[str] = None
+
+        if question.type in {SurveyQuestionType.SHORT_TEXT, SurveyQuestionType.LONG_TEXT}:
+            value = (raw_value or "").strip()
+            if not value:
+                value = None
+        elif question.type == SurveyQuestionType.DATE:
+            raw_value = (raw_value or "").strip()
+            if raw_value:
+                try:
+                    datetime.strptime(raw_value, "%Y-%m-%d")
+                    value = raw_value
+                except ValueError:
+                    errors[question.id] = "Enter a valid date (YYYY-MM-DD)."
+            else:
+                value = None
+        elif question.type in {SurveyQuestionType.RADIO, SurveyQuestionType.SELECT}:
+            raw_value = (raw_value or "").strip()
+            options = question.options or []
+            if raw_value:
+                if raw_value not in options:
+                    errors[question.id] = "Select a valid option."
+                else:
+                    value = raw_value
+            else:
+                value = None
+        else:
+            value = (raw_value or "").strip() or None
+
+        if question.required and value is None and question.id not in errors:
+            errors[question.id] = "This question is required."
+
+        answers[str(question.id)] = value
+
+    return answers, errors
+
+
+def _save_survey_response(
+    assignment: SurveyAssignment,
+    answers: dict[str, Any],
+    *,
+    respondent_type: str,
+    respondent_id: int,
+    actor: Optional[str] = None,
+) -> None:
+    now = datetime.utcnow()
+    existing_response = assignment.response
+    is_new_response = existing_response is None
+
+    if existing_response is None:
+        existing_response = SurveyResponse(
+            survey_id=assignment.survey_id,
+            assignment_id=assignment.id,
+            response_data=answers,
+        )
+        assignment.response = existing_response
+        db.session.add(existing_response)
+    else:
+        existing_response.response_data = answers
+
+    assignment.status = SurveyAssignmentStatus.COMPLETED
+    assignment.completed_at = now
+
+    db.session.flush()
+
+    log_activity(
+        "survey_response_submitted" if is_new_response else "survey_response_updated",
+        f"Survey '{assignment.survey.title}' response {'submitted' if is_new_response else 'updated'}",
+        actor=actor,
+        object_type="survey_assignment",
+        object_id=assignment.id,
+        details={
+            "survey_id": assignment.survey_id,
+            "respondent_type": respondent_type,
+            "respondent_id": respondent_id,
+        },
+    )
+
+
+def _survey_display_data(raw: dict[str, Any] | None) -> dict[str, Any]:
+    display: dict[str, Any] = {}
+    if not raw:
+        return display
+    for key, value in raw.items():
+        if isinstance(key, str) and key.startswith("question_"):
+            display[key] = value
+        else:
+            display[f"question_{key}"] = value
+    return display
+
+
+def _prepare_survey_assignment_view(
+    assignments: list[SurveyAssignment],
+    detail_url_builder: Callable[[int], str],
+) -> tuple[list[SimpleNamespace], SimpleNamespace]:
+    items: list[SimpleNamespace] = []
+    total = len(assignments)
+    completed = 0
+    outstanding = 0
+    closed = 0
+
+    for assignment in assignments:
+        state = _survey_assignment_state(assignment)
+        is_completed = assignment.status == SurveyAssignmentStatus.COMPLETED
+        if is_completed:
+            completed += 1
+        elif state.locked:
+            closed += 1
+        else:
+            outstanding += 1
+
+        response = assignment.response
+        items.append(
+            SimpleNamespace(
+                assignment=assignment,
+                survey=assignment.survey,
+                state=state,
+                is_completed=is_completed,
+                submitted_at=assignment.completed_at,
+                updated_at=response.updated_at if response else None,
+                detail_url=detail_url_builder(assignment.id),
+            )
+        )
+
+    items.sort(
+        key=lambda item: (
+            item.is_completed,
+            item.state.locked,
+            item.survey.close_at or datetime.max,
+            item.survey.open_at or datetime.max,
+            item.survey.title.lower(),
+        )
+    )
+
+    summary = SimpleNamespace(
+        total=total,
+        completed=completed,
+        outstanding=outstanding,
+        closed=closed,
+    )
+    return items, summary
+
+
+def _survey_assignment_rows(survey: Survey) -> list[SimpleNamespace]:
+    assignments = (
+        SurveyAssignment.query.options(
+            joinedload(SurveyAssignment.response),
+            joinedload(SurveyAssignment.teacher),
+            joinedload(SurveyAssignment.student),
+        )
+        .filter(SurveyAssignment.survey_id == survey.id)
+        .order_by(SurveyAssignment.created_at.asc())
+        .all()
+    )
+
+    rows: list[SimpleNamespace] = []
+    for assignment in assignments:
+        respondent_type = "teacher" if assignment.teacher_id else "student"
+        if assignment.teacher:
+            respondent_name = f"{assignment.teacher.first_name} {assignment.teacher.last_name}"
+            respondent_email = assignment.teacher.email
+            respondent_country = assignment.teacher.country
+        elif assignment.student:
+            respondent_name = f"{assignment.student.first_name} {assignment.student.last_name}"
+            respondent_email = assignment.student.email
+            respondent_country = assignment.student.country
+        else:
+            respondent_name = "—"
+            respondent_email = None
+            respondent_country = None
+
+        answers = _survey_display_data(assignment.response.response_data if assignment.response else {})
+        state = _survey_assignment_state(assignment)
+
+        rows.append(
+            SimpleNamespace(
+                assignment=assignment,
+                respondent_type=respondent_type,
+                respondent_name=respondent_name,
+                respondent_email=respondent_email,
+                respondent_country=respondent_country,
+                answers=answers,
+                state=state,
+            )
+        )
+
+    return rows
+
+
+def _survey_responses_workbook(survey: Survey, assignments: list[SimpleNamespace], questions: list[SurveyQuestion]) -> BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Responses"
+
+    header = [
+        "Assignment ID",
+        "Respondent type",
+        "Respondent name",
+        "Email",
+        "Country",
+        "Status",
+        "Submitted at",
+        "Updated at",
+    ]
+    for question in questions:
+        header.append(question.prompt)
+    ws.append(header)
+
+    for row in assignments:
+        assignment = row.assignment
+        submitted_at = assignment.completed_at.strftime("%Y-%m-%d %H:%M") if assignment.completed_at else ""
+        updated_at = (
+            assignment.response.updated_at.strftime("%Y-%m-%d %H:%M")
+            if assignment.response and assignment.response.updated_at
+            else ""
+        )
+        excel_row = [
+            assignment.id,
+            row.respondent_type,
+            row.respondent_name,
+            row.respondent_email or "",
+            row.respondent_country or "",
+            assignment.status.value,
+            submitted_at,
+            updated_at,
+        ]
+        for question in questions:
+            value = row.answers.get(f"question_{question.id}")
+            excel_row.append(value if value is not None else "")
+        ws.append(excel_row)
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return stream
+
+
+def _filter_survey_rows(
+    rows: list[SimpleNamespace],
+    audience_filter: str,
+    status_filter: str,
+) -> list[SimpleNamespace]:
+    filtered: list[SimpleNamespace] = []
+    for row in rows:
+        if audience_filter == "teacher" and row.respondent_type != "teacher":
+            continue
+        if audience_filter == "student" and row.respondent_type != "student":
+            continue
+
+        if status_filter == "completed" and row.assignment.status != SurveyAssignmentStatus.COMPLETED:
+            continue
+        if status_filter == "outstanding" and (
+            row.assignment.status == SurveyAssignmentStatus.COMPLETED or row.state.locked
+        ):
+            continue
+
+        filtered.append(row)
+    return filtered
+
+
+def _survey_summary_from_rows(rows: list[SimpleNamespace]) -> SimpleNamespace:
+    total = len(rows)
+    completed = sum(1 for row in rows if row.assignment.status == SurveyAssignmentStatus.COMPLETED)
+    outstanding = sum(
+        1
+        for row in rows
+        if row.assignment.status != SurveyAssignmentStatus.COMPLETED and not row.state.locked
+    )
+    closed = total - completed - outstanding
+    return SimpleNamespace(total=total, completed=completed, outstanding=outstanding, closed=closed)
+
+
+def _format_datetime(dt: datetime | None) -> str | None:
+    if not dt:
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _survey_assignment_link(assignment: SurveyAssignment) -> str:
+    if assignment.teacher_id:
+        return url_for("teacher_portal.survey_detail", assignment_id=assignment.id, _external=True)
+    if assignment.student_id:
+        return url_for("web.student_survey_detail", assignment_id=assignment.id, _external=True)
+    return url_for("web.admin_surveys", _external=True)
+
+
+def _survey_portal_link(assignment: SurveyAssignment) -> str:
+    if assignment.teacher_id:
+        return url_for("teacher_portal.surveys", _external=True)
+    if assignment.student_id:
+        return url_for("web.student_portal", _external=True)
+    return url_for("web.index", _external=True)
+
+
+def _survey_email_context(assignment: SurveyAssignment) -> tuple[str | None, dict]:
+    survey = assignment.survey
+    if not survey:
+        return None, {}
+
+    if assignment.teacher:
+        recipient_first_name = assignment.teacher.first_name
+        recipient_last_name = assignment.teacher.last_name
+        recipient_email = assignment.teacher.email
+        respondent_type = "teacher"
+    elif assignment.student:
+        recipient_first_name = assignment.student.first_name
+        recipient_last_name = assignment.student.last_name
+        recipient_email = assignment.student.email
+        respondent_type = "student"
+    else:
+        recipient_first_name = ""
+        recipient_last_name = ""
+        recipient_email = None
+        respondent_type = "unknown"
+
+    recipient_name = (recipient_first_name or "").strip()
+    if recipient_last_name:
+        recipient_name = f"{recipient_name} {recipient_last_name}".strip()
+    if not recipient_name:
+        recipient_name = "participant"
+
+    context = {
+        "recipient_first_name": recipient_first_name,
+        "recipient_last_name": recipient_last_name,
+        "recipient_name": recipient_name,
+        "survey_title": survey.title,
+        "survey_description": survey.description or "",
+        "survey_deadline": _format_datetime(survey.close_at),
+        "survey_open": _format_datetime(survey.open_at),
+        "survey_link": _survey_assignment_link(assignment),
+        "portal_link": _survey_portal_link(assignment),
+        "respondent_type": respondent_type,
+    }
+    return recipient_email, context
+
+
+def _send_survey_emails(
+    assignments: list[SurveyAssignment],
+    subject_key: str,
+    body_key: str,
+) -> int:
+    if not assignments:
+        return 0
+    if not _auto_email_enabled():
+        return -1
+
+    sent = 0
+    for assignment in assignments:
+        recipient_email, context = _survey_email_context(assignment)
+        if not recipient_email:
+            continue
+        _send_templated_email(recipient_email, subject_key, body_key, context)
+        sent += 1
+    return sent
+
 
 @web_bp.route("/admin/students/export")
 def export_students():

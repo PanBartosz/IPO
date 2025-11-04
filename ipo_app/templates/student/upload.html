@@ -8,6 +8,31 @@
     <p>Logged in as <strong>{{ student.first_name }} {{ student.last_name }}</strong> ({{ student.country }}).</p>
     <p>Your assigned essay language: <strong>{{ student.essay_language }}</strong>.</p>
 
+    {% if survey_summary and survey_summary.total %}
+      <div class="student-survey-callout">
+        <div>
+          <strong>Surveys</strong>
+          <span class="fine-print">
+            {{ survey_summary.completed }} completed · {{ survey_summary.outstanding }} outstanding
+            {% if survey_summary.closed %}· {{ survey_summary.closed }} closed{% endif %}
+          </span>
+          {% if survey_outstanding %}
+            <ul class="student-survey-callout__list">
+              {% for item in survey_outstanding %}
+                <li>
+                  {{ item.survey.title }}
+                  {% if item.survey.close_at %}
+                    <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+        <a class="button secondary" href="{{ url_for('web.student_surveys') }}">View surveys</a>
+      </div>
+    {% endif %}
+
     {% if student.essay_finalized %}
       <div class="status-tag success" style="margin-bottom: 1rem;">
         Essay finalized on {{ student.essay_finalized_at.strftime('%Y-%m-%d %H:%M') if student.essay_finalized_at else '—' }}
@@ -37,7 +62,15 @@
       </div>
     {% endif %}
 
-    {% if not student.essay_finalized %}
+    {% if not upload_module_enabled %}
+      <div class="status-tag warning" style="margin-bottom: 1rem;">Essay uploads disabled</div>
+      <p class="fine-print">The organizing team has disabled essay uploads outside the official competition window. You can review your submission status below; if you need changes, please contact your delegation leader.</p>
+    {% elif upload_locked and not student.essay_finalized %}
+      <div class="status-tag warning" style="margin-bottom: 1rem;">Uploads temporarily locked</div>
+      <p class="fine-print">The organizing team has temporarily paused essay uploads. Please check back later or contact your delegation leader for assistance.</p>
+    {% endif %}
+
+    {% if not student.essay_finalized and upload_module_enabled and not upload_locked %}
       <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
         {{ form.hidden_tag() }}
         <input type="hidden" name="action" value="upload">

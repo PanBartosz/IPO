@@ -35,6 +35,11 @@ class Student(db.Model, TimestampMixin):
     essay_finalized_at = db.Column(db.DateTime, nullable=True)
 
     scores = db.relationship("EssayScore", back_populates="student", cascade="all, delete-orphan")
+    survey_assignments = db.relationship(
+        "SurveyAssignment",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
 
 
 class TeacherMessageStatus(enum.StrEnum):
@@ -84,6 +89,36 @@ class AppSetting(db.Model, TimestampMixin):
     value = db.Column(db.Text, nullable=True)
 
 
+class SurveyStatus(enum.StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    CLOSED = "closed"
+
+
+class SurveyAudience(enum.StrEnum):
+    TEACHER = "teacher"
+    STUDENT = "student"
+    MIXED = "mixed"
+
+
+class SurveyQuestionType(enum.StrEnum):
+    SHORT_TEXT = "short_text"
+    LONG_TEXT = "long_text"
+    RADIO = "radio"
+    SELECT = "select"
+    DATE = "date"
+
+
+class SurveyAssignmentStatus(enum.StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+
+
+class PasswordResetAudience(enum.StrEnum):
+    STUDENT = "student"
+    TEACHER = "teacher"
+
+
 class Teacher(db.Model, TimestampMixin):
     __tablename__ = "teachers"
 
@@ -114,6 +149,147 @@ class Teacher(db.Model, TimestampMixin):
     )
     scores = db.relationship("EssayScore", back_populates="teacher", cascade="all, delete-orphan")
     messages = db.relationship("TeacherMessage", back_populates="teacher", cascade="all, delete-orphan")
+    survey_assignments = db.relationship(
+        "SurveyAssignment",
+        back_populates="teacher",
+        cascade="all, delete-orphan",
+    )
+
+
+class PasswordResetToken(db.Model, TimestampMixin):
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    audience = db.Column(db.Enum(PasswordResetAudience), nullable=False)
+    student_id = db.Column(
+        db.Integer,
+        db.ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    teacher_id = db.Column(
+        db.Integer,
+        db.ForeignKey("teachers.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+
+    student = db.relationship("Student")
+    teacher = db.relationship("Teacher")
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "(student_id IS NOT NULL AND teacher_id IS NULL) OR "
+            "(student_id IS NULL AND teacher_id IS NOT NULL)",
+            name="ck_password_reset_token_audience_target",
+        ),
+    )
+
+
+class CommunicationStatus(enum.StrEnum):
+    DRAFT = "draft"
+    QUEUED = "queued"
+    SENDING = "sending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class CommunicationAudience(enum.StrEnum):
+    TEACHER = "teacher"
+    STUDENT = "student"
+    BOTH = "both"
+
+
+class CommunicationRecipientRole(enum.StrEnum):
+    TEACHER = "teacher"
+    STUDENT = "student"
+
+
+class CommunicationRecipientStatus(enum.StrEnum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class CommunicationCampaign(db.Model, TimestampMixin):
+    __tablename__ = "communication_campaigns"
+
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(255), nullable=False)
+    html_body = db.Column(db.Text, nullable=False)
+    text_body = db.Column(db.Text, nullable=False)
+    audience = db.Column(db.Enum(CommunicationAudience), nullable=False, default=CommunicationAudience.BOTH)
+    country_filter = db.Column(db.JSON, nullable=True)
+    include_absent = db.Column(db.Boolean, nullable=False, default=False)
+    status = db.Column(db.Enum(CommunicationStatus), nullable=False, default=CommunicationStatus.DRAFT)
+    total_recipients = db.Column(db.Integer, nullable=False, default=0)
+    sent_count = db.Column(db.Integer, nullable=False, default=0)
+    failed_count = db.Column(db.Integer, nullable=False, default=0)
+    created_by = db.Column(db.String(120), nullable=True)
+    sent_by = db.Column(db.String(120), nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    recipients = db.relationship(
+        "CommunicationRecipient",
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="CommunicationRecipient.id",
+    )
+
+    __table_args__ = (
+        db.Index("ix_communication_campaign_status", "status"),
+    )
+
+
+class CommunicationRecipient(db.Model, TimestampMixin):
+    __tablename__ = "communication_recipients"
+
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(
+        db.Integer,
+        db.ForeignKey("communication_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = db.Column(db.Enum(CommunicationRecipientRole), nullable=False)
+    student_id = db.Column(
+        db.Integer,
+        db.ForeignKey("students.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    teacher_id = db.Column(
+        db.Integer,
+        db.ForeignKey("teachers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    email = db.Column(db.String(255), nullable=False)
+    first_name = db.Column(db.String(80), nullable=True)
+    last_name = db.Column(db.String(80), nullable=True)
+    country = db.Column(db.String(100), nullable=True)
+    status = db.Column(
+        db.Enum(CommunicationRecipientStatus),
+        nullable=False,
+        default=CommunicationRecipientStatus.PENDING,
+    )
+    message_id = db.Column(db.String(120), nullable=True)
+    error = db.Column(db.Text, nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    campaign = db.relationship("CommunicationCampaign", back_populates="recipients")
+    student = db.relationship("Student")
+    teacher = db.relationship("Teacher")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "campaign_id",
+            "role",
+            "student_id",
+            "teacher_id",
+            name="uq_communication_recipient_target",
+        ),
+        db.UniqueConstraint("campaign_id", "email", name="uq_communication_recipient_email"),
+        db.Index("ix_communication_recipient_campaign_status", "campaign_id", "status"),
+    )
 
 
 class TeacherLanguage(db.Model, TimestampMixin):
@@ -277,4 +453,92 @@ class EssayAssignmentExtraReader(db.Model, TimestampMixin):
 
     __table_args__ = (
         db.UniqueConstraint("assignment_id", "teacher_id", "stage", name="uq_extra_reader_assignment_teacher_stage"),
+    )
+
+
+class Survey(db.Model, TimestampMixin):
+    __tablename__ = "surveys"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    status = db.Column(db.Enum(SurveyStatus), nullable=False, default=SurveyStatus.DRAFT)
+    audience = db.Column(db.Enum(SurveyAudience), nullable=False, default=SurveyAudience.MIXED)
+    allow_edit = db.Column(db.Boolean, nullable=False, default=False)
+    open_at = db.Column(db.DateTime, nullable=True)
+    close_at = db.Column(db.DateTime, nullable=True)
+    created_by = db.Column(db.String(120), nullable=True)
+
+    questions = db.relationship(
+        "SurveyQuestion",
+        back_populates="survey",
+        cascade="all, delete-orphan",
+        order_by="SurveyQuestion.position",
+    )
+    assignments = db.relationship(
+        "SurveyAssignment",
+        back_populates="survey",
+        cascade="all, delete-orphan",
+    )
+
+
+class SurveyQuestion(db.Model, TimestampMixin):
+    __tablename__ = "survey_questions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False)
+    prompt = db.Column(db.String(500), nullable=False)
+    help_text = db.Column(db.Text, nullable=True)
+    type = db.Column(db.Enum(SurveyQuestionType), nullable=False, default=SurveyQuestionType.SHORT_TEXT)
+    required = db.Column(db.Boolean, nullable=False, default=True)
+    options = db.Column(db.JSON, nullable=True)
+    position = db.Column(db.Integer, nullable=False, default=0)
+
+    survey = db.relationship("Survey", back_populates="questions")
+
+
+class SurveyAssignment(db.Model, TimestampMixin):
+    __tablename__ = "survey_assignments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False)
+    status = db.Column(db.Enum(SurveyAssignmentStatus), nullable=False, default=SurveyAssignmentStatus.PENDING)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    delivery_token = db.Column(db.String(64), unique=True, nullable=True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+
+    survey = db.relationship("Survey", back_populates="assignments")
+    teacher = db.relationship("Teacher", back_populates="survey_assignments")
+    student = db.relationship("Student", back_populates="survey_assignments")
+    response = db.relationship(
+        "SurveyResponse",
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "(teacher_id IS NOT NULL AND student_id IS NULL) OR (teacher_id IS NULL AND student_id IS NOT NULL)",
+            name="ck_survey_assignment_recipient",
+        ),
+        db.UniqueConstraint("survey_id", "teacher_id", name="uq_survey_assignment_teacher"),
+        db.UniqueConstraint("survey_id", "student_id", name="uq_survey_assignment_student"),
+    )
+
+
+class SurveyResponse(db.Model, TimestampMixin):
+    __tablename__ = "survey_responses"
+
+    id = db.Column(db.Integer, primary_key=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False)
+    assignment_id = db.Column(db.Integer, db.ForeignKey("survey_assignments.id", ondelete="CASCADE"), nullable=False)
+    response_data = db.Column(db.JSON, nullable=False)
+
+    survey = db.relationship("Survey")
+    assignment = db.relationship("SurveyAssignment", back_populates="response")
+
+    __table_args__ = (
+        db.UniqueConstraint("assignment_id", name="uq_survey_response_assignment"),
     )

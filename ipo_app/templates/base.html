@@ -4,17 +4,24 @@
     <meta charset="utf-8">
     <title>{% block title %}IPO Registration{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
     <header class="site-header">
       <div class="container">
-        <h1><a href="{{ url_for('web.index') }}">International Philosophy Olympiad</a></h1>
+        <a class="brand" href="{{ url_for('web.index') }}">
+          <img src="{{ url_for('static', filename='img/logo-variant5.svg') }}" alt="International Philosophy Olympiad Portal logo" class="brand-logo">
+          <span class="brand-text">International Philosophy Olympiad</span>
+        </a>
         <nav>
           <a href="{{ url_for('web.register_student') }}">Student registration</a>
           <a href="{{ url_for('web.register_teacher') }}">Teacher registration</a>
-          <a href="{{ url_for('web.student_login') }}">Essay upload</a>
+          <a href="{{ url_for('web.student_portal') }}">Student portal</a>
+          {% if essay_upload_enabled %}
+            <a href="{{ url_for('web.student_login') }}">Essay upload</a>
+          {% endif %}
           {% if teacher_portal_enabled %}
             <a href="{{ url_for('teacher_portal.login') }}">Teacher portal</a>
           {% endif %}

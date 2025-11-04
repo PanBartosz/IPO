@@ -52,6 +52,16 @@
       </div>
       <div class="form-field full-width">
         <label class="checkbox">
+          {{ form.essay_upload_enabled() }}
+          {{ form.essay_upload_enabled.label.text }}
+        </label>
+        <span class="form-help">Enable when the upload room is open. Students can view status anytime, but uploads are only available while enabled and not manually locked.</span>
+        {% for error in form.essay_upload_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
           {{ form.teacher_portal_enabled() }}
           {{ form.teacher_portal_enabled.label.text }}
         </label>
@@ -80,7 +90,7 @@
       <div class="form-field full-width">
         {{ form.email_student_body.label }}
         {{ form.email_student_body(style="height: 9rem;") }}
-        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ essay_language }}' }}, {{ '{{ keyboard_preference }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ special_needs }}' }}.</span>
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ essay_language }}' }}, {{ '{{ keyboard_preference }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
         {% for error in form.email_student_body.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
@@ -95,7 +105,7 @@
       <div class="form-field full-width">
         {{ form.email_teacher_body.label }}
         {{ form.email_teacher_body() }}
-        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ languages }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ tshirt_size }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ delegation_leader }}' }}, {{ '{{ prior_ipo_assessor }}' }}.</span>
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ languages }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ tshirt_size }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ delegation_leader }}' }}, {{ '{{ prior_ipo_assessor }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
         {% for error in form.email_teacher_body.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
@@ -112,6 +122,96 @@
         {{ form.email_message_body() }}
         <span class="form-help">Available variables: {{ '{{ teacher_first_name }}' }}, {{ '{{ teacher_last_name }}' }}, {{ '{{ teacher_email }}' }}, {{ '{{ title }}' }}, {{ '{{ body }}' }}, {{ '{{ priority }}' }}, {{ '{{ board_url }}' }}.</span>
         {% for error in form.email_message_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_survey_publish_subject.label }}
+        {{ form.email_survey_publish_subject() }}
+        {% for error in form.email_survey_publish_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_survey_publish_body.label }}
+        {{ form.email_survey_publish_body() }}
+        <span class="form-help">Available variables: {{ '{{ recipient_first_name }}' }}, {{ '{{ recipient_last_name }}' }}, {{ '{{ recipient_name }}' }}, {{ '{{ survey_title }}' }}, {{ '{{ survey_description }}' }}, {{ '{{ survey_deadline }}' }}, {{ '{{ survey_link }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ respondent_type }}' }}.</span>
+        {% for error in form.email_survey_publish_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_survey_reminder_subject.label }}
+        {{ form.email_survey_reminder_subject() }}
+        {% for error in form.email_survey_reminder_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_survey_reminder_body.label }}
+        {{ form.email_survey_reminder_body() }}
+        <span class="form-help">Available variables: same as survey publish.</span>
+        {% for error in form.email_survey_reminder_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_student_reset_link_subject.label }}
+        {{ form.email_student_reset_link_subject() }}
+        {% for error in form.email_student_reset_link_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_student_reset_link_body.label }}
+        {{ form.email_student_reset_link_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ reset_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+        {% for error in form.email_student_reset_link_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_student_reset_subject.label }}
+        {{ form.email_student_reset_subject() }}
+        {% for error in form.email_student_reset_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_student_reset_body.label }}
+        {{ form.email_student_reset_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+        {% for error in form.email_student_reset_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_teacher_reset_link_subject.label }}
+        {{ form.email_teacher_reset_link_subject() }}
+        {% for error in form.email_teacher_reset_link_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_teacher_reset_link_body.label }}
+        {{ form.email_teacher_reset_link_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ reset_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+        {% for error in form.email_teacher_reset_link_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_teacher_reset_subject.label }}
+        {{ form.email_teacher_reset_subject() }}
+        {% for error in form.email_teacher_reset_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_teacher_reset_body.label }}
+        {{ form.email_teacher_reset_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+        {% for error in form.email_teacher_reset_body.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>

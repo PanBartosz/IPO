@@ -1,23 +1,29 @@
-version: "3.9"
-
+version: '3.9'
 services:
   web:
     build: .
     ports:
-      - "5000:5000"
+    - 5000:5000
     environment:
       FLASK_APP: ipo_app:create_app
       FLASK_ENV: development
-      FLASK_DEBUG: "1"
+      FLASK_DEBUG: '1'
       SECRET_KEY: dev-secret-key
       DATABASE_URL: mysql+pymysql://ipo_app:ipo_password@db:3306/ipo_app?charset=utf8mb4
       ADMIN_USERS: admin:dev-password
       PYTHONPATH: /app
     volumes:
-      - .:/app
+    - .:/app
     depends_on:
-      - db
-
+    - db
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: ${WEB_CPU_LIMIT:-2.0}
+    #       memory: ${WEB_MEM_LIMIT:-4G}
+    #     reservations:
+    #       cpus: ${WEB_CPU_RESERVE:-1.0}
+    #       memory: ${WEB_MEM_RESERVE:-2G}
   db:
     image: mariadb:11.3
     restart: unless-stopped
@@ -27,10 +33,17 @@ services:
       MYSQL_USER: ipo_app
       MYSQL_PASSWORD: ipo_password
     volumes:
-      - db_data:/var/lib/mysql
+    - db_data:/var/lib/mysql
     ports:
-      - "3306:3306"
-
+    - 3306:3306
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: ${DB_CPU_LIMIT:-1.5}
+    #       memory: ${DB_MEM_LIMIT:-3G}
+    #     reservations:
+    #       cpus: ${DB_CPU_RESERVE:-0.75}
+    #       memory: ${DB_MEM_RESERVE:-1.5G}
   phpmyadmin:
     image: phpmyadmin:5.2
     restart: unless-stopped
@@ -40,9 +53,8 @@ services:
       PMA_PASSWORD: ipo_password
       UPLOAD_LIMIT: 64M
     ports:
-      - "8081:80"
+    - 8081:80
     depends_on:
-      - db
-
+    - db
 volumes:
-  db_data:
+  db_data: null
