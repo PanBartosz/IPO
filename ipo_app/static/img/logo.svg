@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">International Philosophy Olympiad Logo</title>
+  <desc id="desc">Minimal owl emblem representing wisdom for the International Philosophy Olympiad.</desc>
+  <defs>
+    <linearGradient id="owlGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(12,12)">
+    <rect x="0" y="0" width="96" height="96" rx="24" fill="#0f172a"/>
+    <path d="M48 12c19.882 0 36 16.118 36 36v22c0 7.732-6.268 14-14 14H26c-7.732 0-14-6.268-14-14V48c0-19.882 16.118-36 36-36Z" fill="url(#owlGradient)"/>
+    <path d="M28 36c4.97 0 9 4.03 9 9s-4.03 9-9 9-9-4.03-9-9 4.03-9 9-9Zm40 0c4.97 0 9 4.03 9 9s-4.03 9-9 9-9-4.03-9-9 4.03-9 9-9Z" fill="#0f172a"/>
+    <circle cx="28" cy="45" r="5" fill="#fff"/>
+    <circle cx="68" cy="45" r="5" fill="#fff"/>
+    <path d="M48 60l12 12H36z" fill="#fff" opacity="0.9"/>
+    <path d="M48 26c11 0 20.414 6.92 24.26 16.64C69.883 32.92 60.969 27 51 27s-18.883 5.92-21.26 15.64C27.586 32.92 37 26 48 26Z" fill="#fff" opacity="0.18"/>
+  </g>
+</svg>

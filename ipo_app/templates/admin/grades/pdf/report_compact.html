@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Grades report (compact)</title>
+    <style>
+      @page {
+        size: A4 landscape;
+        margin: 15mm;
+      }
+      body {
+        font-family: "Helvetica", Arial, sans-serif;
+        font-size: 10px;
+        color: #111827;
+      }
+      h1 {
+        font-size: 18px;
+        margin-bottom: 0.2in;
+      }
+      .meta {
+        font-size: 9px;
+        color: #4b5563;
+        margin-bottom: 0.15in;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 0.18in;
+      }
+      th, td {
+        border: 1px solid #d1d5db;
+        padding: 4px 3px;
+        text-align: center;
+      }
+      th {
+        background: #f3f4f6;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .avg-cell {
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Grades report</h1>
+    <div class="meta">Generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Essay</th>
+          {% if not anonymize_students %}<th>Student</th>{% endif %}
+          {% if include_countries %}<th>Country</th>{% endif %}
+          {% for stage_key, stage_label in stage_order %}
+            {% set slots = stage_slots.get(stage_key, 0) %}
+            {% for index in range(slots) %}
+              <th>{{ stage_label }} R{{ index + 1 }}</th>
+            {% endfor %}
+            <th class="avg-cell">{{ stage_label }} avg</th>
+            <th>{{ stage_label }} spread</th>
+          {% endfor %}
+          <th class="avg-cell">Combined avg</th>
+          <th>Combined spread</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for student in students %}
+          <tr>
+            <td>{{ student.student_id }}</td>
+            {% if not anonymize_students %}<td>{{ student.student_name }}</td>{% endif %}
+            {% if include_countries %}<td>{{ student.student_country }}</td>{% endif %}
+            {% for stage_key, stage_label in stage_order %}
+              {% set stage_info = student.stages.get(stage_key) %}
+              {% set slots = stage_slots.get(stage_key, 0) %}
+              {% for index in range(slots) %}
+                {% if stage_info and index < stage_info.scores|length %}
+                  {% set score = stage_info.scores[index] %}
+                  {% set value = "%.2f"|format(score.score) if score.score is not none else "—" %}
+                  {% if value != "—" and not anonymize_teachers %}
+                    <td>{{ value }} (T{{ score.teacher_id }})</td>
+                  {% else %}
+                    <td>{{ value }}</td>
+                  {% endif %}
+                {% else %}
+                  <td>—</td>
+                {% endif %}
+              {% endfor %}
+              {% if stage_info %}
+                <td class="avg-cell">{{ "%.2f"|format(stage_info.average) if stage_info.average is not none else "—" }}</td>
+                <td>{{ "%.2f"|format(stage_info.spread) if stage_info.spread is not none else "—" }}</td>
+              {% else %}
+                <td class="avg-cell">—</td>
+                <td>—</td>
+              {% endif %}
+            {% endfor %}
+            <td class="avg-cell">{{ "%.2f"|format(student.combined_average) if student.combined_average is not none else "—" }}</td>
+            <td>{{ "%.2f"|format(student.combined_spread) if student.combined_spread is not none else "—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>

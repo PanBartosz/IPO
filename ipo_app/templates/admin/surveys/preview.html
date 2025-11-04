@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Preview {{ survey.title }} · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <div class="page-actions__group">
+      <a class="button-link secondary" href="{{ url_for('web.admin_edit_survey', survey_id=survey.id) }}">Back to survey</a>
+    </div>
+    <div class="page-actions__group">
+      <span class="status-tag">{{ survey.status.value.title() }}</span>
+    </div>
+  </div>
+
+  <div class="survey-preview">
+    <div>
+      <h2>{{ survey.title }}</h2>
+      {% if survey.description %}
+        <p>{{ survey.description }}</p>
+      {% endif %}
+      <p class="fine-print">
+        Audience:
+        {% if survey.audience.value == 'teacher' %}
+          Teachers
+        {% elif survey.audience.value == 'student' %}
+          Students
+        {% else %}
+          Teachers and students
+        {% endif %}
+        {% if survey.allow_edit %}
+          · Respondents can edit after submitting
+        {% endif %}
+      </p>
+    </div>
+
+    {% if questions %}
+      <form class="survey-preview-form" aria-readonly="true">
+        {% for question in questions %}
+          <div class="survey-question">
+            <div>
+              <label>{{ loop.index }}. {{ question.prompt }}</label>
+              {% if question.required %}
+                <span class="status-tag success">Required</span>
+              {% else %}
+                <span class="status-tag neutral">Optional</span>
+              {% endif %}
+            </div>
+            {% if question.help_text %}
+              <p class="fine-print">{{ question.help_text }}</p>
+            {% endif %}
+            <div class="input-group">
+              {% if question.type == SurveyQuestionType.SHORT_TEXT %}
+                <input type="text" placeholder="Short answer" disabled>
+              {% elif question.type == SurveyQuestionType.LONG_TEXT %}
+                <textarea rows="3" placeholder="Long answer" disabled></textarea>
+              {% elif question.type == SurveyQuestionType.DATE %}
+                <input type="date" disabled>
+              {% elif question.type == SurveyQuestionType.RADIO %}
+                <div class="option-list">
+                  {% for option in question.options %}
+                    <label>
+                      <input type="radio" name="question-{{ question.id }}" disabled>
+                      <span>{{ option }}</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              {% elif question.type == SurveyQuestionType.SELECT %}
+                <select disabled>
+                  <option value="">Select an option</option>
+                  {% for option in question.options %}
+                    <option>{{ option }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+        <div class="form-actions">
+          <button type="button" class="button secondary" disabled>Submit (preview)</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="fine-print">No questions configured yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}

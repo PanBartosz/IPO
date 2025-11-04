@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Grades export · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Grades export</h2>
+    </div>
+    <p>Download anonymized grade summaries for Stage 1, Stage 2, and Stage 3 recommendations. Choose your filters and export format below.</p>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+
+      <div class="form-field full-width">
+        {{ form.countries.label }}
+        {{ form.countries(multiple=True, size=8) }}
+        <span class="form-help">Leave empty to include every country. Hold Ctrl (Windows/Linux) or ⌘ (macOS) to select multiple.</span>
+        {% for error in form.countries.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.stages.label }}
+        {{ form.stages(multiple=True, size=4) }}
+        <span class="form-help">Stage 3 limits the results to students recommended for Stage 3.</span>
+        {% for error in form.stages.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <fieldset class="form-field">
+        <legend>Anonymisation</legend>
+        <label class="checkbox">
+          {{ form.anonymize_students() }}
+          {{ form.anonymize_students.label.text }}
+        </label>
+        <label class="checkbox">
+          {{ form.anonymize_teachers() }}
+          {{ form.anonymize_teachers.label.text }}
+        </label>
+        {% for field in [form.anonymize_students, form.anonymize_teachers] %}
+          {% for error in field.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </fieldset>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.include_countries() }}
+          {{ form.include_countries.label.text }}
+        </label>
+        {% for error in form.include_countries.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.finalized_only() }}
+          {{ form.finalized_only.label.text }}
+        </label>
+        {% for error in form.finalized_only.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.include_timestamps() }}
+          {{ form.include_timestamps.label.text }}
+        </label>
+        {% for error in form.include_timestamps.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.include_absent() }}
+          {{ form.include_absent.label.text }}
+        </label>
+        {% for error in form.include_absent.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.group_by_country() }}
+          {{ form.group_by_country.label.text }}
+        </label>
+        <span class="form-help">Adds a worksheet per country to the Excel workbook (XLSX only).</span>
+        {% for error in form.group_by_country.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.compact_view() }}
+          {{ form.compact_view.label.text }}
+        </label>
+        <span class="form-help">Produces a condensed table with fixed reader columns for each stage.</span>
+        {% for error in form.compact_view.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        {{ form.sort_by.label }}
+        {{ form.sort_by() }}
+        <span class="form-help">Scores sort descending; Essay ID keeps ascending order.</span>
+        {% for error in form.sort_by.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        {{ form.export_type.label }}
+        {{ form.export_type() }}
+        {% for error in form.export_type.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

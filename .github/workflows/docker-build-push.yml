@@ -36,5 +36,3 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/panbartosz/ipo:${{ github.sha }}
-          cache-from: type=registry,ref=ghcr.io/panbartosz/ipo:cache
-          cache-to: type=registry,ref=ghcr.io/panbartosz/ipo:cache,mode=max

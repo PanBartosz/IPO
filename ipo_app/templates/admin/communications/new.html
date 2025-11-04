@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% if campaign %}
+  {% set page_title = "Edit Email · Communication · Admin · IPO" %}
+  {% set heading = "Edit communication" %}
+  {% set submit_label = "Save changes & refresh preview" %}
+{% else %}
+  {% set page_title = "Compose Email · Communication · Admin · IPO" %}
+  {% set heading = "Compose communication" %}
+  {% set submit_label = "Create draft & preview" %}
+{% endif %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>{{ heading }}</h2>
+      <div class="table-actions">
+        {% if campaign %}
+          <a class="button-link secondary" href="{{ url_for('web.admin_communications_preview', campaign_id=campaign.id) }}">Preview current draft</a>
+        {% endif %}
+        <a class="button-link secondary" href="{{ url_for('web.admin_communications') }}">Back to campaigns</a>
+      </div>
+    </div>
+
+    {% if not sendgrid_ready %}
+      <div class="flash flash-warning">
+        SendGrid is not currently configured. You can prepare the message and audience, but sending will be blocked until credentials are added in Settings.
+      </div>
+    {% endif %}
+
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.subject.label }}
+        {{ form.subject() }}
+        {% for error in form.subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        {{ form.audience.label }}
+        {{ form.audience() }}
+        {% for error in form.audience.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">Choose whether to target teachers, students, or both.</span>
+      </div>
+
+      <div class="form-field">
+        {{ form.countries.label }}
+        {{ form.countries(multiple=True, size=8) }}
+        {% for error in form.countries.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">Leave blank to include every country.</span>
+      </div>
+
+      <div class="form-field">
+        <label class="checkbox">
+          {{ form.include_absent() }}
+          {{ form.include_absent.label.text }}
+        </label>
+        {% for error in form.include_absent.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">Uncheck to exclude participants marked absent.</span>
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.html_body.label }}
+        {{ form.html_body(id="compose-editor") }}
+        {% for error in form.html_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">Use the editor to format the message. A plain-text version is generated automatically for SendGrid.</span>
+      </div>
+
+      <div class="form-actions">
+        {{ form.submit_preview(class_="button", value=submit_label) }}
+      </div>
+    </form>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ url_for('static', filename='vendor/tinymce/js/tinymce/tinymce.min.js') }}"></script>
+  <script>
+    tinymce.init({
+      selector: '#compose-editor',
+      menubar: false,
+      statusbar: false,
+      height: 360,
+      plugins: 'lists link',
+      toolbar: 'undo redo | bold italic underline | bullist numlist | link | removeformat',
+      branding: false,
+      default_link_target: '_blank',
+      link_default_protocol: 'https'
+    });
+  </script>
+{% endblock %}

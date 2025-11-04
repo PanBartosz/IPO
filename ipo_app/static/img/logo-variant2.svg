@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="logoVariant2Title">
+  <title id="logoVariant2Title">IPO Owl Variant 2</title>
+  <defs>
+    <linearGradient id="variant2Shield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="variant2Eyes" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#cbd5f5"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="24" fill="#111827"/>
+  <path d="M60 14 90 30v34c0 14.359-8.472 27.6-21.5 33.743L60 100l-8.5-2.257C38.472 91.6 30 78.359 30 64V30z" fill="url(#variant2Shield)"/>
+  <path d="M60 32c12.15 0 22 8.955 22 20V64c0 9.941-8.059 18-18 18H56c-9.941 0-20-8.059-20-18V52c0-11.045 11.85-20 24-20Z" fill="#1f2937"/>
+  <path d="M44 46c4.418 0 8 3.582 8 8s-3.582 8-8 8-8-3.582-8-8 3.582-8 8-8Zm32 0c4.418 0 8 3.582 8 8s-3.582 8-8 8-8-3.582-8-8 3.582-8 8-8Z" fill="url(#variant2Eyes)"/>
+  <circle cx="44" cy="54" r="3" fill="#111827"/>
+  <circle cx="76" cy="54" r="3" fill="#111827"/>
+  <path d="M60 62c6.627 0 12 4.03 12 9H48c0-4.97 5.373-9 12-9Z" fill="#f8fafc"/>
+  <path d="M60 32c6.627 0 12 5.373 12 12l-12-6-12 6c0-6.627 5.373-12 12-12Z" fill="#f8fafc" opacity="0.4"/>
+</svg>

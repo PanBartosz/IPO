@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Preview Email · Communication · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Preview email</h2>
+      <div class="table-actions">
+        <a class="button-link secondary" href="{{ url_for('web.admin_communications') }}">Back to campaigns</a>
+      </div>
+    </div>
+
+    {% if not sendgrid_ready %}
+      <div class="flash flash-warning">
+        SendGrid is not configured. Sending is currently disabled.
+      </div>
+    {% endif %}
+
+    <dl class="response-meta">
+      <div>
+        <dt>Subject</dt>
+        <dd>{{ campaign.subject }}</dd>
+      </div>
+      <div>
+        <dt>Audience</dt>
+        <dd>{{ campaign.audience.value|title }}</dd>
+      </div>
+      <div>
+        <dt>Countries</dt>
+        <dd>
+          {% if campaign.country_filter %}
+            {{ campaign.country_filter|join(", ") }}
+          {% else %}
+            All countries
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Absent participants</dt>
+        <dd>{{ "Included" if campaign.include_absent else "Excluded" }}</dd>
+      </div>
+      <div>
+        <dt>Total recipients</dt>
+        <dd>{{ campaign.total_recipients }}</dd>
+      </div>
+      <div>
+        <dt>Created by</dt>
+        <dd>{{ campaign.created_by or "—" }}</dd>
+      </div>
+    </dl>
+
+    <h3>Recipient breakdown</h3>
+    <p>
+      Teachers: {{ role_counts.get("teacher", 0) }} ·
+      Students: {{ role_counts.get("student", 0) }} ·
+      Pending: {{ status_counts.get("pending", 0) }} ·
+      Sent: {{ status_counts.get("sent", 0) }} ·
+      Failed: {{ status_counts.get("failed", 0) }}
+    </p>
+
+    <h3>Sample recipients ({{ sample_recipients|length }})</h3>
+    {% if sample_recipients %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Country</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for recipient in sample_recipients %}
+            <tr>
+              <td>{{ recipient.first_name }} {{ recipient.last_name }}</td>
+              <td>{{ recipient.email }}</td>
+              <td>{{ recipient.country or "—" }}</td>
+              <td>{{ recipient.role.value|title }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No recipients were selected. Return to the composer to adjust filters.</p>
+    {% endif %}
+
+    <h3>HTML preview</h3>
+    <div>
+      {{ campaign.html_body|safe }}
+    </div>
+    <p class="form-help">This is the HTML version recipients see in most email clients. Formatting, links, and lists are preserved.</p>
+
+    <h3>Plain-text preview</h3>
+    <pre>{{ campaign.text_body }}</pre>
+    <p class="form-help">A plain-text copy is sent only as a fallback for clients that block HTML.</p>
+
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.confirm() }}
+          {{ form.confirm.label.text }}
+        </label>
+        {% for error in form.confirm.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit_send(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

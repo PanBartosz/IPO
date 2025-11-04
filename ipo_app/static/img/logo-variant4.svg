@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="logoVariant4Title">
+  <title id="logoVariant4Title">IPO Owl Variant 4</title>
+  <defs>
+    <linearGradient id="variant4Aura" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="20" fill="#020617"/>
+  <path d="M60 12c23.196 0 42 18.804 42 42v16c0 10.493-8.507 19-19 19H37c-10.493 0-19-8-19-19V54c0-23.196 18.804-42 42-42Z" fill="url(#variant4Aura)"/>
+  <path d="M38 46c5.523 0 10 4.477 10 10s-4.477 10-10 10-10-4.477-10-10 4.477-10 10-10Zm44 0c5.523 0 10 4.477 10 10s-4.477 10-10 10-10-4.477-10-10 4.477-10 10-10Z" fill="#020617"/>
+  <circle cx="38" cy="56" r="3.5" fill="#f8fafc"/>
+  <circle cx="82" cy="56" r="3.5" fill="#f8fafc"/>
+  <path d="M60 62c6.627 0 12 4.477 12 10v12H48V72c0-5.523 5.373-10 12-10Z" fill="#f8fafc"/>
+  <path d="M60 30c11.598 0 21.458 6.63 26.375 16.227C80.694 37.19 71.045 34 60 34s-20.694 3.19-26.375 12.227C38.542 36.63 48.402 30 60 30Z" fill="#f8fafc" opacity="0.2"/>
+  <path d="M48 82h24v12H48z" fill="#1f2937" opacity="0.7"/>
+</svg>

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Reset Password · Student Portal{% endblock %}
+
+{% block content %}
+  {% set student = token_entry.student if token_entry and token_entry.student else None %}
+  <div class="table-card" style="max-width: 520px; margin: 2rem auto;">
+    {% if state == "ready" %}
+      <h2>Confirm password reset</h2>
+      <p class="fine-print">
+        Click the button below to generate a new essay upload password{% if student %} for
+        <strong>{{ student.first_name }} {{ student.last_name }}</strong>{% endif %}.
+        The old password will stop working immediately.
+      </p>
+      <form method="post" class="form-grid" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="form-actions">
+          {{ form.submit(class_="button") }}
+        </div>
+      </form>
+      <p class="fine-print">This link expires automatically after 24 hours.</p>
+    {% elif state == "completed" %}
+      <h2>New password generated</h2>
+      <div class="portal-alert success">
+        Your portal password has been updated{% if student %} for <strong>{{ student.first_name }} {{ student.last_name }}</strong>{% endif %}.
+      </div>
+      {% if student %}
+        <ul class="fine-print">
+          <li><strong>Username:</strong> {{ student.upload_username }}</li>
+          {% if plain_password %}
+            <li><strong>New password:</strong> <code>{{ plain_password }}</code></li>
+          {% endif %}
+        </ul>
+      {% endif %}
+      {% if auto_email_enabled %}
+        {% if email_sent %}
+          <p class="fine-print">
+            {% if student and student.email %}
+              We also emailed the updated credentials to {{ student.email }}.
+            {% else %}
+              We also emailed a copy of the updated credentials.
+            {% endif %}
+          </p>
+        {% else %}
+          <p class="fine-print">Email delivery is enabled; the message should arrive shortly.</p>
+        {% endif %}
+      {% else %}
+        <p class="fine-print">Automatic emails are disabled. Make sure to store this password safely.</p>
+      {% endif %}
+      <a class="button" href="{{ url_for('web.student_login') }}">Go to login</a>
+    {% else %}
+      <h2>Reset link unavailable</h2>
+      <div class="portal-alert error">
+        {% if reason == "expired" %}
+          This reset link has expired. Please request a new one.
+        {% elif reason == "used" %}
+          This reset link has already been used. Request another reset if you still need help.
+        {% else %}
+          We couldn’t validate this reset link. Double-check the address or request a new email.
+        {% endif %}
+      </div>
+      <a class="button secondary" href="{{ url_for('web.student_reset_password_request') }}">Request again</a>
+    {% endif %}
+  </div>
+{% endblock %}

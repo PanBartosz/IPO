@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Grades report</title>
+    <style>
+      body {
+        font-family: "Helvetica", Arial, sans-serif;
+        font-size: 12px;
+        color: #111827;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 0.25in;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0.3in 0 0.1in 0;
+      }
+      .meta {
+        font-size: 11px;
+        color: #4b5563;
+        margin-bottom: 0.05in;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.15in;
+        margin-bottom: 0.25in;
+      }
+      th, td {
+        border: 1px solid #d1d5db;
+        padding: 6px 8px;
+        text-align: left;
+      }
+      th {
+        background: #f3f4f6;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .no-data {
+        color: #6b7280;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Grades report</h1>
+    <div class="meta">Generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</div>
+
+    {% for student in students %}
+      <section>
+        <h2>
+          Essay {{ student.student_id }}
+          {% if not anonymize_students %}
+            &mdash; {{ student.student_name }}
+          {% endif %}
+        </h2>
+        {% if include_countries and student.student_country %}
+          <div class="meta">Country: {{ student.student_country }}</div>
+        {% endif %}
+        <div class="meta">Stage 3 recommendation: {{ "Yes" if student.recommended else "No" }}</div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Scores</th>
+              <th>Average</th>
+              <th>Spread</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for stage_key, stage_label in stage_order %}
+              {% set stage_info = student.stages.get(stage_key) %}
+              <tr>
+                <td>{{ stage_label }}</td>
+                {% if stage_info %}
+                  <td>{{ stage_info.count }}</td>
+                  <td>{{ "%.2f"|format(stage_info.average) if stage_info.average is not none else "—" }}</td>
+                  <td>{{ "%.2f"|format(stage_info.spread) if stage_info.spread is not none else "—" }}</td>
+                {% else %}
+                  <td colspan="3" class="no-data">No scores recorded</td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+            <tr>
+              <td><strong>Combined</strong></td>
+              <td>{{ student.combined_count }}</td>
+              <td>{{ "%.2f"|format(student.combined_average) if student.combined_average is not none else "—" }}</td>
+              <td>{{ "%.2f"|format(student.combined_spread) if student.combined_spread is not none else "—" }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        {% for stage_key, stage_label in stage_order %}
+          {% set stage_info = student.stages.get(stage_key) %}
+          <h3>{{ stage_label }} scores</h3>
+          {% if stage_info %}
+            <table>
+              <thead>
+                <tr>
+                  {% if anonymize_teachers %}
+                    <th>Reader</th>
+                  {% else %}
+                    <th>Teacher ID</th>
+                    <th>Teacher name</th>
+                    {% if include_countries %}
+                      <th>Teacher country</th>
+                    {% endif %}
+                  {% endif %}
+                  <th>Score</th>
+                  <th>Finalized</th>
+                  {% if include_timestamps %}
+                    <th>Submitted</th>
+                    <th>Last update</th>
+                  {% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for score in stage_info.scores %}
+                  <tr>
+                    {% if anonymize_teachers %}
+                      <td>{{ score.reader_alias }}</td>
+                    {% else %}
+                      <td>{{ score.teacher_id }}</td>
+                      <td>{{ score.teacher_name }}</td>
+                      {% if include_countries %}
+                        <td>{{ score.teacher_country }}</td>
+                      {% endif %}
+                    {% endif %}
+                    <td>{{ "%.2f"|format(score.score) if score.score is not none else "—" }}</td>
+                    <td>{{ "Yes" if score.finalized else "No" }}</td>
+                    {% if include_timestamps %}
+                      {% set submitted = score.submitted_at or score.updated_at %}
+                      <td>{{ submitted.strftime('%Y-%m-%d %H:%M') if submitted else "—" }}</td>
+                      <td>{{ score.updated_at.strftime('%Y-%m-%d %H:%M') if score.updated_at else "—" }}</td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="no-data">No reader scores recorded for {{ stage_label.lower() }}.</p>
+          {% endif %}
+        {% endfor %}
+      </section>
+    {% endfor %}
+  </body>
+</html>

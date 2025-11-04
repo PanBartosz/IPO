@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Publish {{ survey.title }} · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <a class="button-link secondary" href="{{ url_for('web.admin_edit_survey', survey_id=survey.id) }}">Back to survey</a>
+  </div>
+
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Publish survey</h2>
+      <span class="status-tag">Draft</span>
+    </div>
+    <p>
+      <strong>{{ survey.title }}</strong><br>
+      <span class="fine-print">{{ survey.description or "No description provided." }}</span>
+    </p>
+    <p class="fine-print">
+      Choose who should receive this survey. You can assign it to everyone in the audience or hand-pick specific recipients.
+    </p>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      {% if teacher_choices %}
+        <fieldset class="audience-group">
+          <legend>Teachers</legend>
+          <div class="form-field checkbox-field">
+            {{ form.send_to_all_teachers() }}
+            {{ form.send_to_all_teachers.label }}
+          </div>
+          <div class="form-field full-width">
+            {{ form.teacher_ids.label }}
+            {{ form.teacher_ids(size=10, multiple=True) }}
+            <p class="fine-print">Hold Ctrl/Cmd to select multiple teachers.</p>
+            {% for error in form.teacher_ids.errors %}
+              <div class="field-error">{{ error }}</div>
+            {% endfor %}
+          </div>
+        </fieldset>
+      {% endif %}
+
+      {% if student_choices %}
+        <fieldset class="audience-group">
+          <legend>Students</legend>
+          <div class="form-field checkbox-field">
+            {{ form.send_to_all_students() }}
+            {{ form.send_to_all_students.label }}
+          </div>
+          <div class="form-field full-width">
+            {{ form.student_ids.label }}
+            {{ form.student_ids(size=10, multiple=True) }}
+            <p class="fine-print">Hold Ctrl/Cmd to select multiple students.</p>
+            {% for error in form.student_ids.errors %}
+              <div class="field-error">{{ error }}</div>
+            {% endfor %}
+          </div>
+        </fieldset>
+      {% endif %}
+
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.notify_recipients() }}
+          {{ form.notify_recipients.label.text }}
+        </label>
+        <span class="form-help">Sends the survey publish email to the selected recipients immediately.</span>
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

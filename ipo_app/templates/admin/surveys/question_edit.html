@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Edit question · {{ survey.title }} · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <a class="button-link secondary" href="{{ url_for('web.admin_edit_survey', survey_id=survey.id, _anchor='questions') }}">Back to questions</a>
+  </div>
+
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Edit question</h2>
+      <span class="fine-print">{{ survey.title }}</span>
+    </div>
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field full-width">
+        {{ form.prompt.label }}
+        {{ form.prompt(placeholder="Question text shown to respondents") }}
+        {% for error in form.prompt.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.help_text.label }}
+        {{ form.help_text(rows=2, placeholder="Optional help text") }}
+        {% for error in form.help_text.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.type.label }}
+        {{ form.type() }}
+        {% for error in form.type.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field checkbox-field">
+        {{ form.required() }}
+        {{ form.required.label }}
+      </div>
+      <div class="form-field full-width">
+        {{ form.options_text.label }}
+        {{ form.options_text(rows=3) }}
+        {% if form.options_text.description %}
+          <p class="fine-print">{{ form.options_text.description }}</p>
+        {% endif %}
+        {% for error in form.options_text.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+{% endblock %}

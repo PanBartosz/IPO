@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}{{ survey.title }} · Teacher Portal{% endblock %}
+
+{% block content %}
+  <section class="portal-hero">
+    <div>
+      <h2>{{ survey.title }}</h2>
+      {% if survey.description %}
+        <p class="fine-print">{{ survey.description }}</p>
+      {% endif %}
+      <p class="fine-print">
+        {% if survey.open_at %}
+          Opens {{ survey.open_at.strftime('%Y-%m-%d %H:%M') }} ·
+        {% endif %}
+        {% if survey.close_at %}
+          Closes {{ survey.close_at.strftime('%Y-%m-%d %H:%M') }} ·
+        {% endif %}
+        {% if survey.allow_edit %}
+          You can update your response after submitting.
+        {% else %}
+          Responses are final once submitted.
+        {% endif %}
+      </p>
+    </div>
+    <div class="portal-actions">
+      <a class="button secondary" href="{{ url_for('teacher_portal.surveys') }}">Back to surveys</a>
+      <a class="button" href="{{ url_for('teacher_portal.logout') }}">Sign out</a>
+    </div>
+  </section>
+
+  <div class="survey-form">
+    <div class="survey-form__meta">
+      {% if assignment.completed_at %}
+        <p class="fine-print">
+          Submitted {{ assignment.completed_at.strftime('%Y-%m-%d %H:%M') }}
+          {% if assignment.response and assignment.response.updated_at and assignment.response.updated_at != assignment.completed_at %}
+            · Last updated {{ assignment.response.updated_at.strftime('%Y-%m-%d %H:%M') }}
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="fine-print">Survey not yet submitted.</p>
+      {% endif %}
+    </div>
+
+    {% if state.locked and not assignment.status == SurveyAssignmentStatus.COMPLETED %}
+      <div class="portal-alert warning">
+        {% if state.reason == "not_open" %}
+          This survey is not yet open. Please check back later.
+        {% elif state.reason == "past_due" or state.reason == "closed" %}
+          This survey is closed and no longer accepts responses.
+        {% else %}
+          This survey is currently unavailable.
+        {% endif %}
+      </div>
+    {% elif state.reason == "completed" and not survey.allow_edit %}
+      <div class="portal-alert success">
+        Thank you! Your response has been submitted. Editing is disabled for this survey.
+      </div>
+    {% endif %}
+
+    {% if not questions %}
+      <p class="fine-print">No questions configured for this survey.</p>
+    {% else %}
+      <form method="post" class="survey-question-grid" novalidate>
+        {{ form.hidden_tag() }}
+        {% for question in questions %}
+          {% set field_name = "question_%d"|format(question.id) %}
+          {% set value = existing_data.get(field_name) %}
+          <div class="survey-question-card">
+            <div class="survey-question-card__header">
+              <h3>{{ loop.index }}. {{ question.prompt }}</h3>
+              {% if question.required %}
+                <span class="status-tag success">Required</span>
+              {% else %}
+                <span class="status-tag neutral">Optional</span>
+              {% endif %}
+            </div>
+            {% if question.help_text %}
+              <p class="fine-print">{{ question.help_text }}</p>
+            {% endif %}
+
+            <div class="survey-question-card__body">
+              {% if question.type == SurveyQuestionType.SHORT_TEXT %}
+                <input type="text" name="{{ field_name }}" value="{{ value or '' }}" {% if state.locked %}disabled{% endif %}>
+              {% elif question.type == SurveyQuestionType.LONG_TEXT %}
+                <textarea name="{{ field_name }}" rows="4" {% if state.locked %}disabled{% endif %}>{{ value or '' }}</textarea>
+              {% elif question.type == SurveyQuestionType.DATE %}
+                <input type="date" name="{{ field_name }}" value="{{ value or '' }}" {% if state.locked %}disabled{% endif %}>
+              {% elif question.type == SurveyQuestionType.RADIO %}
+                <div class="option-list">
+                  {% for option in question.options %}
+                    <label>
+                      <input type="radio" name="{{ field_name }}" value="{{ option }}" {% if state.locked %}disabled{% endif %} {% if value == option %}checked{% endif %}>
+                      <span>{{ option }}</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              {% elif question.type == SurveyQuestionType.SELECT %}
+                <select name="{{ field_name }}" {% if state.locked %}disabled{% endif %}>
+                  <option value="">Select an option</option>
+                  {% for option in question.options %}
+                    <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                  {% endfor %}
+                </select>
+              {% else %}
+                <input type="text" name="{{ field_name }}" value="{{ value or '' }}" {% if state.locked %}disabled{% endif %}>
+              {% endif %}
+            </div>
+            {% if errors.get(question.id) %}
+              <div class="field-error">{{ errors.get(question.id) }}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+        <div class="form-actions">
+          {% if not state.locked %}
+            {{ form.submit(class_="button", value=button_label) }}
+          {% else %}
+            <button type="button" class="button secondary" disabled>Submission locked</button>
+          {% endif %}
+        </div>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}

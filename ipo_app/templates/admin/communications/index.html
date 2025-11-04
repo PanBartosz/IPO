@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Communication · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Communication campaigns</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_communications_new') }}">Compose email</a>
+      </div>
+    </div>
+
+    {% if not sendgrid_ready %}
+      <div class="flash flash-warning">
+        SendGrid is not configured. Drafts can be prepared, but sending is disabled until credentials are added in Settings.
+      </div>
+    {% endif %}
+
+    {% if campaigns %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Audience</th>
+            <th>Recipients</th>
+            <th>Sent</th>
+            <th>Failed</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Last sent</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for campaign in campaigns %}
+            {% set campaign_stats = stats.get(campaign.id, {}) %}
+            {% set status_label = campaign.status.value.replace("_", " ")|title %}
+            {% set status_class = {
+              "sent": "success",
+              "failed": "warning",
+              "sending": "warning"
+            }.get(campaign.status.value, "") %}
+            <tr>
+              <td>
+                <strong>{{ campaign.subject }}</strong>
+                <span class="form-help">
+                  {% if campaign.country_filter %}
+                    Countries: {{ campaign.country_filter|join(", ") }}
+                  {% else %}
+                    All countries
+                  {% endif %}
+                  {% if campaign.include_absent %}
+                    · Includes absent participants
+                  {% endif %}
+                </span>
+              </td>
+              <td>{{ campaign.audience.value|title }}</td>
+              <td>{{ campaign.total_recipients }}</td>
+              <td>{{ campaign_stats.get("sent", campaign.sent_count) }}</td>
+              <td>{{ campaign_stats.get("failed", campaign.failed_count) }}</td>
+              <td>
+                <span class="status-tag{% if status_class %} {{ status_class }}{% endif %}">{{ status_label }}</span>
+              </td>
+              <td>{{ campaign.created_at.strftime("%Y-%m-%d %H:%M") if campaign.created_at else "—" }}</td>
+              <td>{{ campaign.sent_at.strftime("%Y-%m-%d %H:%M") if campaign.sent_at else "—" }}</td>
+              <td>
+                <div class="table-actions">
+                  <a class="button-link secondary" href="{{ url_for('web.admin_communications_preview', campaign_id=campaign.id) }}">Preview</a>
+                  {% if campaign.status.value in ["draft", "failed"] %}
+                    <a class="button-link secondary" href="{{ url_for('web.admin_communications_edit', campaign_id=campaign.id) }}">Edit</a>
+                  {% endif %}
+                  <a class="button-link secondary" href="{{ url_for('web.admin_communications_detail', campaign_id=campaign.id) }}">Details</a>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No communication campaigns have been created yet. Use “Compose email” to start a new message.</p>
+    {% endif %}
+  </div>
+{% endblock %}

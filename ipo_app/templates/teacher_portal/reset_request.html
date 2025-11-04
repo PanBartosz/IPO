@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Reset Password · Teacher Portal{% endblock %}
+
+{% block content %}
+  <div class="table-card" style="max-width: 520px; margin: 2rem auto;">
+    <h2>Reset teacher portal password</h2>
+    {% if not submitted %}
+      <p class="fine-print">Enter the email address associated with your teacher registration. If we locate your account, we will email a secure link so you can generate a new password.</p>
+      <form method="post" class="form-grid" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="form-field full-width">
+          {{ form.email.label }}
+          {{ form.email() }}
+          {% for error in form.email.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="form-actions">
+          {{ form.submit(class_="button") }}
+        </div>
+      </form>
+    {% else %}
+      <div class="portal-alert success">
+        If an account exists for <strong>{{ form.email.data }}</strong>, a password reset link is on its way.
+      </div>
+      {% if auto_email_enabled %}
+        <p class="fine-print">Check your inbox (and spam folder) for the email. The link expires automatically after 24 hours.</p>
+      {% else %}
+        <p class="fine-print">Automatic emails are currently disabled. Please contact the organizing team so they can share the reset link with you.</p>
+      {% endif %}
+      <a class="button secondary" href="{{ url_for('teacher_portal.login') }}">Back to login</a>
+    {% endif %}
+  </div>
+{% endblock %}

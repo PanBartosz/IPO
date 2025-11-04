@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% if survey %}
+  {% set page_title = survey.title ~ " · Survey" %}
+{% else %}
+  {% set page_title = "Create survey" %}
+{% endif %}
+
+{% block title %}{{ page_title }} · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <div class="page-actions__group">
+      <a class="button-link secondary" href="{{ url_for('web.admin_surveys') }}">Back to surveys</a>
+    </div>
+    {% if survey %}
+      <div class="page-actions__group">
+        <a class="button-link secondary" href="{{ url_for('web.admin_preview_survey', survey_id=survey.id) }}">Preview</a>
+        <a class="button-link" href="{{ url_for('web.admin_survey_responses', survey_id=survey.id) }}">Responses</a>
+        {% if survey.status == SurveyStatus.DRAFT %}
+          <form method="post" class="inline-form" action="{{ url_for('web.admin_delete_survey', survey_id=survey.id) }}" onsubmit="return confirm('Delete this survey? This cannot be undone.');">
+            <button type="submit" class="button-link danger">Delete</button>
+          </form>
+          <a class="button-link" href="{{ url_for('web.admin_publish_survey', survey_id=survey.id) }}">Publish</a>
+        {% elif survey.status == SurveyStatus.PUBLISHED %}
+          <form method="post" class="inline-form" action="{{ url_for('web.admin_unpublish_survey', survey_id=survey.id) }}" onsubmit="return confirm('Unpublish this survey and remove pending assignments?');">
+            <button type="submit" class="button-link secondary" {% if responses_count %}disabled title="Unpublish disabled while responses exist"{% endif %}>Unpublish</button>
+          </form>
+          <form method="post" class="inline-form" action="{{ url_for('web.admin_close_survey', survey_id=survey.id) }}" onsubmit="return confirm('Close this survey? Respondents will no longer be able to submit.');">
+            <button type="submit" class="button-link secondary">Close</button>
+          </form>
+        {% elif survey.status == SurveyStatus.CLOSED %}
+          <form method="post" class="inline-form" action="{{ url_for('web.admin_reopen_survey', survey_id=survey.id) }}" onsubmit="return confirm('Reopen this survey? Respondents will regain access.');">
+            <button type="submit" class="button-link">Reopen</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="table-card">
+    <div class="table-header">
+      <h2>{{ survey and "Survey details" or "Create survey" }}</h2>
+      {% if survey %}
+        <span class="status-tag">{{ survey.status.value.title() }}</span>
+      {% endif %}
+    </div>
+    {% if survey and not can_edit %}
+      <p class="fine-print warning">
+        This survey has been published and can no longer be edited. You can review the configuration below.
+      </p>
+    {% endif %}
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <input type="hidden" name="form_name" value="survey">
+      <div class="form-field">
+        {{ form.title.label }}
+        {{ form.title(readonly=not can_edit, placeholder="Example: Registration feedback survey") }}
+        {% for error in form.title.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.description.label }}
+        {{ form.description(rows=3, readonly=not can_edit, placeholder="Optional description shown to respondents.") }}
+        {% for error in form.description.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.audience.label }}
+        {{ form.audience(disabled=not can_edit) }}
+        {% for error in form.audience.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field checkbox-field">
+        {{ form.allow_edit(disabled=not can_edit) }}
+        {{ form.allow_edit.label }}
+      </div>
+      <div class="form-field">
+        {{ form.open_at.label }}
+        {{ form.open_at(type="datetime-local", disabled=not can_edit) }}
+        {% for error in form.open_at.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.close_at.label }}
+        {{ form.close_at(type="datetime-local", disabled=not can_edit) }}
+        {% for error in form.close_at.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {% if can_edit %}
+          {{ form.submit(class_="button") }}
+        {% else %}
+          <button type="button" class="button secondary" disabled>Changes disabled</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+  {% if survey %}
+    <div id="questions" class="table-card">
+      <div class="table-header">
+        <h2>Questions</h2>
+        <span class="fine-print">{{ questions|length }} total</span>
+      </div>
+      {% if questions %}
+        <ol class="question-list">
+          {% for question in questions %}
+            <li class="question-item">
+              <div class="question-header">
+                <div class="question-meta">
+                  <span class="question-type">{{ question.type.value.replace("_", " ")|title }}</span>
+                  {% if question.required %}
+                    <span class="status-tag success">Required</span>
+                  {% else %}
+                    <span class="status-tag neutral">Optional</span>
+                  {% endif %}
+                </div>
+                {% if can_edit %}
+                  <div class="question-actions">
+                    <a class="button-link" href="{{ url_for('web.admin_edit_survey_question', survey_id=survey.id, question_id=question.id) }}">Edit</a>
+                    <form method="post" class="inline-form" action="{{ url_for('web.admin_move_survey_question', survey_id=survey.id, question_id=question.id, direction='up') }}">
+                      <button type="submit" class="button-link secondary" title="Move up">&uarr;</button>
+                    </form>
+                    <form method="post" class="inline-form" action="{{ url_for('web.admin_move_survey_question', survey_id=survey.id, question_id=question.id, direction='down') }}">
+                      <button type="submit" class="button-link secondary" title="Move down">&darr;</button>
+                    </form>
+                    <form method="post" class="inline-form" action="{{ url_for('web.admin_delete_survey_question', survey_id=survey.id, question_id=question.id) }}" onsubmit="return confirm('Delete this question?');">
+                      <button type="submit" class="button-link danger" title="Delete question">Delete</button>
+                    </form>
+                  </div>
+                {% endif %}
+              </div>
+              <div class="question-body">
+                <p class="question-prompt">{{ question.prompt }}</p>
+                {% if question.help_text %}
+                  <p class="fine-print">{{ question.help_text }}</p>
+                {% endif %}
+                {% if question.options %}
+                  <ul class="question-options">
+                    {% for option in question.options %}
+                      <li>{{ option }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p class="fine-print">No questions added yet.</p>
+      {% endif %}
+
+      {% if can_edit and question_form %}
+        <div class="question-form">
+          <h3>Add question</h3>
+          <form method="post" class="form-grid" novalidate>
+            {{ question_form.hidden_tag() }}
+            <input type="hidden" name="form_name" value="question">
+            <div class="form-field full-width">
+              {{ question_form.prompt.label }}
+              {{ question_form.prompt(placeholder="Question text shown to respondents") }}
+              {% for error in question_form.prompt.errors %}
+                <div class="field-error">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-field full-width">
+              {{ question_form.help_text.label }}
+              {{ question_form.help_text(rows=2, placeholder="Optional help text") }}
+              {% for error in question_form.help_text.errors %}
+                <div class="field-error">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-field">
+              {{ question_form.type.label }}
+              {{ question_form.type() }}
+              {% for error in question_form.type.errors %}
+                <div class="field-error">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-field checkbox-field">
+              {{ question_form.required() }}
+              {{ question_form.required.label }}
+            </div>
+            <div class="form-field full-width">
+              {{ question_form.options_text.label }}
+              {{ question_form.options_text(rows=3, placeholder="Option one\nOption two\nOption three") }}
+              {% if question_form.options_text.description %}
+                <p class="fine-print">{{ question_form.options_text.description }}</p>
+              {% endif %}
+              {% for error in question_form.options_text.errors %}
+                <div class="field-error">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="form-actions">
+              {{ question_form.submit(class_="button") }}
+            </div>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

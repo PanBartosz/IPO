@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}Survey Response · {{ survey.title }}{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <div class="page-actions__group">
+      <a class="button secondary small" href="{{ back_url }}">Back to responses</a>
+    </div>
+    <div class="page-actions__group">
+      <a class="button small" href="{{ url_for('web.admin_survey_responses_export', survey_id=survey.id, audience=audience_filter, status=status_filter) }}">Download XLSX</a>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-header">
+      <h2>{{ survey.title }}</h2>
+      <span class="status-tag">{{ survey.status.value.title() }}</span>
+    </div>
+    <dl class="response-meta">
+      <div>
+        <dt>Assignment ID</dt>
+        <dd>{{ assignment.id }}</dd>
+      </div>
+      <div>
+        <dt>Respondent</dt>
+        <dd>{{ respondent_name }} ({{ respondent_type|title }})</dd>
+      </div>
+      <div>
+        <dt>Email</dt>
+        <dd>{{ respondent_email or '—' }}</dd>
+      </div>
+      <div>
+        <dt>Country</dt>
+        <dd>{{ respondent_country or '—' }}</dd>
+      </div>
+      <div>
+        <dt>Status</dt>
+        <dd>{{ assignment.status.value.title() }}</dd>
+      </div>
+      <div>
+        <dt>Submitted at</dt>
+        <dd>{{ assignment.completed_at.strftime('%Y-%m-%d %H:%M') if assignment.completed_at else '—' }}</dd>
+      </div>
+      <div>
+        <dt>Last updated</dt>
+        <dd>
+          {% if assignment.response and assignment.response.updated_at %}
+            {{ assignment.response.updated_at.strftime('%Y-%m-%d %H:%M') }}
+          {% else %}
+            —
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+  </div>
+
+  <div class="table-card">
+    <h3>Responses</h3>
+    {% if questions %}
+      <ol class="question-list">
+        {% for question in questions %}
+          {% set key = "question_%d"|format(question.id) %}
+          <li class="question-item">
+            <div class="question-header">
+              <div class="question-meta">
+                <span class="question-type">{{ question.prompt }}</span>
+                {% if question.required %}
+                  <span class="status-tag success">Required</span>
+                {% else %}
+                  <span class="status-tag neutral">Optional</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="question-body">
+              {% if question.help_text %}
+                <p class="fine-print">{{ question.help_text }}</p>
+              {% endif %}
+              <p>{{ answers.get(key) or '—' }}</p>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="fine-print">No questions configured.</p>
+    {% endif %}
+  </div>
+{% endblock %}

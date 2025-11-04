@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Survey Responses · {{ survey.title }}{% endblock %}
+
+{% block content %}
+  <div class="page-actions">
+    <div class="page-actions__group">
+      <a class="button secondary small" href="{{ url_for('web.admin_surveys') }}">Back to surveys</a>
+      <a class="button secondary small" href="{{ url_for('web.admin_edit_survey', survey_id=survey.id) }}">Edit survey</a>
+    </div>
+    <div class="page-actions__group">
+      <a class="button small" href="{{ export_url }}">Download XLSX</a>
+    </div>
+    <div class="page-actions__group">
+      {% if summary.outstanding > 0 %}
+        <form method="post" action="{{ url_for('web.admin_survey_send_reminder', survey_id=survey.id) }}" onsubmit="return confirm('Send reminder emails to outstanding recipients?');">
+          <input type="hidden" name="audience" value="{{ audience_filter }}">
+          <input type="hidden" name="status" value="{{ status_filter }}">
+          <button type="submit" class="button small">Send reminder ({{ summary.outstanding }})</button>
+        </form>
+      {% else %}
+        <button type="button" class="button secondary small" disabled>No outstanding recipients</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-header">
+      <h2>{{ survey.title }}</h2>
+      <span class="status-tag">{{ survey.status.value.title() }}</span>
+    </div>
+    {% if survey.description %}
+      <p class="fine-print">{{ survey.description }}</p>
+    {% endif %}
+    <form method="get" class="survey-filters">
+      {% for key, value in request.args.items() if key not in ['audience', 'status'] %}
+        <input type="hidden" name="{{ key }}" value="{{ value }}">
+      {% endfor %}
+      <label>
+        Audience
+        <select name="audience">
+          <option value="all" {% if audience_filter == 'all' %}selected{% endif %}>All respondents</option>
+          <option value="teacher" {% if audience_filter == 'teacher' %}selected{% endif %}>Teachers</option>
+          <option value="student" {% if audience_filter == 'student' %}selected{% endif %}>Students</option>
+        </select>
+      </label>
+      <label>
+        Status
+        <select name="status">
+          <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All responses</option>
+          <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+          <option value="outstanding" {% if status_filter == 'outstanding' %}selected{% endif %}>Outstanding</option>
+        </select>
+      </label>
+      <button type="submit" class="button secondary small">Apply filters</button>
+    </form>
+    <p class="fine-print">
+      <strong>Summary:</strong>
+      {{ summary.completed }} completed ·
+      {{ summary.outstanding }} outstanding ·
+      {{ summary.closed }} closed/unavailable ·
+      {{ summary.total }} total assignments
+    </p>
+  </div>
+
+  <div class="table-card table-card-wide">
+    {% if rows %}
+      <table id="survey-responses-table" class="data-table display">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Respondent</th>
+            <th>Email</th>
+            <th>Country</th>
+            <th>Status</th>
+            <th>Submitted</th>
+            {% for question in questions %}
+              <th>{{ question.prompt }}</th>
+            {% endfor %}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.assignment.id }}</td>
+              <td>
+                {{ row.respondent_name }}<br>
+                <span class="fine-print">{{ row.respondent_type|title }}</span>
+              </td>
+              <td>{{ row.respondent_email or '—' }}</td>
+              <td>{{ row.respondent_country or '—' }}</td>
+              <td>
+                {% if row.assignment.status == SurveyAssignmentStatus.COMPLETED %}
+                  <span class="status-tag success">Completed</span>
+                {% elif row.state.locked %}
+                  <span class="status-tag neutral">Unavailable</span>
+                {% else %}
+                  <span class="status-tag warning">Outstanding</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if row.assignment.completed_at %}
+                  {{ row.assignment.completed_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              {% for question in questions %}
+                {% set key = "question_%d"|format(question.id) %}
+                <td>{{ row.answers.get(key) or '—' }}</td>
+              {% endfor %}
+              <td class="table-actions">
+                <a class="button-link" href="{{ url_for('web.admin_survey_response_detail', survey_id=survey.id, assignment_id=row.assignment.id, audience=audience_filter, status=status_filter) }}">View</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No responses recorded yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+  {{ super() }}
+  <link href="https://cdn.datatables.net/v/dt/dt-2.3.4/b-3.2.5/b-colvis-3.2.5/cr-2.1.2/fc-5.0.5/fh-4.0.4/r-3.0.7/sc-2.4.3/sp-2.3.5/sl-3.1.3/datatables.min.css" rel="stylesheet" integrity="sha384-7V4sHeZ5gBkojusGF2JLcv5cLqptUs610odNxbc3x9CDXveYAMGNVAjXEPsu3drR" crossorigin="anonymous">
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script
+    src="https://code.jquery.com/jquery-3.7.1.min.js"
+    integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.datatables.net/v/dt/dt-2.3.4/b-3.2.5/b-colvis-3.2.5/cr-2.1.2/fc-5.0.5/fh-4.0.4/r-3.0.7/sc-2.4.3/sp-2.3.5/sl-3.1.3/datatables.min.js" integrity="sha384-SRYEBMMalIqxjYashh81gN6nl6xSAUmF3zogz3k7AUNRFF/5NyVvztDKav+RTweM" crossorigin="anonymous"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      new DataTable('#survey-responses-table', {
+        paging: true,
+        pageLength: 25,
+        lengthMenu: [10, 25, 50, 100],
+        scrollX: true,
+        responsive: false,
+        order: [[0, 'asc']],
+        layout: {
+          top1Start: 'search',
+          topEnd: 'pageLength',
+          bottomStart: 'info',
+          bottomEnd: 'paging'
+        }
+      });
+    });
+  </script>
+{% endblock %}

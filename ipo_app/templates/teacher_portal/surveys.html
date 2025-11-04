@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Surveys · Teacher Portal{% endblock %}
+
+{% block content %}
+  <section class="portal-hero">
+    <div>
+      <h2>Surveys</h2>
+      <p class="fine-print">Respond to surveys assigned by the organizers. Outstanding surveys appear first.</p>
+    </div>
+    <div class="portal-actions">
+      <a class="button secondary" href="{{ url_for('teacher_portal.dashboard') }}">Back to dashboard</a>
+      <a class="button" href="{{ url_for('teacher_portal.logout') }}">Sign out</a>
+    </div>
+  </section>
+
+  <section class="portal-summary-grid">
+    <div class="portal-summary-card">
+      <h3>Survey status</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ summary.total }}</li>
+        <li><strong>Completed:</strong> {{ summary.completed }}</li>
+        <li><strong>Outstanding:</strong> {{ summary.outstanding }}</li>
+        <li><strong>Closed:</strong> {{ summary.closed }}</li>
+      </ul>
+    </div>
+    {% if outstanding %}
+      <div class="portal-summary-card">
+        <h3>Next actions</h3>
+        <ul>
+          {% for item in outstanding[:3] %}
+            <li>
+              <strong>{{ item.survey.title }}</strong>
+              {% if item.survey.close_at %}
+                <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </section>
+
+  <div class="portal-survey-columns">
+    <section class="portal-survey-section">
+      <h3>Outstanding surveys</h3>
+      {% if outstanding %}
+        <ul class="portal-survey-list">
+          {% for item in outstanding %}
+            <li class="portal-survey-card">
+              <header>
+                <h4>{{ item.survey.title }}</h4>
+                {% if item.survey.close_at %}
+                  <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% elif item.survey.open_at %}
+                  <span class="fine-print">Opens {{ item.survey.open_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+              </header>
+              {% if item.survey.description %}
+                <p class="fine-print">{{ item.survey.description }}</p>
+              {% endif %}
+              <footer>
+                <a class="button" href="{{ item.detail_url }}">Complete survey</a>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No outstanding surveys at this time.</p>
+      {% endif %}
+    </section>
+
+    <section class="portal-survey-section">
+      <h3>Completed surveys</h3>
+      {% if completed %}
+        <ul class="portal-survey-list">
+          {% for item in completed %}
+            <li class="portal-survey-card">
+              <header>
+                <h4>{{ item.survey.title }}</h4>
+                {% if item.submitted_at %}
+                  <span class="fine-print">Submitted {{ item.submitted_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+              </header>
+              {% if item.state.allow_edit %}
+                <p class="fine-print">You can update this response until the survey closes.</p>
+              {% endif %}
+              <footer>
+                <a class="button secondary" href="{{ item.detail_url }}">
+                  {% if item.state.allow_edit %}Update response{% else %}View response{% endif %}
+                </a>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No completed surveys yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="portal-survey-section">
+      <h3>Closed or unavailable</h3>
+      {% if closed %}
+        <ul class="portal-survey-list">
+          {% for item in closed %}
+            <li class="portal-survey-card portal-survey-card--muted">
+              <header>
+                <h4>{{ item.survey.title }}</h4>
+                {% if item.survey.close_at %}
+                  <span class="fine-print">Closed {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+              </header>
+              <p class="fine-print">
+                {% if item.state.reason == "closed" or item.state.reason == "past_due" %}
+                  This survey is closed.
+                {% elif item.state.reason == "not_open" %}
+                  This survey is not yet open.
+                {% elif item.state.reason == "completed" %}
+                  Response submitted; edits disabled.
+                {% else %}
+                  Survey unavailable.
+                {% endif %}
+              </p>
+              <footer>
+                <a class="button secondary" href="{{ item.detail_url }}">View</a>
+              </footer>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="fine-print">No closed surveys.</p>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

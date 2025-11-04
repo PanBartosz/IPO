@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Stage 3 Packets · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Stage 3 steering committee packets</h2>
+      <a class="button-link secondary" href="{{ url_for('web.admin_stage2_overview') }}">Back to Stage 2 overview</a>
+    </div>
+    <p>Generate personalised packets for steering committee members to review Stage 3 essays. Provide the committee member names and select the essays to include. The generated PDF contains a title sheet for each member followed by full essays with space for comments.</p>
+
+    {% if not form.essay_ids.choices %}
+      <div class="flash flash-warning">No essays are currently marked for Stage 3. Mark recommendations in Stage 2 scoring before creating packets.</div>
+    {% endif %}
+
+    <form method="post" class="form-grid" novalidate>
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.committee_label.label }}
+        {{ form.committee_label() }}
+        {% for error in form.committee_label.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.member_names.label }}
+        {{ form.member_names(rows=4, placeholder="Name Surname\nAnother Member") }}
+        <span class="form-help">Enter one steering committee member per line.</span>
+        {% for error in form.member_names.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.essay_ids.label }}
+        {{ form.essay_ids(multiple=True, size=15, style="min-height: 320px;") }}
+        <span class="form-help">All essays marked for Stage 3 are preselected. Hold Ctrl (Windows/Linux) or ⌘ (macOS) to select multiple.</span>
+        {% for error in form.essay_ids.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-actions">
+        {{ form.submit(class_="button", disabled=not form.essay_ids.choices) }}
+      </div>
+    </form>
+  </div>
+
+  {% if assignments %}
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Stage 3 recommendations</h3>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Essay ID</th>
+            <th>Student</th>
+            <th>Country</th>
+            <th>Original group</th>
+            <th>Stage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for assignment in assignments if assignment.student %}
+            <tr>
+              <td>{{ assignment.student.id }}</td>
+              <td>{{ assignment.student.first_name }} {{ assignment.student.last_name }}</td>
+              <td>{{ assignment.student.country }}</td>
+              <td>{{ assignment.group.name if assignment.group else "—" }}</td>
+              <td>{{ assignment.stage.value|replace("_", " ")|title }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}
