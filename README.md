@@ -1,4 +1,4 @@
-# International Philosophy Olympiad Admin Portal (working doc)
+# International Philosophy Olympiad Admin Portal (working document)
 
 ## Purpose
 The IPO Admin Portal streamlines logistics for the International Philosophy Olympiad. It centralizes student and teacher registrations, essay workflow management, stage planning, message broadcasting, and PDF packet generation, keeping the competition compliant with IPO statutes.
