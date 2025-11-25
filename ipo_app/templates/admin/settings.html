@@ -105,7 +105,7 @@
       <div class="form-field full-width">
         {{ form.email_teacher_body.label }}
         {{ form.email_teacher_body() }}
-        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ languages }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ tshirt_size }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ delegation_leader }}' }}, {{ '{{ prior_ipo_assessor }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ school }}' }}, {{ '{{ languages }}' }}, {{ '{{ meal_preference }}' }}, {{ '{{ tshirt_size }}' }}, {{ '{{ special_needs }}' }}, {{ '{{ delegation_leader }}' }}, {{ '{{ prior_ipo_assessor }}' }}, {{ '{{ prior_ipo_assessor_level }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
         {% for error in form.email_teacher_body.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}

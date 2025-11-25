@@ -577,6 +577,7 @@ def _unique_email(base: str, domain: str, cache: dict[str, int]) -> str:
 def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
     base = f"{_slugify(entry['first'])}.{_slugify(entry['last'])}"
     email = _unique_email(base, "ipo.ts", _teacher_email_counts)
+    veteran_level = random.choice([1, 2, 3]) if random.random() < 0.7 else 0
     teacher = Teacher(
         first_name=entry["first"],
         last_name=entry["last"],
@@ -589,7 +590,8 @@ def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
         special_needs=None,
         tshirt_size=["S", "M", "L", "XL"][index % 4],
         delegation_leader=index % 8 == 0,
-        prior_ipo_assessor=random.random() < 0.7,
+        prior_ipo_assessor_level=veteran_level,
+        prior_ipo_assessor=bool(veteran_level),
         is_absent=False,
     )
     teacher.language_entries = [TeacherLanguage(language=lang) for lang in languages]

@@ -48,7 +48,13 @@
             <td>{{ teacher.school }}</td>
             <td>{{ teacher.gender }}</td>
             <td>{{ teacher.languages }}</td>
-            <td>{% if teacher.prior_ipo_assessor %}<span class="badge">IPO veteran</span>{% else %}—{% endif %}</td>
+            <td>
+              {% if teacher.veteran_level %}
+                <span class="veteran-badge veteran-level-{{ teacher.veteran_level }}">IPO veteran · Level {{ teacher.veteran_level }}</span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
             <td>{{ teacher.meal_preference }}</td>
             <td>{{ teacher.tshirt_size }}</td>
             <td>{{ "Yes" if teacher.delegation_leader else "No" }}</td>

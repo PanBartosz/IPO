@@ -204,7 +204,7 @@ Login directly: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p
   <li><strong>T-shirt size:</strong> {{ tshirt_size }}</li>
   {% if special_needs %}<li><strong>Special needs:</strong> {{ special_needs }}</li>{% endif %}
   <li><strong>Delegation leader:</strong> {{ 'Yes' if delegation_leader else 'No' }}</li>
-  <li><strong>Prior IPO assessor:</strong> {{ 'Yes' if prior_ipo_assessor else 'No' }}</li>
+  <li><strong>Prior IPO assessor:</strong> {% if prior_ipo_assessor_level %}Yes (Level {{ prior_ipo_assessor_level }}){% else %}No{% endif %}</li>
 </ul>
 <p>Your teacher portal credentials:</p>
 <ul>
@@ -1998,6 +1998,7 @@ def _send_teacher_confirmation_email(teacher: Teacher) -> None:
         "special_needs": teacher.special_needs or "",
         "delegation_leader": teacher.delegation_leader,
         "prior_ipo_assessor": teacher.prior_ipo_assessor,
+        "prior_ipo_assessor_level": teacher.prior_ipo_assessor_level,
         "portal_username": teacher.portal_username,
         "portal_password": portal_password or "",
         "portal_link": url_for("teacher_portal.dashboard", _external=True),
@@ -3321,6 +3322,8 @@ def register_teacher():
             if form.special_needs.data
             else None,
             delegation_leader=bool(form.delegation_leader.data),
+            prior_ipo_assessor_level=form.prior_ipo_assessor_level.data,
+            prior_ipo_assessor=bool(form.prior_ipo_assessor_level.data),
             language_entries=[TeacherLanguage(language=lang) for lang in form.languages.data],
             is_absent=bool(form.is_absent.data),
         )
@@ -6373,6 +6376,7 @@ def edit_teacher(teacher_id: int):
     if not form.is_submitted():
         languages = [lang.strip() for lang in teacher.languages.split(",")] if teacher.languages else ["English"]
         form.languages.data = [lang for lang in languages if lang]
+        form.prior_ipo_assessor_level.data = teacher.prior_ipo_assessor_level or 0
     form.submit.label.text = "Save changes"
 
     if form.validate_on_submit():
@@ -6398,6 +6402,8 @@ def edit_teacher(teacher_id: int):
         teacher.tshirt_size = form.tshirt_size.data
         teacher.special_needs = (form.special_needs.data.strip() or None) if form.special_needs.data else None
         teacher.delegation_leader = bool(form.delegation_leader.data)
+        teacher.prior_ipo_assessor_level = form.prior_ipo_assessor_level.data
+        teacher.prior_ipo_assessor = bool(form.prior_ipo_assessor_level.data)
         teacher.is_absent = bool(form.is_absent.data)
 
         try:
@@ -6912,6 +6918,10 @@ def admin_planner_batch(batch_id: int):
 
     groups = _load_batch_groups(batch)
     assigned_student_ids = {assignment.student_id for group in groups for assignment in group.assignments}
+
+    for group in groups:
+        group.members.sort(key=lambda member: (0 if member.role == GroupMemberRole.LEADER else 1, member.id))
+
     students_by_language: dict[str, list[Student]] = defaultdict(list)
     for student in Student.query.order_by(Student.essay_language.asc(), Student.country.asc(), Student.last_name.asc()).all():
         if student.id in assigned_student_ids:
@@ -7151,6 +7161,63 @@ def admin_planner_remove_member(batch_id: int, member_id: int):
     )
     db.session.commit()
     flash("Group member removed.", "success")
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
+@web_bp.route(
+    "/admin/planner/batches/<int:batch_id>/groups/<int:group_id>/members/<int:member_id>/role",
+    methods=["POST"],
+)
+def admin_planner_update_member_role(batch_id: int, group_id: int, member_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+
+    member = (
+        ReadingGroupMember.query.join(ReadingGroup)
+        .filter(
+            ReadingGroupMember.id == member_id,
+            ReadingGroupMember.group_id == group_id,
+            ReadingGroup.batch_id == batch.id,
+        )
+        .first_or_404()
+    )
+
+    group = member.group
+    target_role_value = request.form.get("role")
+    try:
+        target_role = GroupMemberRole(target_role_value)
+    except Exception:
+        flash("Invalid role change requested.", "error")
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    if target_role not in {GroupMemberRole.LEADER, GroupMemberRole.READER}:
+        flash("Invalid role change requested.", "error")
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    if target_role == GroupMemberRole.LEADER:
+        (
+            ReadingGroupMember.query.filter(
+                ReadingGroupMember.group_id == group.id,
+                ReadingGroupMember.id != member.id,
+                ReadingGroupMember.role == GroupMemberRole.LEADER,
+            ).update({ReadingGroupMember.role: GroupMemberRole.READER}, synchronize_session=False)
+        )
+        member.role = GroupMemberRole.LEADER
+        message = "Member promoted to leader."
+    else:
+        member.role = GroupMemberRole.READER
+        message = "Member marked as reader."
+
+    log_activity(
+        "group_member_role_updated",
+        f"Teacher {member.teacher_id} role updated in group {group.name}",
+        object_type="reading_group",
+        object_id=group.id,
+        details={"member_id": member.id, "role": member.role.value},
+    )
+    db.session.commit()
+    flash(message, "success")
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 

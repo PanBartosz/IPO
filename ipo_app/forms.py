@@ -16,7 +16,7 @@ from wtforms import (
     TextAreaField,
     HiddenField,
 )
-from wtforms.validators import DataRequired, Email, Length, Optional, ValidationError, NumberRange
+from wtforms.validators import DataRequired, Email, Length, Optional, ValidationError, NumberRange, InputRequired
 from wtforms.widgets import CheckboxInput, ListWidget
 
 from flask_wtf.file import FileAllowed, FileField, FileRequired
@@ -62,6 +62,13 @@ TSHIRT_CHOICES = [
     ("L", "L"),
     ("XL", "XL"),
     ("XXL", "XXL"),
+]
+
+VETERAN_LEVEL_CHOICES = [
+    (0, "Never assessed essays in previous IPO editions"),
+    (1, "Assessed once"),
+    (2, "Assessed twice"),
+    (3, "Assessed three or more times"),
 ]
 
 TEACHER_MESSAGE_PRIORITY_CHOICES = [
@@ -137,7 +144,13 @@ class TeacherRegistrationForm(FlaskForm):
         "T-shirt size", validators=[DataRequired()], choices=TSHIRT_CHOICES
     )
     delegation_leader = BooleanField("Yes, this teacher is a delegation leader")
-    prior_ipo_assessor = BooleanField("Assessed essays in a previous IPO edition")
+    prior_ipo_assessor_level = SelectField(
+        "IPO assessing experience",
+        validators=[InputRequired()],
+        choices=VETERAN_LEVEL_CHOICES,
+        coerce=int,
+        default=0,
+    )
     special_needs = TextAreaField(
         "Special dietary, health, or religious needs", validators=[Optional(), Length(max=5000)]
     )

@@ -518,7 +518,7 @@ textarea {
 .group-members li {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 1rem;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -550,10 +550,77 @@ textarea {
   margin-top: 0.25rem;
 }
 
-.member-role {
-  font-size: 0.85rem;
-  color: #2563eb;
-  min-width: 100px;
+.member-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.member-role-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.member-role-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  width: 110px;
+  padding: 0.28rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-radius: 999px;
+  text-transform: capitalize;
+  color: #111827;
+  background: #e5e7eb;
+}
+
+.member-role-leader {
+  color: #0b3ea2;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+}
+
+.member-role-reader {
+  color: #1f2937;
+  background: #e5e7eb;
+  border: 1px solid #d1d5db;
+}
+
+.veteran-badge {
+  min-width: 150px;
+  width: 150px;
+  padding: 0.18rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.veteran-level-1 {
+  background: #dbeafe;
+  color: #0b3ea2;
+  border-color: #bfdbfe;
+}
+
+.veteran-level-2 {
+  background: #fef9c3;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.veteran-level-3 {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecdd3;
 }
 
 .group-actions {
@@ -1448,14 +1515,19 @@ body.modal-open {
 }
 
 .badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.1rem 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1rem 0.5rem;
   border-radius: 999px;
   background: #2563eb;
   color: #fff;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.2;
+  min-width: 108px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .admin-nav {

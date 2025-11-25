@@ -148,7 +148,7 @@
                 <select name="teacher_id" required>
                   <option value="" disabled selected>Select teacher</option>
                   {% for teacher in available_teachers %}
-                    <option value="{{ teacher.id }}">{{ teacher.first_name }} {{ teacher.last_name }} · {{ teacher.country }} ({{ teacher.languages }}){% if teacher.prior_ipo_assessor %} · IPO veteran{% endif %}</option>
+                    <option value="{{ teacher.id }}">{{ teacher.first_name }} {{ teacher.last_name }} · {{ teacher.country }} ({{ teacher.languages }}){% if teacher.veteran_level %} · IPO veteran (Level {{ teacher.veteran_level }}){% endif %}</option>
                   {% endfor %}
                 </select>
                 <button type="submit" class="button-link">Assign</button>
@@ -156,7 +156,7 @@
             {% else %}
               <p class="fine-print">No eligible teachers available for this language.</p>
             {% endif %}
-          </div>
+        </div>
         {% endif %}
         <ul class="group-members">
           {% for member in group.members %}
@@ -175,8 +175,9 @@
                       Message
                     </button>
                   </div>
-                  {% if member.teacher.prior_ipo_assessor %}
-                    <span class="badge">IPO veteran</span>
+                  {% set veteran_level = member.teacher.veteran_level if member.teacher else 0 %}
+                  {% if veteran_level %}
+                    <span class="veteran-badge veteran-level-{{ veteran_level }}">IPO veteran · Level {{ veteran_level }}</span>
                   {% endif %}
                   <span>{{ member.teacher.country }}</span>
                   <span class="fine-print">Languages: {{ member.teacher.languages }}</span>
@@ -187,10 +188,27 @@
                   <strong>—</strong>
                 {% endif %}
               </div>
-              <span class="member-role">{{ member.role.value.title() }}{% if not member.active %} · inactive{% endif %}</span>
-              <form method="post" action="{{ url_for('web.admin_planner_remove_member', batch_id=batch.id, member_id=member.id) }}" onsubmit="return confirm('Remove this member?');">
-                <button type="submit" class="link-like">Remove</button>
-              </form>
+              <div class="member-actions">
+                <div class="member-role-actions">
+                  <span class="member-role-badge member-role-{{ member.role.value }}">{{ member.role.value.title() }}{% if not member.active %} · inactive{% endif %}</span>
+                  {% if member.role.value in ["leader", "reader"] %}
+                    <form
+                      method="post"
+                      action="{{ url_for('web.admin_planner_update_member_role', batch_id=batch.id, group_id=group.id, member_id=member.id) }}"
+                      class="inline-form"
+                    >
+                      {{ member_form.csrf_token }}
+                      <input type="hidden" name="role" value="{{ 'reader' if member.role.value == 'leader' else 'leader' }}">
+                      <button type="submit" class="link-like">
+                        {% if member.role.value == "leader" %}Make reader{% else %}Make leader{% endif %}
+                      </button>
+                    </form>
+                  {% endif %}
+                </div>
+                <form method="post" action="{{ url_for('web.admin_planner_remove_member', batch_id=batch.id, member_id=member.id) }}" onsubmit="return confirm('Remove this member?');">
+                  <button type="submit" class="link-like">Remove</button>
+                </form>
+              </div>
             </li>
           {% endfor %}
         </ul>

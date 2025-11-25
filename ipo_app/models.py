@@ -131,6 +131,7 @@ class Teacher(db.Model, TimestampMixin):
     gender = db.Column(db.String(10), nullable=False)
     languages = db.Column(db.String(120), nullable=False)
     prior_ipo_assessor = db.Column(db.Boolean, nullable=False, default=False)
+    prior_ipo_assessor_level = db.Column(db.Integer, nullable=False, default=0)
     meal_preference = db.Column(db.String(30), nullable=False)
     special_needs = db.Column(db.Text, nullable=True)
     tshirt_size = db.Column(db.String(5), nullable=False)
@@ -154,6 +155,15 @@ class Teacher(db.Model, TimestampMixin):
         back_populates="teacher",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def veteran_level(self) -> int:
+        return self.prior_ipo_assessor_level or 0
+
+    @property
+    def veteran_level_label(self) -> str | None:
+        level = self.veteran_level
+        return f"Level {level}" if level else None
 
 
 class PasswordResetToken(db.Model, TimestampMixin):

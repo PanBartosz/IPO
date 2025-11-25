@@ -85,11 +85,9 @@
       {% endfor %}
     </div>
     <div class="form-field full-width">
-      <label class="checkbox">
-        {{ form.prior_ipo_assessor() }}
-        {{ form.prior_ipo_assessor.label.text }}
-      </label>
-      {% for error in form.prior_ipo_assessor.errors %}
+      {{ form.prior_ipo_assessor_level.label }}
+      {{ form.prior_ipo_assessor_level() }}
+      {% for error in form.prior_ipo_assessor_level.errors %}
         <div class="field-error">{{ error }}</div>
       {% endfor %}
     </div>
