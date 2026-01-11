@@ -5036,8 +5036,11 @@ def admin_message_edit(message_id: int):
         abort(404)
 
     form = TeacherMessageForm(obj=message)
-    _prepare_message_form(form, message.teacher_id or 0)
-    form.priority.data = message.priority.value
+    if not form.is_submitted():
+        _prepare_message_form(form, message.teacher_id or 0)
+        form.priority.data = message.priority.value
+    else:
+        _prepare_message_form(form)
 
     if form.validate_on_submit():
         deliver_to_all = form.teacher_id.data == 0
@@ -6671,7 +6674,7 @@ def teacher_board():
                 TeacherMessage.teacher_id == portal_teacher.id,
             )
         )
-        teacher_param = portal_teacher.id
+        teacher_param = 0
 
     if priority_param:
         try:
