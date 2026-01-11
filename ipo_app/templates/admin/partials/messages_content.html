@@ -1,0 +1,121 @@
+<div class="table-card">
+  <div class="table-header">
+    <h2>Post message</h2>
+    <div class="table-actions">
+      <a class="button-link secondary" href="{{ url_for('web.admin_message_templates') }}">Manage templates</a>
+      <a class="button-link" href="{{ url_for('web.teacher_board') }}">View teacher board</a>
+    </div>
+  </div>
+  {% if templates %}
+    <form
+      method="get"
+      class="template-select"
+      hx-get="{{ url_for('web.admin_messages') }}"
+      hx-target="#admin-messages-content"
+      hx-push-url="true"
+    >
+      <label>Load template
+        <select name="template">
+          <option value="">Select template…</option>
+          {% for template in templates %}
+            <option value="{{ template.id }}"{% if selected_template_id == template.id %} selected{% endif %}>{{ template.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="button secondary">Load</button>
+    </form>
+  {% endif %}
+  <form method="post" class="form-grid" novalidate hx-boost="true" hx-target="#admin-messages-content">
+    {{ form.hidden_tag() }}
+    <div class="form-field">
+      {{ form.title.label }}
+      {{ form.title() }}
+      {% for error in form.title.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field full-width">
+      {{ form.body.label }}
+      {{ form.body(rows=4) }}
+      {% for error in form.body.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field">
+      {{ form.priority.label }}
+      {{ form.priority() }}
+    </div>
+    <div class="form-field">
+      {{ form.teacher_id.label }}
+      {{ form.teacher_id() }}
+    </div>
+    <div class="form-field">
+      {{ form.category.label }}
+      {{ form.category() }}
+    </div>
+    <div class="form-actions">
+      {{ form.submit(class_="button") }}
+    </div>
+  </form>
+</div>
+
+<div class="table-card table-card-wide">
+  <div class="table-header">
+    <h2>Messages</h2>
+  </div>
+  {% if messages %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Created</th>
+          <th>Title</th>
+          <th>Priority</th>
+          <th>Target</th>
+          <th>Status</th>
+          <th>Category</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for message in messages %}
+          <tr class="priority-{{ message.priority.value }}">
+            <td>{{ message.created_at.strftime('%Y-%m-%d %H:%M') if message.created_at else '—' }}</td>
+            <td>{{ message.title }}</td>
+            <td>{{ message.priority.name.title() }}</td>
+            <td>
+              {% if message.deliver_to_all %}
+                <span class="audience-tag">All teachers</span>
+              {% elif message.teacher %}
+                <span class="audience-tag">{{ message.teacher.first_name }} {{ message.teacher.last_name }}</span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>{{ message.status.value.title() }}</td>
+            <td>{{ message.category or '—' }}</td>
+            <td class="table-actions">
+              <a class="button-link" href="{{ url_for('web.admin_message_edit', message_id=message.id) }}">Edit</a>
+              {% if message.status == TeacherMessageStatus.ACTIVE %}
+                <form method="post" action="{{ url_for('web.admin_message_archive', message_id=message.id) }}" hx-post="{{ url_for('web.admin_message_archive', message_id=message.id) }}" hx-target="#admin-messages-content">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link secondary">Archive</button>
+                </form>
+              {% else %}
+                <form method="post" action="{{ url_for('web.admin_message_restore', message_id=message.id) }}" hx-post="{{ url_for('web.admin_message_restore', message_id=message.id) }}" hx-target="#admin-messages-content">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link">Restore</button>
+                </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('web.admin_message_delete', message_id=message.id) }}" onsubmit="return confirm('Delete this message permanently?');" hx-post="{{ url_for('web.admin_message_delete', message_id=message.id) }}" hx-target="#admin-messages-content">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button-link danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="fine-print">No messages posted yet.</p>
+  {% endif %}
+</div>

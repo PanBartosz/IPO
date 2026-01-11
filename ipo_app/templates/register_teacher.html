@@ -4,110 +4,204 @@
 
 {% block content %}
   <h2>{{ form_title or "Teacher registration" }}</h2>
-  <form method="post" class="form-grid">
-    {{ form.hidden_tag() }}
-    <div class="form-field">
-      {{ form.first_name.label }}
-      {{ form.first_name() }}
-      {% for error in form.first_name.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
+  {% if invite_message %}
+    <div class="portal-alert warning">{{ invite_message }}</div>
+  {% elif invite_active %}
+    <div class="portal-alert success">
+      You are completing an invitation for the {{ form.country.data }} delegation. Email and country are locked to this invite.
+      {% if invite_delegation_leader %}
+        <div class="fine-print"><strong>This invite registers you as a delegation leader.</strong></div>
+      {% endif %}
     </div>
-    <div class="form-field">
-      {{ form.last_name.label }}
-      {{ form.last_name() }}
-      {% for error in form.last_name.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field">
-      {{ form.email.label }}
-      {{ form.email() }}
-      {% for error in form.email.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field">
-      {{ form.country.label }}
-      {{ form.country() }}
-      {% for error in form.country.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field">
-      {{ form.school.label }}
-      {{ form.school() }}
-      {% for error in form.school.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field">
-      {{ form.gender.label }}
-      {{ form.gender() }}
-      {% for error in form.gender.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <fieldset class="form-field full-width">
-      <legend>{{ form.languages.label.text }}</legend>
-      {% for option in form.languages %}
-        <label class="checkbox">
-          {{ option() }}
-          {{ option.label.text }}
-        </label>
-      {% endfor %}
-      <span class="form-help">Select every language you can evaluate. English is required.</span>
-      {% for error in form.languages.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </fieldset>
-    <div class="form-field">
-      {{ form.meal_preference.label }}
-      {{ form.meal_preference() }}
-      {% for error in form.meal_preference.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field">
-      {{ form.tshirt_size.label }}
-      {{ form.tshirt_size() }}
-      {% for error in form.tshirt_size.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field full-width">
-      <label class="checkbox">
-        {{ form.delegation_leader() }}
-        {{ form.delegation_leader.label.text }}
-      </label>
-      {% for error in form.delegation_leader.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field full-width">
-      {{ form.prior_ipo_assessor_level.label }}
-      {{ form.prior_ipo_assessor_level() }}
-      {% for error in form.prior_ipo_assessor_level.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    <div class="form-field full-width">
-      {{ form.special_needs.label }}
-      {{ form.special_needs(rows=4) }}
-      {% for error in form.special_needs.errors %}
-        <div class="field-error">{{ error }}</div>
-      {% endfor %}
-    </div>
-    {% if show_absence_toggle %}
+  {% endif %}
+  {% if not invite_required or invite_active %}
+    <form method="post" class="form-grid">
+      {{ form.hidden_tag() }}
+      {% if invite_token %}
+        <input type="hidden" name="invite" value="{{ invite_token }}">
+      {% endif %}
+      <div class="form-field">
+        {{ form.first_name.label }}
+        {{ form.first_name() }}
+        {% for error in form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.last_name.label }}
+        {{ form.last_name() }}
+        {% for error in form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email.label }}
+        {% if invite_active %}
+          {{ form.email(readonly=true) }}
+        {% else %}
+          {{ form.email() }}
+        {% endif %}
+        {% for error in form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.country.label }}
+        {% if invite_active %}
+          {{ form.country(readonly=true) }}
+        {% else %}
+          {{ form.country() }}
+        {% endif %}
+        {% for error in form.country.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.school.label }}
+        {{ form.school() }}
+        {% for error in form.school.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3>Accommodation</h3>
+      </div>
+      <fieldset class="form-field full-width">
+        <legend>{{ form.sex_document.label.text }}</legend>
+        {% for option in form.sex_document %}
+          <label class="checkbox">
+            {{ option() }}
+            {{ option.label.text }}
+          </label>
+        {% endfor %}
+        {% for error in form.sex_document.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </fieldset>
+      <fieldset class="form-field full-width">
+        <legend>{{ form.accommodation_room_sharing.label.text }}</legend>
+        {% for option in form.accommodation_room_sharing %}
+          <label class="checkbox">
+            {{ option() }}
+            {{ option.label.text }}
+          </label>
+        {% endfor %}
+        {% for error in form.accommodation_room_sharing.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </fieldset>
+      <div class="form-field full-width">
+        <div class="richtext-block">{{ accommodation_info_html | safe }}</div>
+      </div>
+      <fieldset class="form-field full-width">
+        <legend>{{ form.languages.label.text }}</legend>
+        {% for option in form.languages %}
+          <label class="checkbox">
+            {{ option() }}
+            {{ option.label.text }}
+          </label>
+        {% endfor %}
+        <span class="form-help">Select every language you can evaluate. English is required.</span>
+        {% for error in form.languages.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </fieldset>
+      <div class="form-field">
+        {{ form.meal_preference.label }}
+        {{ form.meal_preference() }}
+        {% for error in form.meal_preference.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.tshirt_size.label }}
+        {{ form.tshirt_size() }}
+        {% for error in form.tshirt_size.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      {% if not invite_active %}
+        <div class="form-field full-width">
+          <label class="checkbox">
+            {{ form.delegation_leader() }}
+            {{ form.delegation_leader.label.text }}
+          </label>
+          {% for error in form.delegation_leader.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <div class="form-field full-width">
+        {{ form.prior_ipo_assessor_level.label }}
+        {{ form.prior_ipo_assessor_level() }}
+        {% for error in form.prior_ipo_assessor_level.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.special_needs.label }}
+        {{ form.special_needs(rows=4) }}
+        {% for error in form.special_needs.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="richtext-block">{{ gdpr_notice_html | safe }}</div>
+      </div>
       <div class="form-field full-width">
         <label class="checkbox">
-          {{ form.is_absent() }}
-          Mark as absent
+          {{ form.gdpr_acknowledged() }}
+          {{ form.gdpr_acknowledged.label.text }}
         </label>
+        {% for error in form.gdpr_acknowledged.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
       </div>
-    {% endif %}
-    <div class="form-actions">
-      {{ form.submit(class_="button") }}
-    </div>
-  </form>
+      <div class="form-field full-width">
+        <div class="richtext-block">{{ photo_consent_html | safe }}</div>
+      </div>
+      <div class="form-field full-width">
+        {{ form.photo_consent.label }}
+        {{ form.photo_consent() }}
+        {% for error in form.photo_consent.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="richtext-block">{{ assessor_competence_html | safe }}</div>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.declared_assessor_competence() }}
+          {{ form.declared_assessor_competence.label.text }}
+        </label>
+        {% for error in form.declared_assessor_competence.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="richtext-block">{{ ethics_consent_html | safe }}</div>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.accepted_ethics() }}
+          {{ form.accepted_ethics.label.text }}
+        </label>
+        {% for error in form.accepted_ethics.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      {% if show_absence_toggle %}
+        <div class="form-field full-width">
+          <label class="checkbox">
+            {{ form.is_absent() }}
+            Mark as absent
+          </label>
+        </div>
+      {% endif %}
+      <div class="form-actions">
+        {{ form.submit(class_="button") }}
+      </div>
+    </form>
+  {% endif %}
 {% endblock %}

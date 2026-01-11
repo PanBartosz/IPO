@@ -3,147 +3,44 @@
 {% block title %}Essay Upload{% endblock %}
 
 {% block content %}
-  <div class="table-card" style="max-width: 640px; margin: 2rem auto;">
-    <h2>Essay upload</h2>
-    <p>Logged in as <strong>{{ student.first_name }} {{ student.last_name }}</strong> ({{ student.country }}).</p>
-    <p>Your assigned essay language: <strong>{{ student.essay_language }}</strong>.</p>
-
-    {% if survey_summary and survey_summary.total %}
-      <div class="student-survey-callout">
-        <div>
-          <strong>Surveys</strong>
-          <span class="fine-print">
-            {{ survey_summary.completed }} completed · {{ survey_summary.outstanding }} outstanding
-            {% if survey_summary.closed %}· {{ survey_summary.closed }} closed{% endif %}
-          </span>
-          {% if survey_outstanding %}
-            <ul class="student-survey-callout__list">
-              {% for item in survey_outstanding %}
-                <li>
-                  {{ item.survey.title }}
-                  {% if item.survey.close_at %}
-                    <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                  {% endif %}
-                </li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-        </div>
-        <a class="button secondary" href="{{ url_for('web.student_surveys') }}">View surveys</a>
-      </div>
-    {% endif %}
-
-    {% if student.essay_finalized %}
-      <div class="status-tag success" style="margin-bottom: 1rem;">
-        Essay finalized on {{ student.essay_finalized_at.strftime('%Y-%m-%d %H:%M') if student.essay_finalized_at else '—' }}
-      </div>
-      <p class="fine-print">Your essay has been marked as finished. Further uploads are disabled. Contact the organizers if you need to make changes.</p>
-    {% elif student.uploaded_filename %}
-      <div class="status-tag" style="margin-bottom: 1rem;">Essay uploaded on {{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</div>
-      <p class="fine-print">You may replace the file until you mark your essay as finished.</p>
-    {% else %}
-      <div class="status-tag warning" style="margin-bottom: 1rem;">No essay uploaded yet</div>
-      <p class="fine-print">Upload a PDF version of your essay (maximum size 10 MB).</p>
-    {% endif %}
-
-    {% if student.uploaded_filename %}
-      <div id="pdf-preview" class="form-field full-width" style="margin-top: 1.5rem;">
-        <h3>Uploaded PDF preview</h3>
-        <p class="fine-print">This preview loads the PDF currently stored on the server.</p>
-        <div style="border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #f9fafb;">
-          <canvas id="pdf-canvas" style="width: 100%;"></canvas>
-        </div>
-        <div id="pdf-preview-controls" style="display: none; margin-top: 0.5rem; gap: 0.5rem; align-items: center;">
-          <button type="button" class="button secondary" id="pdf-prev" style="padding: 0.35rem 0.75rem;">Previous</button>
-          <button type="button" class="button secondary" id="pdf-next" style="padding: 0.35rem 0.75rem;">Next</button>
-          <p class="fine-print" style="margin: 0;">Showing page <span id="pdf-page-num">1</span> of <span id="pdf-page-count">1</span>.</p>
-        </div>
-        <p id="pdf-preview-error" class="field-error" style="display: none;"></p>
-      </div>
-    {% endif %}
-
-    {% if not upload_module_enabled %}
-      <div class="status-tag warning" style="margin-bottom: 1rem;">Essay uploads disabled</div>
-      <p class="fine-print">The organizing team has disabled essay uploads outside the official competition window. You can review your submission status below; if you need changes, please contact your delegation leader.</p>
-    {% elif upload_locked and not student.essay_finalized %}
-      <div class="status-tag warning" style="margin-bottom: 1rem;">Uploads temporarily locked</div>
-      <p class="fine-print">The organizing team has temporarily paused essay uploads. Please check back later or contact your delegation leader for assistance.</p>
-    {% endif %}
-
-    {% if not student.essay_finalized and upload_module_enabled and not upload_locked %}
-      <form method="post" enctype="multipart/form-data" class="form-grid" novalidate>
-        {{ form.hidden_tag() }}
-        <input type="hidden" name="action" value="upload">
-        <div class="form-field full-width">
-          {{ form.essay.label }}
-          {{ form.essay() }}
-          <small class="fine-print">PDF only · maximum size 10 MB.</small>
-          {% for error in form.essay.errors %}
-            <div class="field-error">{{ error }}</div>
-          {% endfor %}
-        </div>
-        <div class="form-actions">
-          {{ form.submit(class_="button") }}
-        </div>
-      </form>
-      {% if student.uploaded_filename %}
-        <div class="form-actions" style="justify-content: flex-start; margin-top: 1rem;">
-          <button type="button" class="button secondary" id="finalize-trigger">Mark essay as finished</button>
-        </div>
-        <form id="finalize-form" method="post" style="display:none;">
-          {{ form.csrf_token }}
-          <input type="hidden" name="action" value="finalize">
-        </form>
-        <div id="finalize-modal" class="message-modal" aria-hidden="true">
-          <div class="message-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="finalize-modal-title">
-            <header class="message-modal__header">
-              <h3 id="finalize-modal-title">Confirm essay submission</h3>
-              <button type="button" class="message-modal__close" aria-label="Close dialog">&times;</button>
-            </header>
-            <div class="message-modal__body">
-              <p>After confirming, you will no longer be able to upload a new version of your essay. Are you sure you want to mark your submission as finished?</p>
-              <div class="form-actions" style="justify-content: flex-end;">
-                <button type="button" class="button secondary" id="finalize-cancel">Cancel</button>
-                <button type="button" class="button" id="finalize-confirm">Yes, mark as finished</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      {% endif %}
-    {% endif %}
-
-    <p class="fine-print">To log out, <a href="{{ url_for('web.student_logout') }}">click here</a>.</p>
+  <div id="student-upload-content" data-preserve-scroll="true">
+    {% include "student/partials/upload_content.html" %}
   </div>
 {% endblock %}
 
 {% block extra_scripts %}
   {{ super() }}
-  {% if student.uploaded_filename %}
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
-    <script>
-      if (window["pdfjs-dist/build/pdf"] && !window.pdfjsLib) {
-        window.pdfjsLib = window["pdfjs-dist/build/pdf"];
-      }
-      if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js";
-      }
-    </script>
-    <script>
-      window.addEventListener("load", function () {
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+  <script>
+    if (window["pdfjs-dist/build/pdf"] && !window.pdfjsLib) {
+      window.pdfjsLib = window["pdfjs-dist/build/pdf"];
+    }
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js";
+    }
+  </script>
+  <script>
+    (function () {
+      const defaultPreviewUrl = "{{ url_for('web.student_upload_preview') }}";
+
+      function initPdfPreview(root) {
+        const preview = root.querySelector("#pdf-preview");
+        if (!preview || preview.dataset.previewReady === "true") {
+          return;
+        }
+        preview.dataset.previewReady = "true";
         if (!window.pdfjsLib) {
           return;
         }
 
-        const previewUrl = "{{ url_for('web.student_upload_preview') }}";
-        const canvas = document.getElementById("pdf-canvas");
-        const errorEl = document.getElementById("pdf-preview-error");
-        const controlsEl = document.getElementById("pdf-preview-controls");
-        const pageNumEl = document.getElementById("pdf-page-num");
-        const pageCountEl = document.getElementById("pdf-page-count");
-        const prevBtn = document.getElementById("pdf-prev");
-        const nextBtn = document.getElementById("pdf-next");
-
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js";
+        const previewUrl = preview.dataset.previewUrl || defaultPreviewUrl;
+        const canvas = preview.querySelector("#pdf-canvas");
+        const errorEl = preview.querySelector("#pdf-preview-error");
+        const controlsEl = preview.querySelector("#pdf-preview-controls");
+        const pageNumEl = preview.querySelector("#pdf-page-num");
+        const pageCountEl = preview.querySelector("#pdf-page-count");
+        const prevBtn = preview.querySelector("#pdf-prev");
+        const nextBtn = preview.querySelector("#pdf-next");
 
         let pdfDoc = null;
         let currentPage = 1;
@@ -161,6 +58,9 @@
         };
 
         const renderPage = function (num) {
+          if (!pdfDoc || !canvas) {
+            return;
+          }
           pdfDoc.getPage(num).then(function (page) {
             const containerWidth = canvas.parentElement.offsetWidth || 600;
             const viewport = page.getViewport({ scale: 1 });
@@ -233,54 +133,137 @@
             setButtonState();
           })
           .catch(handleError);
-      });
-    </script>
-  {% endif %}
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
-      const trigger = document.getElementById("finalize-trigger");
-      const modal = document.getElementById("finalize-modal");
-      if (!trigger || !modal) {
-        return;
-      }
-      const closeButton = modal.querySelector(".message-modal__close");
-      const cancelButton = document.getElementById("finalize-cancel");
-      const confirmButton = document.getElementById("finalize-confirm");
-      const finalizeForm = document.getElementById("finalize-form");
-
-      function openModal() {
-        modal.classList.add("is-visible");
-        document.body.classList.add("modal-open");
       }
 
-      function closeModal() {
-        modal.classList.remove("is-visible");
-        document.body.classList.remove("modal-open");
-      }
-
-      trigger.addEventListener("click", openModal);
-      if (closeButton) closeButton.addEventListener("click", closeModal);
-      if (cancelButton) cancelButton.addEventListener("click", closeModal);
-
-      modal.addEventListener("click", function (event) {
-        if (event.target === modal) {
-          closeModal();
+      function initFinalizeModal(root) {
+        const trigger = root.querySelector("#finalize-trigger");
+        const modal = root.querySelector("#finalize-modal");
+        if (!trigger || !modal || modal.dataset.modalReady === "true") {
+          return;
         }
-      });
+        modal.dataset.modalReady = "true";
 
-      document.addEventListener("keydown", function (event) {
-        if (event.key === "Escape" && modal.classList.contains("is-visible")) {
-          closeModal();
+        const closeButton = modal.querySelector(".message-modal__close");
+        const cancelButton = modal.querySelector("#finalize-cancel");
+        const confirmButton = modal.querySelector("#finalize-confirm");
+        const finalizeForm = root.querySelector("#finalize-form");
+
+        function openModal() {
+          modal.classList.add("is-visible");
+          document.body.classList.add("modal-open");
         }
-      });
 
-      if (confirmButton) {
-        confirmButton.addEventListener("click", function () {
-          if (finalizeForm) {
-            finalizeForm.submit();
+        function closeModal() {
+          modal.classList.remove("is-visible");
+          document.body.classList.remove("modal-open");
+        }
+
+        trigger.addEventListener("click", openModal);
+        if (closeButton) closeButton.addEventListener("click", closeModal);
+        if (cancelButton) cancelButton.addEventListener("click", closeModal);
+
+        modal.addEventListener("click", function (event) {
+          if (event.target === modal) {
+            closeModal();
           }
         });
+
+        if (!document.body.dataset.finalizeModalKeyHandler) {
+          document.body.dataset.finalizeModalKeyHandler = "true";
+          document.addEventListener("keydown", function (event) {
+            if (event.key !== "Escape") {
+              return;
+            }
+            const openModalEl = document.querySelector("#finalize-modal.is-visible");
+            if (openModalEl) {
+              openModalEl.classList.remove("is-visible");
+              document.body.classList.remove("modal-open");
+            }
+          });
+        }
+
+        if (confirmButton) {
+          confirmButton.addEventListener("click", function () {
+            if (!finalizeForm) {
+              return;
+            }
+            if (typeof finalizeForm.requestSubmit === "function") {
+              finalizeForm.requestSubmit();
+            } else {
+              finalizeForm.submit();
+            }
+          });
+        }
       }
-    });
+
+      function initUploadProgress(root) {
+        const form = root.querySelector("[data-upload-form]");
+        if (!form || form.dataset.progressReady === "true") {
+          return;
+        }
+        form.dataset.progressReady = "true";
+        const wrap = root.querySelector("#upload-progress-wrap");
+        const progress = root.querySelector("#upload-progress");
+        const label = root.querySelector("#upload-progress-label");
+
+        function updateProgress(value) {
+          if (!progress || !label) {
+            return;
+          }
+          progress.value = value;
+          label.textContent = value + "%";
+        }
+
+        form.addEventListener("htmx:beforeRequest", function () {
+          if (wrap) {
+            wrap.style.display = "block";
+          }
+          updateProgress(0);
+        });
+
+        form.addEventListener("htmx:xhr:progress", function (event) {
+          const detail = event.detail || {};
+          if (!detail.lengthComputable || !detail.total) {
+            return;
+          }
+          const percent = Math.round((detail.loaded / detail.total) * 100);
+          updateProgress(Math.min(100, Math.max(0, percent)));
+        });
+
+        const hideProgress = function () {
+          if (wrap) {
+            wrap.style.display = "none";
+          }
+        };
+
+        form.addEventListener("htmx:afterRequest", hideProgress);
+        form.addEventListener("htmx:responseError", hideProgress);
+        form.addEventListener("htmx:sendError", hideProgress);
+      }
+
+      function initStudentUpload(root) {
+        initPdfPreview(root);
+        initFinalizeModal(root);
+        initUploadProgress(root);
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        initStudentUpload(document);
+      });
+
+      document.addEventListener("htmx:afterSwap", function (event) {
+        const target = event.detail && event.detail.target;
+        if (!target) {
+          return;
+        }
+        if (
+          target.id === "student-upload-content" ||
+          (target.querySelector && target.querySelector("#student-upload-content")) ||
+          (target.closest && target.closest("#student-upload-content"))
+        ) {
+          initStudentUpload(document);
+        }
+      });
+    })();
   </script>
 {% endblock %}

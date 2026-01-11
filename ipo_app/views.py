@@ -19,6 +19,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    get_flashed_messages,
     make_response,
     redirect,
     render_template,
@@ -45,7 +46,7 @@ from werkzeug.utils import secure_filename
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-from .extensions import db
+from .extensions import db, limiter
 from .forms import (
     AssignmentBatchForm,
     AdminLoginForm,
@@ -55,6 +56,10 @@ from .forms import (
     StudentRegistrationForm,
     StudentUploadForm,
     TeacherRegistrationForm,
+    DelegationInviteForm,
+    DelegationLeaderInviteForm,
+    AdminDelegationInvitationForm,
+    AdminInvitationForm,
     DashboardSettingsForm,
     TeacherMessageForm,
     TeacherMessageTemplateForm,
@@ -102,6 +107,8 @@ from .models import (
     SurveyQuestionType,
     SurveyResponse,
     SurveyStatus,
+    DelegationInvite,
+    DelegationInviteRole,
     PasswordResetAudience,
     PasswordResetToken,
     CommunicationCampaign,
@@ -110,6 +117,7 @@ from .models import (
     CommunicationRecipient,
     CommunicationRecipientRole,
     CommunicationRecipientStatus,
+    EssayUpload,
 )
 
 web_bp = Blueprint("web", __name__)
@@ -121,6 +129,7 @@ ADMIN_MODULES = [
     ("Planner", "web.admin_planner"),
     ("Students", "web.admin_students"),
     ("Teachers", "web.admin_teachers"),
+    ("Invitation", "web.admin_invitations"),
     ("Stage 1", "web.admin_uploads"),
     ("Stage 2", "web.admin_stage2_overview"),
     ("Messages", "web.admin_messages"),
@@ -136,6 +145,10 @@ ADMIN_MODULES = [
 
 LOG_PAGE_SIZE = 100
 RESET_TOKEN_EXPIRY_HOURS = 24
+
+LOGIN_RATE_LIMIT_PER_USERNAME = "10 per minute"
+LOGIN_RATE_LIMIT_PER_IP = "120 per minute"
+TEACHER_BOARD_LOGIN_RATE_LIMIT_PER_IP = "10 per minute"
 
 
 SETTING_EMAIL_AUTOMATION_ENABLED = "email_auto_enabled"
@@ -158,10 +171,17 @@ SETTING_EMAIL_SURVEY_PUBLISH_BODY = "email_survey_publish_body"
 SETTING_EMAIL_SURVEY_REMINDER_SUBJECT = "email_survey_reminder_subject"
 SETTING_EMAIL_SURVEY_REMINDER_BODY = "email_survey_reminder_body"
 SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
+SETTING_REGISTRATION_INVITE_ONLY = "registration_invite_only"
+SETTING_EMAIL_STUDENT_INVITE_SUBJECT = "email_student_invite_subject"
+SETTING_EMAIL_STUDENT_INVITE_BODY = "email_student_invite_body"
+SETTING_EMAIL_TEACHER_INVITE_SUBJECT = "email_teacher_invite_subject"
+SETTING_EMAIL_TEACHER_INVITE_BODY = "email_teacher_invite_body"
 
 DEFAULT_EMAIL_SUBJECTS = {
     SETTING_EMAIL_STUDENT_SUBJECT: "IPO registration confirmed for {{ first_name }} {{ last_name }}",
     SETTING_EMAIL_TEACHER_SUBJECT: "IPO teacher registration confirmed for {{ first_name }} {{ last_name }}",
+    SETTING_EMAIL_STUDENT_INVITE_SUBJECT: "Complete your IPO student registration",
+    SETTING_EMAIL_TEACHER_INVITE_SUBJECT: "Complete your IPO teacher registration",
     SETTING_EMAIL_MESSAGE_SUBJECT: "New IPO teacher board message: {{ title }}",
     SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT: "Reset your IPO portal password",
     SETTING_EMAIL_STUDENT_RESET_SUBJECT: "IPO portal password reset",
@@ -214,6 +234,20 @@ Login directly: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p
 <p>Access the portal: <a href="{{ portal_link }}">{{ portal_link }}</a><br>
 Login page: <a href="{{ portal_login_link }}">{{ portal_login_link }}</a></p>
 <p>We appreciate your support and participation. Please reach out if anything needs to be updated.</p>
+""",
+    SETTING_EMAIL_STUDENT_INVITE_BODY: """
+<p>Hi {{ first_name }} {{ last_name }},</p>
+<p>{{ inviter_name }} has started your IPO student registration for the {{ country }} delegation.</p>
+<p>Please complete your registration using this link:</p>
+<p><a href="{{ invite_link }}">{{ invite_link }}</a></p>
+<p>If you did not expect this invitation, please ignore this email.</p>
+""",
+    SETTING_EMAIL_TEACHER_INVITE_BODY: """
+<p>Hi {{ first_name }} {{ last_name }},</p>
+<p>{{ inviter_name }} has started your IPO teacher registration for the {{ country }} delegation.</p>
+<p>Please complete your registration using this link:</p>
+<p><a href="{{ invite_link }}">{{ invite_link }}</a></p>
+<p>If you did not expect this invitation, please ignore this email.</p>
 """,
     SETTING_EMAIL_MESSAGE_BODY: """
 <p>Hello {{ teacher_first_name }} {{ teacher_last_name }},</p>
@@ -298,10 +332,97 @@ SETTING_STAGE1_LOCK = "grading_stage1_locked"
 SETTING_STAGE2_LOCK = "grading_stage2_locked"
 SETTING_UPLOAD_MODULE_ENABLED = "essay_upload_enabled"
 SETTING_UPLOAD_LOCK = "upload_locked"
+SETTING_EVENT_END = "event_end"
+SETTING_EVENT_END_OVERRIDE = "event_end_override"
 SETTING_PACKET_PRINT_MODE = "packet_print_mode"
+SETTING_ESSAY_WORD_LIMIT = "essay_word_limit_words"
+SETTING_ESSAY_WORD_LIMIT_MODE = "essay_word_limit_mode"
+SETTING_ETHICS_CONSENT_HTML = "ethics_consent_html"
+SETTING_GDPR_NOTICE_HTML = "gdpr_notice_html"
+SETTING_PHOTO_CONSENT_HTML = "photo_consent_html"
+SETTING_TEACHER_COMPETENCE_HTML = "teacher_competence_html"
+SETTING_ACCOMMODATION_INFO_HTML = "accommodation_info_html"
+
+DEFAULT_ESSAY_WORD_LIMIT = 1500
+DEFAULT_ESSAY_WORD_LIMIT_MODE = "soft"
+DEFAULT_ETHICS_CONSENT_HTML = (
+    '<p>Please review the <a href="https://www.philosophy-olympiad.org/?page_id=1710" target="_blank" rel="noopener">IPO Code of Ethics</a> before accepting this statement.</p>'
+)
+DEFAULT_GDPR_NOTICE_HTML = (
+    "<p>Please review the data processing information before confirming your registration.</p>"
+)
+DEFAULT_PHOTO_CONSENT_HTML = (
+    "<p>We may publish photos from the event for communication purposes. You can consent or decline below.</p>"
+)
+DEFAULT_TEACHER_COMPETENCE_HTML = (
+    "<p>By checking the box below, you confirm that you are qualified and competent to assess philosophical essays.</p>"
+)
+DEFAULT_ACCOMMODATION_INFO_HTML = (
+    "<p><strong>Important information</strong></p>"
+    "<p>Participants who require individual consideration regarding accommodation arrangements may submit a request to the National Organizing Committee. Requests will be reviewed individually.</p>"
+    '<p>Please contact:<br><strong>Magdalena Gawin</strong>, the Head of NOC, <a href="mailto:m.gawin@uw.edu.pl">m.gawin@uw.edu.pl</a></p>'
+)
 
 UPLOAD_ALLOWED_EXTENSIONS = {"pdf"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+
+
+def _essay_word_limit() -> int:
+    raw = _get_setting(SETTING_ESSAY_WORD_LIMIT)
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_ESSAY_WORD_LIMIT
+    try:
+        limit = int(str(raw).strip())
+    except ValueError:
+        return DEFAULT_ESSAY_WORD_LIMIT
+    return max(1, limit)
+
+
+def _essay_word_limit_mode() -> str:
+    raw = (_get_setting(SETTING_ESSAY_WORD_LIMIT_MODE) or "").strip().lower()
+    if raw in {"off", "soft", "hard"}:
+        return raw
+    return DEFAULT_ESSAY_WORD_LIMIT_MODE
+
+
+def _ethics_consent_html() -> str:
+    return _get_setting(SETTING_ETHICS_CONSENT_HTML) or DEFAULT_ETHICS_CONSENT_HTML
+
+
+def _gdpr_notice_html() -> str:
+    return _get_setting(SETTING_GDPR_NOTICE_HTML) or DEFAULT_GDPR_NOTICE_HTML
+
+
+def _photo_consent_html() -> str:
+    return _get_setting(SETTING_PHOTO_CONSENT_HTML) or DEFAULT_PHOTO_CONSENT_HTML
+
+
+def _assessor_competence_html() -> str:
+    return _get_setting(SETTING_TEACHER_COMPETENCE_HTML) or DEFAULT_TEACHER_COMPETENCE_HTML
+
+
+def _accommodation_info_html() -> str:
+    return _get_setting(SETTING_ACCOMMODATION_INFO_HTML) or DEFAULT_ACCOMMODATION_INFO_HTML
+
+
+def _count_pdf_words(pdf_path: Path) -> int | None:
+    try:
+        from PyPDF2 import PdfReader
+    except Exception:
+        return None
+    try:
+        reader = PdfReader(str(pdf_path))
+        chunks: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text:
+                chunks.append(text)
+        full_text = " ".join(chunks).strip()
+        if not full_text:
+            return 0
+        return len(full_text.split())
+    except Exception:
+        return None
 
 
 @web_bp.before_app_request
@@ -331,7 +452,17 @@ def inject_globals():
         "admin_modules": ADMIN_MODULES,
         "teacher_portal_enabled": _teacher_portal_enabled(),
         "essay_upload_enabled": _is_upload_module_enabled(),
+        "registration_invite_only": _registration_invite_required(),
     }
+
+
+def _rate_limit_ip() -> str:
+    return request.remote_addr or "unknown"
+
+
+def _rate_limit_username() -> str:
+    username = (request.form.get("username") or "").strip().lower()
+    return username or _rate_limit_ip()
 
 
 def _ensure_language_entries(teacher: Teacher) -> None:
@@ -741,6 +872,14 @@ def _generate_unique_teacher_token(max_attempts: int = 20) -> str:
     return secrets.token_hex(16)
 
 
+def _generate_unique_invite_token(max_attempts: int = 20) -> str:
+    for _ in range(max_attempts):
+        token = secrets.token_urlsafe(24)
+        if not DelegationInvite.query.filter(DelegationInvite.token == token).first():
+            return token
+    return secrets.token_hex(24)
+
+
 def _ensure_teacher_portal_credentials(teacher: Teacher, *, reset_password: bool = False) -> tuple[str, str | None]:
     username_generated = False
     if not teacher.portal_username:
@@ -843,6 +982,29 @@ def _reset_token_status(entry: PasswordResetToken | None) -> tuple[bool, str | N
     return True, None
 
 
+def _load_delegation_invite(token_value: str | None, role: DelegationInviteRole) -> DelegationInvite | None:
+    if not token_value:
+        return None
+    return (
+        DelegationInvite.query.filter(
+            DelegationInvite.token == token_value,
+            DelegationInvite.role == role,
+        ).first()
+    )
+
+
+def _delegation_invite_state(invite: DelegationInvite | None) -> SimpleNamespace:
+    if not invite:
+        return SimpleNamespace(status="invalid", label="Invalid", active=False)
+    if invite.revoked_at is not None:
+        return SimpleNamespace(status="revoked", label="Revoked", active=False)
+    if invite.accepted_at is not None:
+        return SimpleNamespace(status="completed", label="Completed", active=False)
+    if invite.opened_at is not None:
+        return SimpleNamespace(status="started", label="Started", active=True)
+    return SimpleNamespace(status="pending", label="Pending", active=True)
+
+
 def _get_upload_folder() -> Path:
     folder = Path(current_app.config.get("UPLOAD_FOLDER", Path(current_app.instance_path) / "uploads"))
     folder.mkdir(parents=True, exist_ok=True)
@@ -882,6 +1044,8 @@ def _portal_next_url(candidate: str | None) -> str | None:
     if not candidate.startswith("/"):
         return None
     if candidate.startswith("//"):
+        return None
+    if "\r" in candidate or "\n" in candidate:
         return None
     return candidate
 
@@ -1700,6 +1864,26 @@ def _essay_pdf_path(student: Student) -> Path | None:
     return None
 
 
+def _essay_pdf_path_by_filename(filename: str | None) -> Path | None:
+    if not filename:
+        return None
+    path = _get_upload_folder() / filename
+    if path.exists():
+        return path
+    return None
+
+
+def _current_essay_upload(student: Student) -> EssayUpload | None:
+    if not student.uploaded_filename:
+        return None
+    return (
+        EssayUpload.query
+        .filter_by(student_id=student.id, filename=student.uploaded_filename)
+        .order_by(EssayUpload.id.desc())
+        .first()
+    )
+
+
 def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids: list[int]) -> PdfReader:
     buffer = BytesIO()
     width, height = A4
@@ -1839,6 +2023,11 @@ def _teacher_portal_enabled() -> bool:
     return flag.lower() == "true"
 
 
+def _registration_invite_required() -> bool:
+    flag = _get_setting(SETTING_REGISTRATION_INVITE_ONLY, "false") or "false"
+    return flag.lower() == "true"
+
+
 def _is_upload_module_enabled() -> bool:
     flag = _get_setting(SETTING_UPLOAD_MODULE_ENABLED, "false") or "false"
     return flag.lower() == "true"
@@ -1958,6 +2147,51 @@ def _send_templated_email(to_email: str, subject_key: str, body_key: str, contex
     subject = render_template_string(subject_template, **context)
     body = render_template_string(body_template, **context)
     _send_email(to_email, subject, body)
+
+
+def _send_delegation_invite_email(invite: DelegationInvite, inviter: Teacher | None) -> tuple[bool, str | None]:
+    if not _auto_email_enabled():
+        return False, "auto-email-disabled"
+    if not invite.email:
+        return False, "missing-recipient"
+
+    role_label = "student" if invite.role == DelegationInviteRole.STUDENT else "teacher"
+    invite_link = url_for(
+        "web.register_student" if invite.role == DelegationInviteRole.STUDENT else "web.register_teacher",
+        invite=invite.token,
+        _external=True,
+    )
+    if inviter and (inviter.first_name or inviter.last_name):
+        inviter_name = f"{inviter.first_name} {inviter.last_name}".strip()
+    elif inviter:
+        inviter_name = "The delegation leader"
+    else:
+        inviter_name = "The organizing team"
+    context = {
+        "first_name": invite.first_name or "",
+        "last_name": invite.last_name or "",
+        "email": invite.email,
+        "country": invite.country,
+        "invite_link": invite_link,
+        "inviter_name": inviter_name,
+        "role_label": role_label,
+    }
+    subject_key = (
+        SETTING_EMAIL_STUDENT_INVITE_SUBJECT
+        if invite.role == DelegationInviteRole.STUDENT
+        else SETTING_EMAIL_TEACHER_INVITE_SUBJECT
+    )
+    body_key = (
+        SETTING_EMAIL_STUDENT_INVITE_BODY
+        if invite.role == DelegationInviteRole.STUDENT
+        else SETTING_EMAIL_TEACHER_INVITE_BODY
+    )
+    subject_template = _get_email_subject(subject_key)
+    body_template = _get_email_body(body_key)
+    subject = render_template_string(subject_template, **context)
+    body = render_template_string(body_template, **context)
+    _, _, error = _send_email(invite.email, subject, body)
+    return error is None, error
 
 
 def _send_student_confirmation_email(student: Student) -> None:
@@ -2795,6 +3029,9 @@ def _zip_essays(only_finalized: bool = False) -> tuple[BytesIO, str] | None:
             )
             archive.write(pdf_path, f"essays/{safe_name}")
 
+        if not manifest_rows:
+            return None
+
         manifest_bytes = io.StringIO()
         fieldnames = ["student_id", "first_name", "last_name", "country", "uploaded_at", "finalized", "filename"]
         writer = csv_module.DictWriter(manifest_bytes, fieldnames=fieldnames)
@@ -2841,16 +3078,19 @@ def _build_teacher_schedules(groups: list[ReadingGroup]) -> list[dict]:
 
 @web_bp.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", invite_only=_registration_invite_required())
 
 
 @web_bp.route("/admin/login", methods=["GET", "POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_USERNAME, key_func=_rate_limit_username, methods=["POST"])
 def admin_login():
     if _current_admin():
-        return redirect(request.args.get("next") or url_for("web.admin_dashboard"))
+        next_url = _portal_next_url(request.args.get("next"))
+        return redirect(next_url or url_for("web.admin_dashboard"))
 
     form = AdminLoginForm()
-    next_url = request.args.get("next") or request.form.get("next")
+    next_url = _portal_next_url(request.args.get("next") or request.form.get("next"))
     credentials = _parse_admin_users()
     if not credentials:
         flash("No admin accounts configured. Please set ADMIN_USERS.", "error")
@@ -2884,9 +3124,11 @@ def admin_logout():
 
 
 @web_bp.route("/participant/login", methods=["GET", "POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_USERNAME, key_func=_rate_limit_username, methods=["POST"])
 def student_login():
     form = StudentLoginForm()
-    if form.validate_on_submit():
+    if form.submit.name in request.form and form.validate_on_submit():
         username = form.username.data.strip()
         student = Student.query.filter_by(upload_username=username, is_absent=False).first()
         if not student or not student.upload_password_hash:
@@ -2909,8 +3151,8 @@ def student_login():
                 details={"username": student.upload_username},
             )
             db.session.commit()
-            next_param = request.args.get("next")
-            target = next_param if next_param else url_for("web.student_portal")
+            next_param = _portal_next_url(request.args.get("next"))
+            target = next_param or url_for("web.student_portal")
             return redirect(target)
     return render_template(
         "student/login.html",
@@ -2926,7 +3168,7 @@ def student_reset_password_request():
     submitted = False
     email_sent = False
     token_generated = False
-    if form.validate_on_submit():
+    if form.submit.name in request.form and form.validate_on_submit():
         email = form.email.data.lower().strip()
         student = Student.query.filter_by(email=email, is_absent=False).first()
         if student:
@@ -3010,6 +3252,7 @@ def student_portal():
         flash("Please log in to access the student portal.", "error")
         return redirect(url_for("web.student_login", next=request.full_path))
 
+    is_htmx = _is_htmx_request()
     survey_assignments = _survey_assignments_for_user(student=student)
     survey_items, survey_summary = _prepare_survey_assignment_view(
         survey_assignments,
@@ -3023,21 +3266,28 @@ def student_portal():
         uploaded_at=student.uploaded_at,
         finalized_at=student.essay_finalized_at,
     )
+    essay_access = _student_essay_access(student)
     upload_module_enabled = _is_upload_module_enabled()
     upload_locked = _is_upload_locked()
     upload_available = upload_module_enabled and not upload_locked
 
-    return render_template(
-        "student/portal.html",
-        student=student,
-        survey_summary=survey_summary,
-        survey_outstanding=survey_outstanding,
-        survey_items=survey_items,
-        upload_status=upload_status,
-        upload_module_enabled=upload_module_enabled,
-        upload_locked=upload_locked,
-        upload_available=upload_available,
-    )
+    template_name = "student/partials/portal_content.html" if is_htmx else "student/portal.html"
+    context = {
+        "student": student,
+        "survey_summary": survey_summary,
+        "survey_outstanding": survey_outstanding,
+        "survey_items": survey_items,
+        "upload_status": upload_status,
+        "upload_module_enabled": upload_module_enabled,
+        "upload_locked": upload_locked,
+        "upload_available": upload_available,
+        "essay_access": essay_access,
+        "download_notice": _essay_download_notice(essay_access),
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/participant/logout")
@@ -3066,23 +3316,84 @@ def student_upload():
     action = request.form.get("action", "upload").strip()
     module_enabled = _is_upload_module_enabled()
     upload_locked = _is_upload_locked()
+    is_htmx = _is_htmx_request()
+    word_limit = _essay_word_limit()
+    word_limit_mode = _essay_word_limit_mode()
+
+    def _history_entries(access: SimpleNamespace) -> list[SimpleNamespace]:
+        uploads = (
+            EssayUpload.query
+            .filter_by(student_id=student.id)
+            .order_by(EssayUpload.created_at.desc())
+            .all()
+        )
+        entries: list[SimpleNamespace] = []
+        for upload in uploads:
+            file_path = _essay_pdf_path_by_filename(upload.filename)
+            entries.append(
+                SimpleNamespace(
+                    upload=upload,
+                    is_current=upload.filename == student.uploaded_filename,
+                    file_missing=file_path is None,
+                    download_url=(
+                        url_for("web.student_upload_history_download", upload_id=upload.id)
+                        if access.download_allowed and file_path
+                        else None
+                    ),
+                )
+            )
+        return entries
+
+    def _render_upload_response():
+        essay_access = _student_essay_access(student)
+        template_name = "student/partials/upload_content.html" if is_htmx else "student/upload.html"
+        context = {
+            "form": form,
+            "student": student,
+            "upload_locked": upload_locked,
+            "upload_module_enabled": module_enabled,
+            "word_limit": word_limit,
+            "word_limit_mode": word_limit_mode,
+            "essay_access": essay_access,
+            "download_notice": _essay_download_notice(essay_access),
+            "history_entries": _history_entries(essay_access),
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
 
     if request.method == "POST":
         if not module_enabled:
             flash("Essay uploads are currently disabled by the organizing team.", "error")
+            if is_htmx:
+                return _render_upload_response()
             return redirect(url_for("web.student_upload"))
         if upload_locked:
             flash("Essay uploads are currently locked by the organizing team.", "error")
+            if is_htmx:
+                return _render_upload_response()
             return redirect(url_for("web.student_upload"))
+
+    word_count = student.essay_word_count
 
     if request.method == "POST" and action == "finalize":
         if student.essay_finalized:
             flash("Your essay is already marked as finished.", "info")
         elif not student.uploaded_filename:
             flash("Upload your essay before marking it as finished.", "error")
+        elif word_limit_mode == "hard" and word_count is not None and word_count > word_limit:
+            flash(
+                f"Your essay is above the word limit ({word_count} > {word_limit}). "
+                "Please upload a shorter version before finalizing.",
+                "error",
+            )
         else:
             student.essay_finalized = True
             student.essay_finalized_at = datetime.utcnow()
+            upload_entry = _current_essay_upload(student)
+            if upload_entry and not upload_entry.finalized_at:
+                upload_entry.finalized_at = student.essay_finalized_at
             db.session.flush()
             log_activity(
                 "student_essay_finalized",
@@ -3093,45 +3404,71 @@ def student_upload():
             )
             db.session.commit()
             flash("Your essay has been marked as finished. Further uploads are disabled.", "success")
+        if is_htmx:
+            return _render_upload_response()
         return redirect(url_for("web.student_upload"))
 
     if student.essay_finalized:
-        return render_template(
-            "student/upload.html",
-            form=form,
-            student=student,
-            upload_locked=upload_locked,
-            upload_module_enabled=module_enabled,
-        )
+        return _render_upload_response()
 
     if form.validate_on_submit():
         file = form.essay.data
         if not file:
             flash("No file provided.", "error")
+            if is_htmx:
+                return _render_upload_response()
             return redirect(url_for("web.student_upload"))
         filename = secure_filename(file.filename or "")
         if not filename.lower().endswith(".pdf"):
             flash("Only PDF files are allowed.", "error")
+            if is_htmx:
+                return _render_upload_response()
             return redirect(url_for("web.student_upload"))
         file.seek(0, 2)
         size = file.tell()
         file.seek(0)
         if size > MAX_UPLOAD_SIZE:
             flash("File too large (max 10 MB).", "error")
+            if is_htmx:
+                return _render_upload_response()
             return redirect(url_for("web.student_upload"))
         upload_folder = _get_upload_folder()
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         stored_name = f"student-{student.id}-{timestamp}.pdf"
         file_path = upload_folder / stored_name
         file.save(file_path)
-        if student.uploaded_filename:
-            old_path = upload_folder / student.uploaded_filename
-            if old_path.exists():
-                old_path.unlink()
+        uploaded_at = datetime.utcnow()
         student.uploaded_filename = stored_name
-        student.uploaded_at = datetime.utcnow()
+        student.uploaded_at = uploaded_at
         student.essay_finalized = False
         student.essay_finalized_at = None
+        student.essay_word_count = None
+        student.essay_word_counted_at = None
+
+        counted = _count_pdf_words(file_path)
+        if counted is not None:
+            student.essay_word_count = counted
+            student.essay_word_counted_at = datetime.utcnow()
+            if word_limit_mode == "soft" and counted > word_limit:
+                flash(
+                    f"Word limit warning: your PDF appears to have {counted} words (limit {word_limit}).",
+                    "warning",
+                )
+            elif word_limit_mode == "hard" and counted > word_limit:
+                flash(
+                    f"Word limit exceeded: your PDF appears to have {counted} words (limit {word_limit}). "
+                    "You will not be able to finalize until you upload a shorter version.",
+                    "error",
+                )
+        upload_entry = EssayUpload(
+            student_id=student.id,
+            filename=stored_name,
+            word_count=student.essay_word_count,
+            word_counted_at=student.essay_word_counted_at,
+            created_at=uploaded_at,
+            updated_at=uploaded_at,
+        )
+        db.session.add(upload_entry)
         log_activity(
             "student_essay_uploaded",
             f"Student {student.first_name} {student.last_name} uploaded essay",
@@ -3141,14 +3478,10 @@ def student_upload():
         )
         db.session.commit()
         flash("Essay uploaded successfully.", "success")
+        if is_htmx:
+            return _render_upload_response()
         return redirect(url_for("web.student_upload"))
-    return render_template(
-        "student/upload.html",
-        form=form,
-        student=student,
-        upload_locked=upload_locked,
-        upload_module_enabled=module_enabled,
-    )
+    return _render_upload_response()
 
 
 @web_bp.route("/participant/upload/preview")
@@ -3156,12 +3489,74 @@ def student_upload_preview():
     student = _student_from_session()
     if not student or student.is_absent or not student.uploaded_filename:
         abort(404)
+    access = _student_essay_access(student)
+    if not access.preview_allowed:
+        abort(403)
     pdf_path = _essay_pdf_path(student)
     if not pdf_path or not pdf_path.exists():
         abort(404)
     response = send_file(str(pdf_path), mimetype="application/pdf")
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@web_bp.route("/participant/upload/download")
+def student_upload_download():
+    student = _student_from_session()
+    if not student or student.is_absent or not student.uploaded_filename:
+        abort(404)
+    access = _student_essay_access(student)
+    if not access.download_allowed:
+        abort(403)
+    pdf_path = _essay_pdf_path(student)
+    if not pdf_path:
+        abort(404)
+    filename = secure_filename(f"essay-{student.id}.pdf")
+    log_activity(
+        "student_essay_downloaded",
+        f"Student {student.first_name} {student.last_name} downloaded essay",
+        object_type="student",
+        object_id=student.id,
+        details={"filename": student.uploaded_filename},
+    )
+    db.session.commit()
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
+
+
+@web_bp.route("/participant/upload/history/<int:upload_id>/download")
+def student_upload_history_download(upload_id: int):
+    student = _student_from_session()
+    if not student or student.is_absent:
+        abort(404)
+    access = _student_essay_access(student)
+    if not access.download_allowed:
+        abort(403)
+    upload = db.session.get(EssayUpload, upload_id)
+    if not upload or upload.student_id != student.id:
+        abort(404)
+    pdf_path = _essay_pdf_path_by_filename(upload.filename)
+    if not pdf_path:
+        abort(404)
+    filename = secure_filename(f"essay-{student.id}-v{upload.id}.pdf")
+    log_activity(
+        "student_essay_history_downloaded",
+        f"Student {student.first_name} {student.last_name} downloaded essay history",
+        object_type="student",
+        object_id=student.id,
+        details={"filename": upload.filename, "upload_id": upload.id},
+    )
+    db.session.commit()
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
 
 
 @web_bp.route("/participant/surveys")
@@ -3252,17 +3647,71 @@ def student_survey_detail(assignment_id: int):
 @web_bp.route("/register/student", methods=["GET", "POST"])
 def register_student():
     form = StudentRegistrationForm()
+    invite_token = request.args.get("invite") or request.form.get("invite")
+    invite = _load_delegation_invite(invite_token, DelegationInviteRole.STUDENT)
+    invite_state = _delegation_invite_state(invite) if invite else None
+    invite_active = bool(invite_state and invite_state.active)
+    invite_required = _registration_invite_required()
+    invite_message = None
+
+    if invite_required and not invite_active:
+        contact_hint = (
+            "the organizing team"
+            if invite and (invite.delegation_leader or invite.invited_by_id is None)
+            else "your delegation leader"
+        )
+        if not invite:
+            invite_message = "Registration is available by invitation only. Please use your invite link."
+        elif invite_state and invite_state.status == "revoked":
+            invite_message = f"This invite link has been revoked. Please contact {contact_hint}."
+        elif invite_state and invite_state.status == "completed":
+            invite_message = "This invite link has already been used."
+        else:
+            invite_message = f"This invite link is invalid. Please check with {contact_hint}."
+    if invite and not invite_active and not invite_required:
+        invite = None
+        invite_state = None
+        invite_active = False
+
     if not form.is_submitted():
         form.submit.label.text = "Submit registration"
         form.is_absent.data = False
+    if invite and (not form.is_submitted() or invite_active):
+        form.email.data = invite.email
+        form.country.data = invite.country
+        if not form.is_submitted():
+            if invite.first_name:
+                form.first_name.data = invite.first_name
+            if invite.last_name:
+                form.last_name.data = invite.last_name
+    if invite_active and invite.opened_at is None:
+        invite.opened_at = datetime.utcnow()
+        db.session.commit()
+    if invite_required and not invite_active:
+        return render_template(
+            "register_student.html",
+            form=form,
+            show_absence_toggle=False,
+            ethics_consent_html=_ethics_consent_html(),
+            gdpr_notice_html=_gdpr_notice_html(),
+            photo_consent_html=_photo_consent_html(),
+            accommodation_info_html=_accommodation_info_html(),
+            invite_message=invite_message,
+            invite_required=invite_required,
+            invite_active=invite_active,
+        )
     if form.validate_on_submit():
+        now = datetime.utcnow()
+        email = invite.email.lower().strip() if invite_active else form.email.data.lower().strip()
+        country = invite.country.strip() if invite_active else form.country.data.strip()
         student = Student(
             first_name=form.first_name.data.strip(),
             last_name=form.last_name.data.strip(),
-            email=form.email.data.lower().strip(),
-            country=form.country.data.strip(),
+            email=email,
+            country=country,
             school=form.school.data.strip(),
-            gender=form.gender.data,
+            sex_document=form.sex_document.data,
+            accommodation_room_sharing=form.accommodation_room_sharing.data,
             date_of_birth=form.date_of_birth.data,
             essay_language=form.essay_language.data,
             keyboard_preference=form.keyboard_preference.data,
@@ -3270,12 +3719,32 @@ def register_student():
             special_needs=(form.special_needs.data.strip() or None)
             if form.special_needs.data
             else None,
+            gdpr_acknowledged=bool(form.gdpr_acknowledged.data),
+            gdpr_acknowledged_at=now if form.gdpr_acknowledged.data else None,
+            photo_consent=form.photo_consent.data == "yes",
+            photo_consent_at=now,
+            accepted_ethics=bool(form.accepted_ethics.data),
+            accepted_ethics_at=now if form.accepted_ethics.data else None,
             is_absent=bool(form.is_absent.data),
         )
         _ensure_student_credentials(student)
         db.session.add(student)
         try:
             db.session.flush()
+            if invite_active:
+                invite.first_name = student.first_name
+                invite.last_name = student.last_name
+                invite.email = student.email
+                invite.accepted_at = now
+                invite.student_id = student.id
+                log_activity(
+                    "delegation_invite_accepted",
+                    f"Delegation invite accepted for {invite.email}",
+                    actor=student.upload_username or student.email,
+                    object_type="delegation_invite",
+                    object_id=invite.id,
+                    details={"role": invite.role.value, "country": invite.country},
+                )
             log_activity(
     "student_registered",
     f"Student {student.first_name} {student.last_name} registered",
@@ -3286,51 +3755,150 @@ def register_student():
         "country": student.country,
         "language": student.essay_language,
         "upload_username": student.upload_username,
+        "invite_id": invite.id if invite_active else None,
     },
 )
             db.session.commit()
             _send_student_confirmation_email(student)
+            if invite_active:
+                flash("Registration completed. Please check your email for portal credentials.", "success")
+                return redirect(url_for("web.index"))
             flash("Student registered successfully.", "success")
             return redirect(url_for("web.register_student"))
         except IntegrityError:
             db.session.rollback()
             flash("This email address is already registered.", "error")
 
-    return render_template("register_student.html", form=form, show_absence_toggle=False)
+    return render_template(
+        "register_student.html",
+        form=form,
+        show_absence_toggle=False,
+        ethics_consent_html=_ethics_consent_html(),
+        gdpr_notice_html=_gdpr_notice_html(),
+        photo_consent_html=_photo_consent_html(),
+        accommodation_info_html=_accommodation_info_html(),
+        invite_message=invite_message,
+        invite_required=invite_required,
+        invite_active=invite_active,
+        invite_token=invite.token if invite_active else None,
+    )
 
 
 @web_bp.route("/register/teacher", methods=["GET", "POST"])
 def register_teacher():
     form = TeacherRegistrationForm()
+    invite_token = request.args.get("invite") or request.form.get("invite")
+    invite = _load_delegation_invite(invite_token, DelegationInviteRole.TEACHER)
+    invite_state = _delegation_invite_state(invite) if invite else None
+    invite_active = bool(invite_state and invite_state.active)
+    invite_required = _registration_invite_required()
+    invite_message = None
+
+    if invite_required and not invite_active:
+        contact_hint = (
+            "the organizing team"
+            if invite and (invite.delegation_leader or invite.invited_by_id is None)
+            else "your delegation leader"
+        )
+        if not invite:
+            invite_message = "Registration is available by invitation only. Please use your invite link."
+        elif invite_state and invite_state.status == "revoked":
+            invite_message = f"This invite link has been revoked. Please contact {contact_hint}."
+        elif invite_state and invite_state.status == "completed":
+            invite_message = "This invite link has already been used."
+        else:
+            invite_message = f"This invite link is invalid. Please check with {contact_hint}."
+    if invite and not invite_active and not invite_required:
+        invite = None
+        invite_state = None
+        invite_active = False
+
     if not form.is_submitted() and not form.languages.data:
         form.languages.data = ["English"]
     form.submit.label.text = "Submit registration"
     if not form.is_submitted():
         form.is_absent.data = False
+    if invite and (not form.is_submitted() or invite_active):
+        form.email.data = invite.email
+        form.country.data = invite.country
+        if not form.is_submitted():
+            if invite.first_name:
+                form.first_name.data = invite.first_name
+            if invite.last_name:
+                form.last_name.data = invite.last_name
+    if invite_active:
+        form.delegation_leader.data = False
+    if invite_active and invite.opened_at is None:
+        invite.opened_at = datetime.utcnow()
+        db.session.commit()
+    if invite_required and not invite_active:
+        return render_template(
+            "register_teacher.html",
+            form=form,
+            show_absence_toggle=False,
+            ethics_consent_html=_ethics_consent_html(),
+            gdpr_notice_html=_gdpr_notice_html(),
+            photo_consent_html=_photo_consent_html(),
+            assessor_competence_html=_assessor_competence_html(),
+            accommodation_info_html=_accommodation_info_html(),
+            invite_message=invite_message,
+            invite_required=invite_required,
+            invite_active=invite_active,
+            invite_delegation_leader=False,
+        )
     if form.validate_on_submit():
+        now = datetime.utcnow()
+        email = invite.email.lower().strip() if invite_active else form.email.data.lower().strip()
+        country = invite.country.strip() if invite_active else form.country.data.strip()
+        delegation_leader = bool(form.delegation_leader.data)
+        if invite_active:
+            delegation_leader = bool(invite.delegation_leader)
         teacher = Teacher(
             first_name=form.first_name.data.strip(),
             last_name=form.last_name.data.strip(),
-            email=form.email.data.lower().strip(),
-            country=form.country.data.strip(),
+            email=email,
+            country=country,
             school=form.school.data.strip(),
-            gender=form.gender.data,
+            sex_document=form.sex_document.data,
+            accommodation_room_sharing=form.accommodation_room_sharing.data,
             languages=", ".join(form.languages.data),
             meal_preference=form.meal_preference.data,
             tshirt_size=form.tshirt_size.data,
             special_needs=(form.special_needs.data.strip() or None)
             if form.special_needs.data
             else None,
-            delegation_leader=bool(form.delegation_leader.data),
+            delegation_leader=delegation_leader,
             prior_ipo_assessor_level=form.prior_ipo_assessor_level.data,
             prior_ipo_assessor=bool(form.prior_ipo_assessor_level.data),
             language_entries=[TeacherLanguage(language=lang) for lang in form.languages.data],
+            gdpr_acknowledged=bool(form.gdpr_acknowledged.data),
+            gdpr_acknowledged_at=now if form.gdpr_acknowledged.data else None,
+            photo_consent=form.photo_consent.data == "yes",
+            photo_consent_at=now,
+            declared_assessor_competence=bool(form.declared_assessor_competence.data),
+            declared_assessor_competence_at=now if form.declared_assessor_competence.data else None,
+            accepted_ethics=bool(form.accepted_ethics.data),
+            accepted_ethics_at=now if form.accepted_ethics.data else None,
             is_absent=bool(form.is_absent.data),
         )
         db.session.add(teacher)
-        _ensure_teacher_portal_credentials(teacher)
         try:
+            _ensure_teacher_portal_credentials(teacher)
             db.session.flush()
+            if invite_active:
+                invite.first_name = teacher.first_name
+                invite.last_name = teacher.last_name
+                invite.email = teacher.email
+                invite.accepted_at = now
+                invite.teacher_id = teacher.id
+                log_activity(
+                    "delegation_invite_accepted",
+                    f"Delegation invite accepted for {invite.email}",
+                    actor=teacher.portal_username or teacher.email,
+                    object_type="delegation_invite",
+                    object_id=invite.id,
+                    details={"role": invite.role.value, "country": invite.country},
+                )
             log_activity(
                 "teacher_registered",
                 f"Teacher {teacher.first_name} {teacher.last_name} registered",
@@ -3341,17 +3909,35 @@ def register_teacher():
                     "country": teacher.country,
                     "languages": form.languages.data,
                     "portal_username": teacher.portal_username,
+                    "invite_id": invite.id if invite_active else None,
                 },
             )
             db.session.commit()
             _send_teacher_confirmation_email(teacher)
+            if invite_active:
+                flash("Registration completed. Please check your email for portal credentials.", "success")
+                return redirect(url_for("web.index"))
             flash("Teacher registered successfully.", "success")
             return redirect(url_for("web.register_teacher"))
         except IntegrityError:
             db.session.rollback()
             flash("This email address is already registered.", "error")
 
-    return render_template("register_teacher.html", form=form, show_absence_toggle=False)
+    return render_template(
+        "register_teacher.html",
+        form=form,
+        show_absence_toggle=False,
+        ethics_consent_html=_ethics_consent_html(),
+        gdpr_notice_html=_gdpr_notice_html(),
+        photo_consent_html=_photo_consent_html(),
+        assessor_competence_html=_assessor_competence_html(),
+        accommodation_info_html=_accommodation_info_html(),
+        invite_message=invite_message,
+        invite_required=invite_required,
+        invite_active=invite_active,
+        invite_token=invite.token if invite_active else None,
+        invite_delegation_leader=bool(invite.delegation_leader) if invite_active else False,
+    )
 
 
 @web_bp.route("/admin")
@@ -3374,24 +3960,29 @@ def admin_dashboard():
     upload_locked = _is_upload_locked()
     upload_state = SimpleNamespace(enabled=upload_module_enabled, locked=upload_locked)
 
-    return render_template(
-        "admin/dashboard.html",
-        metrics=metrics,
-        alerts=alerts,
-        tables=tables,
-        deadlines=deadlines,
-        filters=filters,
-        language_options=language_options,
-        alert_options=alert_options,
-        stage_lock_state={
+    is_htmx = _is_htmx_request()
+    template_name = "admin/partials/dashboard_content.html" if is_htmx else "admin/dashboard.html"
+    context = {
+        "is_htmx": is_htmx,
+        "metrics": metrics,
+        "alerts": alerts,
+        "tables": tables,
+        "deadlines": deadlines,
+        "filters": filters,
+        "language_options": language_options,
+        "alert_options": alert_options,
+        "stage_lock_state": {
             "stage_1": stage1_locked,
             "stage_2": stage2_locked,
         },
-        upload_state=upload_state,
-        Stage=Stage,
-        last_refreshed=datetime.utcnow(),
-        **_quick_message_context(),
-    )
+        "upload_state": upload_state,
+        "Stage": Stage,
+        "last_refreshed": datetime.utcnow(),
+    }
+    if not is_htmx:
+        context.update(_quick_message_context())
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/grading/lock", methods=["POST"])
@@ -3429,6 +4020,9 @@ def admin_toggle_grading_lock():
     stage_label = STAGE_LABELS.get(stage, stage.value.title())
     flash(f"{stage_label} grading {'locked' if desired_lock else 'unlocked'}.", "success")
 
+    if _is_htmx_request():
+        return admin_dashboard()
+
     redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
     return redirect(redirect_target)
 
@@ -3458,8 +4052,24 @@ def admin_toggle_upload_lock():
     db.session.commit()
 
     flash(f"Essay uploads {'locked' if desired_lock else 'unlocked'}.", "success")
+
+    if _is_htmx_request():
+        return admin_dashboard()
+
     redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
     return redirect(redirect_target)
+
+
+def _is_htmx_request() -> bool:
+    return request.headers.get("HX-Request") == "true"
+
+def _render_htmx_template(template_name: str, **context):
+    messages = get_flashed_messages(with_categories=True)
+    body = render_template(template_name, **context)
+    if not messages:
+        return body
+    toast_html = render_template("partials/toast_messages.html", messages=messages, oob=True)
+    return f"{toast_html}{body}"
 
 
 
@@ -3803,11 +4413,17 @@ def _collect_dashboard_deadlines(now: datetime) -> list[dict]:
 
     upload_raw = _get_setting(SETTING_UPLOAD_DEADLINE, config.get("DASHBOARD_UPLOAD_DEADLINE"))
     stage2_raw = _get_setting(SETTING_STAGE2_DEADLINE, config.get("DASHBOARD_STAGE2_DEADLINE"))
+    event_end_raw = _get_setting(SETTING_EVENT_END, config.get("DASHBOARD_EVENT_END"))
 
     upload_deadline = _parse_deadline(upload_raw)
     stage2_deadline = _parse_deadline(stage2_raw)
+    event_end = _parse_deadline(event_end_raw)
 
-    for label, deadline in (("Essay upload deadline", upload_deadline), ("Stage 2 deadline", stage2_deadline)):
+    for label, deadline in (
+        ("Essay upload deadline", upload_deadline),
+        ("Stage 2 deadline", stage2_deadline),
+        ("Event end (essay access unlock)", event_end),
+    ):
         if deadline is None:
             deadlines.append({
                 "label": label,
@@ -3856,6 +4472,71 @@ def _parse_deadline(raw: str | None) -> datetime | None:
         return None
 
 
+def _event_end() -> datetime | None:
+    config = current_app.config
+    raw = _get_setting(SETTING_EVENT_END, config.get("DASHBOARD_EVENT_END"))
+    return _parse_deadline(raw)
+
+
+def _event_end_override() -> str:
+    raw = (_get_setting(SETTING_EVENT_END_OVERRIDE, "auto") or "auto").strip().lower()
+    if raw not in {"auto", "force_end", "force_open"}:
+        return "auto"
+    return raw
+
+
+def _essay_event_state(now: datetime | None = None) -> SimpleNamespace:
+    event_end = _event_end()
+    override = _event_end_override()
+    now = now or datetime.utcnow()
+    if override == "force_end":
+        event_over = True
+    elif override == "force_open":
+        event_over = False
+    else:
+        event_over = bool(event_end and now >= event_end)
+    display = event_end.strftime("%Y-%m-%d %H:%M UTC") if event_end else None
+    override_label = {
+        "auto": "Auto",
+        "force_end": "Force end",
+        "force_open": "Force open",
+    }[override]
+    return SimpleNamespace(
+        event_end=event_end,
+        event_over=event_over,
+        display=display,
+        override=override,
+        override_label=override_label,
+    )
+
+
+def _student_essay_access(student: Student, *, now: datetime | None = None) -> SimpleNamespace:
+    state = _essay_event_state(now)
+    has_upload = bool(student.uploaded_filename)
+    preview_allowed = has_upload
+    download_allowed = has_upload and state.event_over
+    return SimpleNamespace(
+        has_upload=has_upload,
+        preview_allowed=preview_allowed,
+        download_allowed=download_allowed,
+        event_over=state.event_over,
+        event_end=state.event_end,
+        event_end_display=state.display,
+        override=state.override,
+        override_label=state.override_label,
+    )
+
+
+def _essay_download_notice(access: SimpleNamespace) -> str | None:
+    if not access.has_upload or access.download_allowed:
+        return None
+    if access.override == "force_open":
+        return "Downloads are temporarily locked by the organizing team."
+    if access.event_end_display:
+        return f"Downloads unlock after the event ends ({access.event_end_display})."
+    return "Downloads unlock after the event ends. Ask the organizers to set the event end time."
+
+
 def _humanize_timedelta(delta: timedelta) -> str:
     seconds = int(delta.total_seconds())
     prefix = 'Due in ' if seconds >= 0 else 'Overdue by '
@@ -3883,21 +4564,45 @@ def admin_settings():
     if form.validate_on_submit():
         upload_value = form.upload_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.upload_deadline.data else None
         stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
+        event_end_value = form.event_end.data.strftime("%Y-%m-%dT%H:%M") if form.event_end.data else None
+        event_override_value = form.event_end_override.data if form.event_end_override.data != "auto" else None
         stage1_sla_value = str(form.stage1_sla.data) if form.stage1_sla.data else None
         stage2_sla_value = str(form.stage2_sla.data) if form.stage2_sla.data else None
 
         _set_setting(SETTING_UPLOAD_DEADLINE, upload_value)
         _set_setting(SETTING_STAGE2_DEADLINE, stage2_value)
+        _set_setting(SETTING_EVENT_END, event_end_value)
+        _set_setting(SETTING_EVENT_END_OVERRIDE, event_override_value)
         _set_setting(SETTING_STAGE1_SLA, stage1_sla_value)
         _set_setting(SETTING_STAGE2_SLA, stage2_sla_value)
         _set_setting(SETTING_PACKET_PRINT_MODE, form.packet_print_mode.data)
+        _set_setting(
+            SETTING_ESSAY_WORD_LIMIT,
+            str(form.essay_word_limit.data).strip() if form.essay_word_limit.data else None,
+        )
+        _set_setting(SETTING_ESSAY_WORD_LIMIT_MODE, form.essay_word_limit_mode.data)
+        ethics_html = (form.ethics_consent_html.data or "").strip() or None
+        gdpr_html = (form.gdpr_notice_html.data or "").strip() or None
+        photo_html = (form.photo_consent_html.data or "").strip() or None
+        competence_html = (form.assessor_competence_html.data or "").strip() or None
+        accommodation_html = (form.accommodation_info_html.data or "").strip() or None
+        _set_setting(SETTING_ETHICS_CONSENT_HTML, ethics_html)
+        _set_setting(SETTING_GDPR_NOTICE_HTML, gdpr_html)
+        _set_setting(SETTING_PHOTO_CONSENT_HTML, photo_html)
+        _set_setting(SETTING_TEACHER_COMPETENCE_HTML, competence_html)
+        _set_setting(SETTING_ACCOMMODATION_INFO_HTML, accommodation_html)
         _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
         _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
+        _set_setting(SETTING_REGISTRATION_INVITE_ONLY, "true" if form.registration_invite_only.data else "false")
         _set_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "true" if form.email_auto_enabled.data else "false")
         _set_setting(SETTING_EMAIL_STUDENT_SUBJECT, form.email_student_subject.data.strip() or None)
         _set_setting(SETTING_EMAIL_STUDENT_BODY, form.email_student_body.data.strip() or None)
         _set_setting(SETTING_EMAIL_TEACHER_SUBJECT, form.email_teacher_subject.data.strip() or None)
         _set_setting(SETTING_EMAIL_TEACHER_BODY, form.email_teacher_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT, form.email_student_invite_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_STUDENT_INVITE_BODY, form.email_student_invite_body.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT, form.email_teacher_invite_subject.data.strip() or None)
+        _set_setting(SETTING_EMAIL_TEACHER_INVITE_BODY, form.email_teacher_invite_body.data.strip() or None)
         _set_setting(SETTING_EMAIL_MESSAGE_SUBJECT, form.email_message_subject.data.strip() or None)
         _set_setting(SETTING_EMAIL_MESSAGE_BODY, form.email_message_body.data.strip() or None)
         _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT, form.email_survey_publish_subject.data.strip() or None)
@@ -3919,6 +4624,8 @@ def admin_settings():
     else:
         upload_raw = _get_setting(SETTING_UPLOAD_DEADLINE, config.get("DASHBOARD_UPLOAD_DEADLINE"))
         stage2_raw = _get_setting(SETTING_STAGE2_DEADLINE, config.get("DASHBOARD_STAGE2_DEADLINE"))
+        event_end_raw = _get_setting(SETTING_EVENT_END, config.get("DASHBOARD_EVENT_END"))
+        event_override_raw = _get_setting(SETTING_EVENT_END_OVERRIDE, "auto")
         stage1_sla_raw = _get_setting(SETTING_STAGE1_SLA, str(config.get("DASHBOARD_STAGE1_SCORE_SLA_HOURS", 24)))
         stage2_sla_raw = _get_setting(SETTING_STAGE2_SLA, str(config.get("DASHBOARD_STAGE2_SCORE_SLA_HOURS", 24)))
 
@@ -3930,6 +4637,14 @@ def admin_settings():
             dt = _parse_deadline(stage2_raw)
             if dt:
                 form.stage2_deadline.data = dt
+        if event_end_raw:
+            dt = _parse_deadline(event_end_raw)
+            if dt:
+                form.event_end.data = dt
+        override_value = (event_override_raw or "auto").strip().lower()
+        if override_value not in {"auto", "force_end", "force_open"}:
+            override_value = "auto"
+        form.event_end_override.data = override_value
         if stage1_sla_raw:
             try:
                 form.stage1_sla.data = int(float(stage1_sla_raw))
@@ -3947,15 +4662,33 @@ def admin_settings():
         else:
             form.packet_print_mode.data = "single"
 
+        essay_word_limit_raw = _get_setting(SETTING_ESSAY_WORD_LIMIT)
+        try:
+            form.essay_word_limit.data = int(essay_word_limit_raw) if essay_word_limit_raw else DEFAULT_ESSAY_WORD_LIMIT
+        except (TypeError, ValueError):
+            form.essay_word_limit.data = DEFAULT_ESSAY_WORD_LIMIT
+        form.essay_word_limit_mode.data = _essay_word_limit_mode()
+        form.ethics_consent_html.data = _ethics_consent_html()
+        form.gdpr_notice_html.data = _gdpr_notice_html()
+        form.photo_consent_html.data = _photo_consent_html()
+        form.assessor_competence_html.data = _assessor_competence_html()
+        form.accommodation_info_html.data = _accommodation_info_html()
+
         form.essay_upload_enabled.data = _is_upload_module_enabled()
         teacher_portal_flag = (_get_setting(SETTING_TEACHER_PORTAL_ENABLED, "false") or "false").lower() == "true"
         form.teacher_portal_enabled.data = teacher_portal_flag
+        invite_only_flag = (_get_setting(SETTING_REGISTRATION_INVITE_ONLY, "false") or "false").lower() == "true"
+        form.registration_invite_only.data = invite_only_flag
         email_enabled_flag = (_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false").lower() == "true"
         form.email_auto_enabled.data = email_enabled_flag
         form.email_student_subject.data = _get_setting(SETTING_EMAIL_STUDENT_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_SUBJECT]
         form.email_student_body.data = _get_setting(SETTING_EMAIL_STUDENT_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_BODY]
         form.email_teacher_subject.data = _get_setting(SETTING_EMAIL_TEACHER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_SUBJECT]
         form.email_teacher_body.data = _get_setting(SETTING_EMAIL_TEACHER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_BODY]
+        form.email_student_invite_subject.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_INVITE_SUBJECT]
+        form.email_student_invite_body.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_INVITE_BODY]
+        form.email_teacher_invite_subject.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_INVITE_SUBJECT]
+        form.email_teacher_invite_body.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_INVITE_BODY]
         form.email_message_subject.data = _get_setting(SETTING_EMAIL_MESSAGE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_MESSAGE_SUBJECT]
         form.email_message_body.data = _get_setting(SETTING_EMAIL_MESSAGE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_MESSAGE_BODY]
         form.email_survey_publish_subject.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT]
@@ -4032,23 +4765,31 @@ def admin_message_quick():
     if not _current_admin():
         abort(403)
 
+    is_htmx = _is_htmx_request()
+    success = False
     form = QuickTeacherMessageForm()
     if form.validate_on_submit():
         try:
             teacher_id = int(form.teacher_id.data)
         except (TypeError, ValueError):
             flash("Invalid teacher selected.", "error")
+            if is_htmx:
+                return render_template("partials/toast_oob.html")
             return redirect(request.referrer or url_for("web.admin_messages"))
 
         teacher = db.session.get(Teacher, teacher_id)
         if not teacher:
             flash("Teacher could not be found.", "error")
+            if is_htmx:
+                return render_template("partials/toast_oob.html")
             return redirect(request.referrer or url_for("web.admin_messages"))
 
         try:
             priority = TeacherMessagePriority(form.priority.data)
         except ValueError:
             flash("Unknown priority selected.", "error")
+            if is_htmx:
+                return render_template("partials/toast_oob.html")
             return redirect(request.referrer or url_for("web.admin_messages"))
 
         message = TeacherMessage(
@@ -4078,11 +4819,17 @@ def admin_message_quick():
         db.session.commit()
         _send_teacher_message_notifications(message)
         flash(f"Message sent to {teacher.first_name} {teacher.last_name}.", "success")
+        success = True
     else:
         for field_errors in form.errors.values():
             for error in field_errors:
                 flash(error, "error")
 
+    if is_htmx:
+        response = make_response(render_template("partials/toast_oob.html"))
+        if success:
+            response.headers["HX-Trigger"] = json.dumps({"quick-message-sent": True})
+        return response
     return redirect(request.referrer or url_for("web.admin_messages"))
 
 
@@ -4091,6 +4838,7 @@ def admin_messages():
     if not _current_admin():
         abort(403)
 
+    is_htmx = _is_htmx_request()
     form = TeacherMessageForm()
     _prepare_message_form(form)
 
@@ -4103,6 +4851,23 @@ def admin_messages():
             form.title.data = selected_template.title
             form.body.data = selected_template.body
             form.category.data = selected_template.category or ""
+
+    def _render_messages(current_form: TeacherMessageForm, template_id: int | None):
+        messages = TeacherMessage.query.order_by(TeacherMessage.created_at.desc()).all()
+        template_name = "admin/partials/messages_content.html" if is_htmx else "admin/messages.html"
+        context = {
+            "form": current_form,
+            "templates": templates,
+            "selected_template_id": template_id,
+            "messages": messages,
+            "priorities": list(TeacherMessagePriority),
+            "statuses": list(TeacherMessageStatus),
+            "TeacherMessageStatus": TeacherMessageStatus,
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
 
     if form.validate_on_submit():
         deliver_to_all = form.teacher_id.data == 0
@@ -4135,23 +4900,13 @@ def admin_messages():
         db.session.commit()
         _send_teacher_message_notifications(message)
         flash("Message posted.", "success")
+        if is_htmx:
+            fresh_form = TeacherMessageForm()
+            _prepare_message_form(fresh_form)
+            return _render_messages(fresh_form, None)
         return redirect(url_for("web.admin_messages"))
 
-    messages = (
-        TeacherMessage.query.order_by(TeacherMessage.created_at.desc())
-        .all()
-    )
-
-    return render_template(
-        "admin/messages.html",
-        form=form,
-        templates=templates,
-        selected_template_id=selected_template.id if selected_template else None,
-        messages=messages,
-        priorities=list(TeacherMessagePriority),
-        statuses=list(TeacherMessageStatus),
-        TeacherMessageStatus=TeacherMessageStatus,
-    )
+    return _render_messages(form, selected_template.id if selected_template else None)
 
 
 @web_bp.route("/admin/message-templates")
@@ -4159,13 +4914,18 @@ def admin_message_templates():
     if not _current_admin():
         abort(403)
 
+    is_htmx = _is_htmx_request()
     templates = (
         TeacherMessageTemplate.query.order_by(TeacherMessageTemplate.name.asc()).all()
     )
-    return render_template(
-        "admin/message_templates.html",
-        templates=templates,
-    )
+    template_name = "admin/partials/message_templates_content.html" if is_htmx else "admin/message_templates.html"
+    context = {
+        "templates": templates,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/message-templates/new", methods=["GET", "POST"])
@@ -4261,6 +5021,8 @@ def admin_message_template_delete(template_id: int):
     )
     db.session.commit()
     flash("Template deleted.", "success")
+    if _is_htmx_request():
+        return admin_message_templates()
     return redirect(url_for("web.admin_message_templates"))
 
 
@@ -4329,6 +5091,8 @@ def admin_message_archive(message_id: int):
     )
     db.session.commit()
     flash("Message archived.", "success")
+    if _is_htmx_request():
+        return admin_messages()
     return redirect(url_for("web.admin_messages"))
 
 
@@ -4351,6 +5115,8 @@ def admin_message_restore(message_id: int):
     )
     db.session.commit()
     flash("Message restored.", "success")
+    if _is_htmx_request():
+        return admin_messages()
     return redirect(url_for("web.admin_messages"))
 
 
@@ -4371,6 +5137,8 @@ def admin_message_delete(message_id: int):
     )
     db.session.commit()
     flash("Message deleted.", "success")
+    if _is_htmx_request():
+        return admin_messages()
     return redirect(url_for("web.admin_messages"))
 
 
@@ -4383,6 +5151,12 @@ def admin_communications():
         CommunicationCampaign.query.order_by(CommunicationCampaign.created_at.desc()).all()
     )
     stats = _campaign_recipient_stats(campaign.id for campaign in campaigns)
+    sendgrid_ready = _sendgrid_configured()
+    if not sendgrid_ready:
+        flash(
+            "SendGrid is not configured. Drafts can be prepared, but sending is disabled until credentials are added in Settings.",
+            "warning",
+        )
 
     return render_template(
         "admin/communications/index.html",
@@ -4390,7 +5164,7 @@ def admin_communications():
         stats=stats,
         CommunicationStatus=CommunicationStatus,
         CommunicationRecipientStatus=CommunicationRecipientStatus,
-        sendgrid_ready=_sendgrid_configured(),
+        sendgrid_ready=sendgrid_ready,
     )
 
 
@@ -4402,6 +5176,12 @@ def admin_communications_new():
     form = CommunicationComposeForm()
     country_choices = _communication_country_choices()
     form.countries.choices = country_choices
+    sendgrid_ready = _sendgrid_configured()
+    if not sendgrid_ready:
+        flash(
+            "SendGrid is not currently configured. You can prepare the message and audience, but sending will be blocked until credentials are added in Settings.",
+            "warning",
+        )
 
     if request.method == "GET" and not form.audience.data:
         form.audience.data = CommunicationAudience.BOTH.value
@@ -4464,7 +5244,7 @@ def admin_communications_new():
         "admin/communications/new.html",
         form=form,
         campaign=None,
-        sendgrid_ready=_sendgrid_configured(),
+        sendgrid_ready=sendgrid_ready,
     )
 
 
@@ -4483,6 +5263,12 @@ def admin_communications_edit(campaign_id: int):
     country_choices = _communication_country_choices()
     existing_countries = set(country for country, _ in country_choices)
     selected_countries = campaign.country_filter or []
+    sendgrid_ready = _sendgrid_configured()
+    if not sendgrid_ready:
+        flash(
+            "SendGrid is not currently configured. You can prepare the message and audience, but sending will be blocked until credentials are added in Settings.",
+            "warning",
+        )
     for country in selected_countries:
         if country and country not in existing_countries:
             country_choices.append((country, country))
@@ -4557,7 +5343,7 @@ def admin_communications_edit(campaign_id: int):
         "admin/communications/new.html",
         form=form,
         campaign=campaign,
-        sendgrid_ready=_sendgrid_configured(),
+        sendgrid_ready=sendgrid_ready,
     )
 
 
@@ -4570,6 +5356,9 @@ def admin_communications_preview(campaign_id: int):
         abort(404)
 
     form = CommunicationSendForm()
+    sendgrid_ready = _sendgrid_configured()
+    if not sendgrid_ready:
+        flash("SendGrid is not configured. Sending is currently disabled.", "warning")
     recipients = list(campaign.recipients)
     role_counts = _campaign_role_counts(campaign)
     status_counts = {status.value: 0 for status in CommunicationRecipientStatus}
@@ -4623,7 +5412,7 @@ def admin_communications_preview(campaign_id: int):
         role_counts=role_counts,
         status_counts=status_counts,
         sample_recipients=_campaign_sample_recipients(campaign, limit=10),
-        sendgrid_ready=_sendgrid_configured(),
+        sendgrid_ready=sendgrid_ready,
         CommunicationRecipientStatus=CommunicationRecipientStatus,
         CommunicationRecipientRole=CommunicationRecipientRole,
     )
@@ -4637,6 +5426,13 @@ def admin_communications_detail(campaign_id: int):
     if not campaign:
         abort(404)
 
+    is_htmx = _is_htmx_request()
+    sendgrid_ready = _sendgrid_configured()
+    if not sendgrid_ready:
+        flash(
+            "SendGrid is not configured. Resending failed recipients is disabled until credentials are added.",
+            "warning",
+        )
     recipients = list(campaign.recipients)
     status_counts = {status.value: 0 for status in CommunicationRecipientStatus}
     for recipient in recipients:
@@ -4664,18 +5460,22 @@ def admin_communications_detail(campaign_id: int):
 
     retry_form = CommunicationRetryForm()
 
-    return render_template(
-        "admin/communications/detail.html",
-        campaign=campaign,
-        recipients=recipients,
-        status_counts=status_counts,
-        role_counts=role_counts,
-        status_filter=status_filter.value if status_filter else "all",
-        sendgrid_ready=_sendgrid_configured(),
-        retry_form=retry_form,
-        CommunicationRecipientStatus=CommunicationRecipientStatus,
-        CommunicationRecipientRole=CommunicationRecipientRole,
-    )
+    template_name = "admin/partials/communications_detail_content.html" if is_htmx else "admin/communications/detail.html"
+    context = {
+        "campaign": campaign,
+        "recipients": recipients,
+        "status_counts": status_counts,
+        "role_counts": role_counts,
+        "status_filter": status_filter.value if status_filter else "all",
+        "sendgrid_ready": sendgrid_ready,
+        "retry_form": retry_form,
+        "CommunicationRecipientStatus": CommunicationRecipientStatus,
+        "CommunicationRecipientRole": CommunicationRecipientRole,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/communications/<int:campaign_id>/resend-failed", methods=["POST"])
@@ -4727,7 +5527,26 @@ def admin_communications_resend_failed(campaign_id: int):
         )
     else:
         flash("No failed recipients were resent. Review the campaign details.", "info")
+    if _is_htmx_request():
+        return admin_communications_detail(campaign.id)
     return redirect(url_for("web.admin_communications_detail", campaign_id=campaign.id))
+
+
+def _survey_stats_snapshot(survey: Survey) -> dict[str, int]:
+    total = len(survey.assignments)
+    completed = sum(
+        1 for assignment in survey.assignments if assignment.status == SurveyAssignmentStatus.COMPLETED
+    )
+    responses = (
+        db.session.query(func.count(SurveyResponse.id)).filter_by(survey_id=survey.id).scalar()
+        or 0
+    )
+    return {
+        "total": total,
+        "completed": completed,
+        "pending": max(total - completed, 0),
+        "responses": responses,
+    }
 
 
 @web_bp.route("/admin/surveys")
@@ -4735,6 +5554,7 @@ def admin_surveys():
     if not _current_admin():
         abort(403)
 
+    is_htmx = _is_htmx_request()
     surveys = (
         Survey.query.options(
             joinedload(Survey.assignments).joinedload(SurveyAssignment.teacher),
@@ -4766,13 +5586,17 @@ def admin_surveys():
             "responses": response_counts.get(survey.id, 0),
         }
 
-    return render_template(
-        "admin/surveys/index.html",
-        surveys=surveys,
-        stats=stats,
-        SurveyStatus=SurveyStatus,
-        SurveyAudience=SurveyAudience,
-    )
+    template_name = "admin/partials/surveys_index_content.html" if is_htmx else "admin/surveys/index.html"
+    context = {
+        "surveys": surveys,
+        "stats": stats,
+        "SurveyStatus": SurveyStatus,
+        "SurveyAudience": SurveyAudience,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/surveys/new", methods=["GET", "POST"])
@@ -4822,6 +5646,37 @@ def admin_new_survey():
     )
 
 
+def _render_survey_edit_view(
+    *,
+    survey: Survey,
+    form: SurveyForm,
+    question_form: SurveyQuestionForm | None,
+    can_edit: bool,
+    responses_count: int,
+    is_htmx: bool,
+    set_dates: bool,
+):
+    if set_dates:
+        form.open_at.data = survey.open_at
+        form.close_at.data = survey.close_at
+    questions = _ordered_survey_questions(survey)
+    template_name = "admin/partials/surveys_edit_content.html" if is_htmx else "admin/surveys/edit.html"
+    context = {
+        "survey": survey,
+        "form": form,
+        "question_form": question_form,
+        "questions": questions,
+        "can_edit": can_edit,
+        "SurveyQuestionType": SurveyQuestionType,
+        "SurveyStatus": SurveyStatus,
+        "responses_count": responses_count,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
+
+
 @web_bp.route("/admin/surveys/<int:survey_id>/edit", methods=["GET", "POST"])
 def admin_edit_survey(survey_id: int):
     if not _current_admin():
@@ -4830,6 +5685,7 @@ def admin_edit_survey(survey_id: int):
     if not survey:
         abort(404)
 
+    is_htmx = _is_htmx_request()
     form = SurveyForm(obj=survey)
     form.submit.label.text = "Save changes"
     question_form = SurveyQuestionForm()
@@ -4864,6 +5720,20 @@ def admin_edit_survey(survey_id: int):
                 )
                 db.session.commit()
                 flash("Survey details updated.", "success")
+                if is_htmx:
+                    fresh_form = SurveyForm(obj=survey)
+                    fresh_form.submit.label.text = "Save changes"
+                    fresh_question_form = SurveyQuestionForm()
+                    fresh_question_form.submit.label.text = "Add question"
+                    return _render_survey_edit_view(
+                        survey=survey,
+                        form=fresh_form,
+                        question_form=fresh_question_form,
+                        can_edit=can_edit,
+                        responses_count=responses_count,
+                        is_htmx=is_htmx,
+                        set_dates=True,
+                    )
                 return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
         elif form_name == "question":
             if not can_edit:
@@ -4893,23 +5763,30 @@ def admin_edit_survey(survey_id: int):
                 )
                 db.session.commit()
                 flash("Question added.", "success")
+                if is_htmx:
+                    fresh_form = SurveyForm(obj=survey)
+                    fresh_form.submit.label.text = "Save changes"
+                    fresh_question_form = SurveyQuestionForm()
+                    fresh_question_form.submit.label.text = "Add question"
+                    return _render_survey_edit_view(
+                        survey=survey,
+                        form=fresh_form,
+                        question_form=fresh_question_form,
+                        can_edit=can_edit,
+                        responses_count=responses_count,
+                        is_htmx=is_htmx,
+                        set_dates=True,
+                    )
                 return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
 
-    questions = _ordered_survey_questions(survey)
-    if request.method == "GET":
-        form.open_at.data = survey.open_at
-        form.close_at.data = survey.close_at
-
-    return render_template(
-        "admin/surveys/edit.html",
+    return _render_survey_edit_view(
         survey=survey,
         form=form,
         question_form=question_form,
-        questions=questions,
         can_edit=can_edit,
-        SurveyQuestionType=SurveyQuestionType,
-        SurveyStatus=SurveyStatus,
         responses_count=responses_count,
+        is_htmx=is_htmx,
+        set_dates=request.method == "GET",
     )
 
 
@@ -4987,6 +5864,24 @@ def admin_delete_survey_question(survey_id: int, question_id: int):
         abort(404)
     if survey.status != SurveyStatus.DRAFT:
         flash("Published surveys cannot be modified.", "error")
+        if _is_htmx_request():
+            fresh_form = SurveyForm(obj=survey)
+            fresh_form.submit.label.text = "Save changes"
+            fresh_question_form = SurveyQuestionForm()
+            fresh_question_form.submit.label.text = "Add question"
+            return _render_survey_edit_view(
+                survey=survey,
+                form=fresh_form,
+                question_form=fresh_question_form,
+                can_edit=False,
+                responses_count=(
+                    db.session.query(func.count(SurveyResponse.id))
+                    .filter_by(survey_id=survey.id)
+                    .scalar()
+                ),
+                is_htmx=True,
+                set_dates=True,
+            )
         return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
 
     db.session.delete(question)
@@ -5001,6 +5896,24 @@ def admin_delete_survey_question(survey_id: int, question_id: int):
     )
     db.session.commit()
     flash("Question deleted.", "success")
+    if _is_htmx_request():
+        fresh_form = SurveyForm(obj=survey)
+        fresh_form.submit.label.text = "Save changes"
+        fresh_question_form = SurveyQuestionForm()
+        fresh_question_form.submit.label.text = "Add question"
+        return _render_survey_edit_view(
+            survey=survey,
+            form=fresh_form,
+            question_form=fresh_question_form,
+            can_edit=True,
+            responses_count=(
+                db.session.query(func.count(SurveyResponse.id))
+                .filter_by(survey_id=survey.id)
+                .scalar()
+            ),
+            is_htmx=True,
+            set_dates=True,
+        )
     return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
 
 
@@ -5017,6 +5930,24 @@ def admin_move_survey_question(survey_id: int, question_id: int, direction: str)
         abort(404)
     if survey.status != SurveyStatus.DRAFT:
         flash("Published surveys cannot be modified.", "error")
+        if _is_htmx_request():
+            fresh_form = SurveyForm(obj=survey)
+            fresh_form.submit.label.text = "Save changes"
+            fresh_question_form = SurveyQuestionForm()
+            fresh_question_form.submit.label.text = "Add question"
+            return _render_survey_edit_view(
+                survey=survey,
+                form=fresh_form,
+                question_form=fresh_question_form,
+                can_edit=False,
+                responses_count=(
+                    db.session.query(func.count(SurveyResponse.id))
+                    .filter_by(survey_id=survey.id)
+                    .scalar()
+                ),
+                is_htmx=True,
+                set_dates=True,
+            )
         return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
     direction = direction.lower()
     if direction not in {"up", "down"}:
@@ -5029,6 +5960,24 @@ def admin_move_survey_question(survey_id: int, question_id: int, direction: str)
     swap_index = current_index - 1 if direction == "up" else current_index + 1
     if swap_index < 0 or swap_index >= len(ordered):
         flash("Question already at the boundary.", "info")
+        if _is_htmx_request():
+            fresh_form = SurveyForm(obj=survey)
+            fresh_form.submit.label.text = "Save changes"
+            fresh_question_form = SurveyQuestionForm()
+            fresh_question_form.submit.label.text = "Add question"
+            return _render_survey_edit_view(
+                survey=survey,
+                form=fresh_form,
+                question_form=fresh_question_form,
+                can_edit=True,
+                responses_count=(
+                    db.session.query(func.count(SurveyResponse.id))
+                    .filter_by(survey_id=survey.id)
+                    .scalar()
+                ),
+                is_htmx=True,
+                set_dates=True,
+            )
         return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
 
     ordered[current_index], ordered[swap_index] = ordered[swap_index], ordered[current_index]
@@ -5044,6 +5993,24 @@ def admin_move_survey_question(survey_id: int, question_id: int, direction: str)
     )
     db.session.commit()
     flash("Question order updated.", "success")
+    if _is_htmx_request():
+        fresh_form = SurveyForm(obj=survey)
+        fresh_form.submit.label.text = "Save changes"
+        fresh_question_form = SurveyQuestionForm()
+        fresh_question_form.submit.label.text = "Add question"
+        return _render_survey_edit_view(
+            survey=survey,
+            form=fresh_form,
+            question_form=fresh_question_form,
+            can_edit=True,
+            responses_count=(
+                db.session.query(func.count(SurveyResponse.id))
+                .filter_by(survey_id=survey.id)
+                .scalar()
+            ),
+            is_htmx=True,
+            set_dates=True,
+        )
     return redirect(url_for("web.admin_edit_survey", survey_id=survey.id, _anchor="questions"))
 
 
@@ -5205,6 +6172,15 @@ def admin_close_survey(survey_id: int):
     )
     db.session.commit()
     flash("Survey closed.", "success")
+    if _is_htmx_request():
+        summary = _survey_stats_snapshot(survey)
+        return _render_htmx_template(
+            "admin/partials/survey_card.html",
+            survey=survey,
+            summary=summary,
+            SurveyStatus=SurveyStatus,
+            SurveyAudience=SurveyAudience,
+        )
     return redirect(url_for("web.admin_surveys"))
 
 
@@ -5232,6 +6208,15 @@ def admin_reopen_survey(survey_id: int):
     )
     db.session.commit()
     flash("Survey reopened.", "success")
+    if _is_htmx_request():
+        summary = _survey_stats_snapshot(survey)
+        return _render_htmx_template(
+            "admin/partials/survey_card.html",
+            survey=survey,
+            summary=summary,
+            SurveyStatus=SurveyStatus,
+            SurveyAudience=SurveyAudience,
+        )
     return redirect(url_for("web.admin_surveys"))
 
 
@@ -5268,6 +6253,15 @@ def admin_unpublish_survey(survey_id: int):
     )
     db.session.commit()
     flash("Survey moved back to draft. Assignments were removed.", "success")
+    if _is_htmx_request():
+        summary = _survey_stats_snapshot(survey)
+        return _render_htmx_template(
+            "admin/partials/survey_card.html",
+            survey=survey,
+            summary=summary,
+            SurveyStatus=SurveyStatus,
+            SurveyAudience=SurveyAudience,
+        )
     return redirect(url_for("web.admin_edit_survey", survey_id=survey.id))
 
 
@@ -5293,6 +6287,8 @@ def admin_delete_survey(survey_id: int):
     )
     db.session.commit()
     flash("Survey deleted.", "success")
+    if _is_htmx_request():
+        return _render_htmx_template("partials/empty.html")
     return redirect(url_for("web.admin_surveys"))
 
 
@@ -5323,18 +6319,22 @@ def admin_survey_responses(survey_id: int):
         audience=audience_filter,
         status=status_filter,
     )
-
-    return render_template(
-        "admin/surveys/responses.html",
-        survey=survey,
-        questions=questions,
-        rows=filtered_rows,
-        summary=summary,
-        audience_filter=audience_filter,
-        status_filter=status_filter,
-        export_url=export_url,
-        SurveyAssignmentStatus=SurveyAssignmentStatus,
-    )
+    is_htmx = _is_htmx_request()
+    template_name = "admin/partials/surveys_responses_content.html" if is_htmx else "admin/surveys/responses.html"
+    context = {
+        "survey": survey,
+        "questions": questions,
+        "rows": filtered_rows,
+        "summary": summary,
+        "audience_filter": audience_filter,
+        "status_filter": status_filter,
+        "export_url": export_url,
+        "SurveyAssignmentStatus": SurveyAssignmentStatus,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/surveys/<int:survey_id>/responses/<int:assignment_id>")
@@ -5497,6 +6497,25 @@ def admin_survey_send_reminder(survey_id: int):
     )
     db.session.commit()
     flash(f"Reminder emails sent to {sent} recipients.", "success")
+    if _is_htmx_request():
+        summary = _survey_summary_from_rows(rows)
+        export_url = url_for(
+            "web.admin_survey_responses_export",
+            survey_id=survey.id,
+            audience=audience_filter,
+            status=status_filter,
+        )
+        return _render_htmx_template(
+            "admin/partials/surveys_responses_content.html",
+            survey=survey,
+            questions=_ordered_survey_questions(survey),
+            rows=rows,
+            summary=summary,
+            audience_filter=audience_filter,
+            status_filter=status_filter,
+            export_url=export_url,
+            SurveyAssignmentStatus=SurveyAssignmentStatus,
+        )
     return redirect(back_url)
 
 
@@ -5505,6 +6524,7 @@ def admin_logs():
     if not _current_admin():
         abort(403)
 
+    is_htmx = _is_htmx_request()
     raw_filters = _log_filters_from_request()
     filters = raw_filters.copy()
     filters["page"] = max(filters["page"], 1)
@@ -5524,17 +6544,21 @@ def admin_logs():
     next_url = url_for("web.admin_logs", **base_args, page=pagination.next_num) if pagination.has_next else None
     export_url = url_for("web.admin_logs_export", **query_args)
 
-    return render_template(
-        "admin/logs.html",
-        logs=pagination.items,
-        pagination=pagination,
-        filters=filters_display,
-        actions=actions,
-        object_types=object_types,
-        prev_url=prev_url,
-        next_url=next_url,
-        export_url=export_url,
-    )
+    template_name = "admin/partials/logs_content.html" if is_htmx else "admin/logs.html"
+    context = {
+        "logs": pagination.items,
+        "pagination": pagination,
+        "filters": filters_display,
+        "actions": actions,
+        "object_types": object_types,
+        "prev_url": prev_url,
+        "next_url": next_url,
+        "export_url": export_url,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/logs/export")
@@ -5568,6 +6592,7 @@ def admin_logs_export():
 
 
 @web_bp.route("/board/login", methods=["GET", "POST"])
+@limiter.limit(TEACHER_BOARD_LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
 def teacher_board_login():
     if _current_admin():
         return redirect(url_for("web.teacher_board"))
@@ -5578,14 +6603,15 @@ def teacher_board_login():
 
     form = TeacherBoardLoginForm()
     password_config = current_app.config.get("TEACHER_BOARD_PASSWORD")
-
-    if password_config is None:
-        flash("Teacher board password has not been configured.", "error")
+    expected = (password_config or "").strip()
+    if not expected:
+        flash("Teacher board is disabled until TEACHER_BOARD_PASSWORD is configured.", "error")
 
     if form.validate_on_submit():
+        if not expected:
+            return render_template("teacher_board/login.html", form=form), 503
         supplied = form.password.data.strip()
-        expected = password_config or ""
-        if expected and not secrets.compare_digest(supplied, expected):
+        if not secrets.compare_digest(supplied, expected):
             flash("Invalid password.", "error")
             log_activity(
                 "teacher_board_login_failed",
@@ -5630,6 +6656,7 @@ def teacher_board():
     if not is_admin and not _teacher_board_authorized():
         return redirect(url_for("web.teacher_board_login"))
 
+    is_htmx = _is_htmx_request()
     priority_param = request.args.get("priority") or ""
     teacher_param = request.args.get("teacher_id", type=int)
     category_param = request.args.get("category") or ""
@@ -5675,20 +6702,24 @@ def teacher_board():
     else:
         teachers = Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
 
-    return render_template(
-        "teacher_board/index.html",
-        messages=messages,
-        teachers=teachers,
-        priorities=list(TeacherMessagePriority),
-        filters={
+    template_name = "teacher_board/partials/index_content.html" if is_htmx else "teacher_board/index.html"
+    context = {
+        "messages": messages,
+        "teachers": teachers,
+        "priorities": list(TeacherMessagePriority),
+        "filters": {
             "priority": priority_param,
             "teacher_id": teacher_param or 0,
             "category": category_param,
             "q": search_param,
         },
-        is_admin=is_admin,
-        portal_teacher=portal_teacher,
-    )
+        "is_admin": is_admin,
+        "portal_teacher": portal_teacher,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @teacher_portal_bp.before_request
@@ -5700,6 +6731,8 @@ def _teacher_portal_guard():
 
 
 @teacher_portal_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_PER_USERNAME, key_func=_rate_limit_username, methods=["POST"])
 def login():
     if _teacher_portal_from_session():
         return redirect(url_for("teacher_portal.dashboard"))
@@ -5864,6 +6897,7 @@ def dashboard():
         flash("Please sign in to continue.", "error")
         return redirect(url_for("teacher_portal.login", next=request.full_path))
 
+    is_htmx = _is_htmx_request()
     stage1_entries = _teacher_portal_assignments(teacher, Stage.STAGE_1)
     stage2_entries = _teacher_portal_assignments(teacher, Stage.STAGE_2)
 
@@ -5912,21 +6946,545 @@ def dashboard():
         .all()
     )
 
-    return render_template(
-        "teacher_portal/dashboard.html",
-        teacher=teacher,
-        stage1_entries=stage1_entries,
-        stage2_entries=stage2_entries,
-        stage1_summary=stage1_summary,
-        stage2_summary=stage2_summary,
-        stage1_locked=stage1_locked,
-        stage2_locked=stage2_locked,
-        survey_assignments=teacher_survey_items,
-        survey_summary=teacher_survey_summary,
-        survey_outstanding=teacher_survey_outstanding,
-        messages=messages,
-        stage_labels=STAGE_LABELS,
+    template_name = "teacher_portal/partials/dashboard_content.html" if is_htmx else "teacher_portal/dashboard.html"
+    context = {
+        "teacher": teacher,
+        "stage1_entries": stage1_entries,
+        "stage2_entries": stage2_entries,
+        "stage1_summary": stage1_summary,
+        "stage2_summary": stage2_summary,
+        "stage1_locked": stage1_locked,
+        "stage2_locked": stage2_locked,
+        "survey_assignments": teacher_survey_items,
+        "survey_summary": teacher_survey_summary,
+        "survey_outstanding": teacher_survey_outstanding,
+        "messages": messages,
+        "stage_labels": STAGE_LABELS,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
+
+
+def _delegation_invite_context(
+    teacher: Teacher,
+    *,
+    student_form: DelegationInviteForm | None = None,
+    teacher_form: DelegationInviteForm | None = None,
+) -> dict:
+    invites = (
+        DelegationInvite.query.filter(DelegationInvite.country == teacher.country)
+        .order_by(DelegationInvite.created_at.desc())
+        .all()
     )
+    student_form = student_form or DelegationInviteForm(prefix="student")
+    teacher_form = teacher_form or DelegationInviteForm(prefix="teacher")
+    student_form.submit.label.text = "Send student invite"
+    teacher_form.submit.label.text = "Send teacher invite"
+    auto_email_enabled = _auto_email_enabled()
+
+    def _summary(role: DelegationInviteRole) -> SimpleNamespace:
+        total = 0
+        pending = 0
+        started = 0
+        completed = 0
+        revoked = 0
+        for invite in invites:
+            if invite.role != role:
+                continue
+            total += 1
+            state = _delegation_invite_state(invite)
+            if state.status == "pending":
+                pending += 1
+            elif state.status == "started":
+                started += 1
+            elif state.status == "completed":
+                completed += 1
+            elif state.status == "revoked":
+                revoked += 1
+        return SimpleNamespace(
+            total=total,
+            pending=pending,
+            started=started,
+            completed=completed,
+            revoked=revoked,
+        )
+
+    invite_entries: list[SimpleNamespace] = []
+    for invite in invites:
+        state = _delegation_invite_state(invite)
+        invite_link = url_for(
+            "web.register_student" if invite.role == DelegationInviteRole.STUDENT else "web.register_teacher",
+            invite=invite.token,
+            _external=True,
+        )
+        if invite.email_sent_at:
+            email_status = "Sent"
+            email_detail = invite.email_sent_at.strftime("%Y-%m-%d %H:%M")
+        elif invite.email_error:
+            email_status = "Failed"
+            email_detail = invite.email_error
+        elif auto_email_enabled:
+            email_status = "Not sent"
+            email_detail = None
+        else:
+            email_status = "Auto-email off"
+            email_detail = None
+        invite_entries.append(
+            SimpleNamespace(
+                invite=invite,
+                role_label="Student" if invite.role == DelegationInviteRole.STUDENT else "Teacher",
+                full_name=" ".join(part for part in [invite.first_name, invite.last_name] if part).strip() or "-",
+                state=state,
+                invite_link=invite_link,
+                email_status=email_status,
+                email_detail=email_detail,
+                can_resend=state.active and auto_email_enabled,
+                can_revoke=state.active,
+            )
+        )
+
+    return {
+        "teacher": teacher,
+        "delegation_country": teacher.country,
+        "student_form": student_form,
+        "teacher_form": teacher_form,
+        "invite_entries": invite_entries,
+        "student_summary": _summary(DelegationInviteRole.STUDENT),
+        "teacher_summary": _summary(DelegationInviteRole.TEACHER),
+        "auto_email_enabled": auto_email_enabled,
+    }
+
+
+def _render_delegation_invites(
+    teacher: Teacher,
+    *,
+    student_form: DelegationInviteForm | None = None,
+    teacher_form: DelegationInviteForm | None = None,
+):
+    is_htmx = _is_htmx_request()
+    context = _delegation_invite_context(
+        teacher,
+        student_form=student_form,
+        teacher_form=teacher_form,
+    )
+    context["is_htmx"] = is_htmx
+    template_name = "teacher_portal/partials/delegation_content.html" if is_htmx else "teacher_portal/delegation.html"
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
+
+
+def _delegation_essay_context(teacher: Teacher) -> dict:
+    students = (
+        Student.query
+        .filter_by(country=teacher.country, is_absent=False)
+        .order_by(Student.last_name.asc(), Student.first_name.asc())
+        .all()
+    )
+    event_state = _essay_event_state()
+    entries: list[SimpleNamespace] = []
+    total = len(students)
+    uploaded = 0
+    finalized = 0
+    downloadable = 0
+
+    for student in students:
+        has_upload = bool(student.uploaded_filename)
+        pdf_path = _essay_pdf_path(student)
+        file_missing = has_upload and pdf_path is None
+        if has_upload:
+            uploaded += 1
+        if student.essay_finalized:
+            finalized += 1
+        download_allowed = bool(
+            event_state.event_over
+            and student.essay_finalized
+            and pdf_path is not None
+        )
+        if download_allowed:
+            downloadable += 1
+
+        if file_missing:
+            status_label = "File missing"
+            status_css = "warning"
+        elif student.essay_finalized:
+            status_label = "Finalized"
+            status_css = "success"
+        elif has_upload:
+            status_label = "Uploaded"
+            status_css = ""
+        else:
+            status_label = "No upload"
+            status_css = "warning"
+
+        entries.append(
+            SimpleNamespace(
+                student=student,
+                status_label=status_label,
+                status_css=status_css,
+                download_url=(
+                    url_for("teacher_portal.delegation_download_essay", student_id=student.id)
+                    if download_allowed
+                    else None
+                ),
+            )
+        )
+
+    summary = SimpleNamespace(
+        total=total,
+        uploaded=uploaded,
+        finalized=finalized,
+        pending=total - uploaded,
+        downloadable=downloadable,
+    )
+
+    return {
+        "teacher": teacher,
+        "delegation_country": teacher.country,
+        "entries": entries,
+        "summary": summary,
+        "event_state": event_state,
+    }
+
+
+def _render_delegation_essays(teacher: Teacher):
+    is_htmx = _is_htmx_request()
+    context = _delegation_essay_context(teacher)
+    context["is_htmx"] = is_htmx
+    template_name = (
+        "teacher_portal/partials/delegation_essays_content.html"
+        if is_htmx
+        else "teacher_portal/delegation_essays.html"
+    )
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
+
+
+@teacher_portal_bp.route("/delegation")
+def delegation():
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        flash("Delegation invites are available to delegation leaders only.", "error")
+        return redirect(url_for("teacher_portal.dashboard"))
+    return _render_delegation_invites(teacher)
+
+
+@teacher_portal_bp.route("/delegation/essays")
+def delegation_essays():
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        flash("Delegation essays are available to delegation leaders only.", "error")
+        return redirect(url_for("teacher_portal.dashboard"))
+    return _render_delegation_essays(teacher)
+
+
+@teacher_portal_bp.route("/delegation/essays/<int:student_id>/download")
+def delegation_download_essay(student_id: int):
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        abort(403)
+
+    student = db.session.get(Student, student_id)
+    if not student or student.is_absent or student.country != teacher.country:
+        abort(404)
+
+    event_state = _essay_event_state()
+    if not event_state.event_over:
+        flash("Delegation essay downloads unlock after the event ends.", "error")
+        return redirect(url_for("teacher_portal.delegation_essays"))
+
+    if not student.essay_finalized:
+        flash("This essay has not been finalized yet.", "error")
+        return redirect(url_for("teacher_portal.delegation_essays"))
+
+    pdf_path = _essay_pdf_path(student)
+    if not pdf_path:
+        flash("Essay file is not available.", "error")
+        return redirect(url_for("teacher_portal.delegation_essays"))
+
+    log_activity(
+        "delegation_leader_essay_downloaded",
+        f"Delegation leader {teacher.first_name} {teacher.last_name} downloaded essay",
+        actor=teacher.portal_username or teacher.email,
+        object_type="student",
+        object_id=student.id,
+        details={"student_id": student.id, "country": student.country},
+    )
+    db.session.commit()
+
+    filename = secure_filename(f"essay-{student.id}.pdf")
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
+
+
+@teacher_portal_bp.route("/delegation/invite/student", methods=["POST"])
+def delegation_invite_student():
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        abort(403)
+
+    student_form = DelegationInviteForm(prefix="student")
+    teacher_form = DelegationInviteForm(prefix="teacher")
+    if not student_form.validate_on_submit():
+        flash("Please correct the errors below.", "error")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    email = student_form.email.data.lower().strip()
+    if Student.query.filter(Student.email == email).first():
+        flash("This email address is already registered as a student.", "error")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    existing_invite = (
+        DelegationInvite.query.filter(
+            DelegationInvite.email == email,
+            DelegationInvite.role == DelegationInviteRole.STUDENT,
+            DelegationInvite.country == teacher.country,
+            DelegationInvite.revoked_at.is_(None),
+            DelegationInvite.accepted_at.is_(None),
+        )
+        .order_by(DelegationInvite.created_at.desc())
+        .first()
+    )
+    if existing_invite:
+        flash("An active student invite already exists for this email.", "warning")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=DelegationInviteRole.STUDENT,
+        country=teacher.country,
+        first_name=student_form.first_name.data.strip(),
+        last_name=student_form.last_name.data.strip(),
+        email=email,
+        invited_by_id=teacher.id,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, teacher)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "delegation_invite_created",
+        f"Delegation invite created for student {invite.email}",
+        actor=teacher.portal_username or teacher.email,
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Student invite created and emailed.", "success")
+    elif error == "auto-email-disabled":
+        flash("Student invite created. Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Student invite created, but email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return delegation()
+    return redirect(url_for("teacher_portal.delegation"))
+
+
+@teacher_portal_bp.route("/delegation/invite/teacher", methods=["POST"])
+def delegation_invite_teacher():
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        abort(403)
+
+    student_form = DelegationInviteForm(prefix="student")
+    teacher_form = DelegationInviteForm(prefix="teacher")
+    if not teacher_form.validate_on_submit():
+        flash("Please correct the errors below.", "error")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    email = teacher_form.email.data.lower().strip()
+    if Teacher.query.filter(Teacher.email == email).first():
+        flash("This email address is already registered as a teacher.", "error")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    existing_invite = (
+        DelegationInvite.query.filter(
+            DelegationInvite.email == email,
+            DelegationInvite.role == DelegationInviteRole.TEACHER,
+            DelegationInvite.country == teacher.country,
+            DelegationInvite.revoked_at.is_(None),
+            DelegationInvite.accepted_at.is_(None),
+        )
+        .order_by(DelegationInvite.created_at.desc())
+        .first()
+    )
+    if existing_invite:
+        flash("An active teacher invite already exists for this email.", "warning")
+        return _render_delegation_invites(teacher, student_form=student_form, teacher_form=teacher_form)
+
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=DelegationInviteRole.TEACHER,
+        country=teacher.country,
+        first_name=teacher_form.first_name.data.strip(),
+        last_name=teacher_form.last_name.data.strip(),
+        email=email,
+        invited_by_id=teacher.id,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, teacher)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "delegation_invite_created",
+        f"Delegation invite created for teacher {invite.email}",
+        actor=teacher.portal_username or teacher.email,
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Teacher invite created and emailed.", "success")
+    elif error == "auto-email-disabled":
+        flash("Teacher invite created. Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Teacher invite created, but email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return delegation()
+    return redirect(url_for("teacher_portal.delegation"))
+
+
+@teacher_portal_bp.route("/delegation/invite/<int:invite_id>/revoke", methods=["POST"])
+def delegation_invite_revoke(invite_id: int):
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        abort(403)
+
+    invite = db.session.get(DelegationInvite, invite_id)
+    if not invite or invite.country != teacher.country:
+        abort(404)
+    if invite.revoked_at is None and invite.accepted_at is None:
+        invite.revoked_at = datetime.utcnow()
+        db.session.flush()
+        log_activity(
+            "delegation_invite_revoked",
+            f"Delegation invite revoked for {invite.email}",
+            actor=teacher.portal_username or teacher.email,
+            object_type="delegation_invite",
+            object_id=invite.id,
+            details={"role": invite.role.value, "email": invite.email, "country": invite.country},
+        )
+        db.session.commit()
+        flash("Invite revoked.", "success")
+    else:
+        flash("This invite can no longer be revoked.", "warning")
+
+    if _is_htmx_request():
+        return delegation()
+    return redirect(url_for("teacher_portal.delegation"))
+
+
+@teacher_portal_bp.route("/delegation/invite/<int:invite_id>/resend", methods=["POST"])
+def delegation_invite_resend(invite_id: int):
+    teacher = _teacher_portal_from_session()
+    if not teacher:
+        flash("Please sign in to continue.", "error")
+        return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not teacher.delegation_leader:
+        abort(403)
+
+    invite = db.session.get(DelegationInvite, invite_id)
+    if not invite or invite.country != teacher.country:
+        abort(404)
+    state = _delegation_invite_state(invite)
+    if not state.active:
+        flash("This invite is no longer active.", "warning")
+        if _is_htmx_request():
+            return delegation()
+        return redirect(url_for("teacher_portal.delegation"))
+
+    sent, error = _send_delegation_invite_email(invite, teacher)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "delegation_invite_resent",
+        f"Delegation invite resent for {invite.email}",
+        actor=teacher.portal_username or teacher.email,
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Invite email resent.", "success")
+    elif error == "auto-email-disabled":
+        flash("Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return delegation()
+    return redirect(url_for("teacher_portal.delegation"))
 
 
 @teacher_portal_bp.route("/surveys")
@@ -6052,45 +7610,98 @@ def assignment_detail(assignment_id: int, stage: str):
     if not any(entry.teacher_id == teacher.id for entry in assessors):
         abort(403)
 
-    score_record = next(
-        (score for score in assignment.scores if score.teacher_id == teacher.id and score.stage == stage_enum),
-        None,
-    )
+    is_htmx = _is_htmx_request()
 
-    essay_path = _essay_pdf_path(student)
-    pdf_available = essay_path is not None
-    stage_global_lock = _is_stage_locked(stage_enum)
-    assignment_lock = assignment.stage1_locked if stage_enum == Stage.STAGE_1 else assignment.stage2_locked
-    score_lock = bool(score_record.locked_by_admin) if score_record else False
-    combined_lock = stage_global_lock or assignment_lock or score_lock
-    status_info = _resolve_portal_status(student, score_record, pdf_available, locked=combined_lock)
-    essay_available = status_info.code not in {"awaiting_finalization", "waiting_upload"}
-    can_edit = essay_available and not combined_lock and (not score_record or not score_record.teacher_finalized)
-    download_allowed = essay_available and not (stage_global_lock or assignment_lock)
-    download_url = (
-        url_for("teacher_portal.download_assignment", assignment_id=assignment.id, stage=stage_enum.value)
-        if download_allowed
-        else None
-    )
-    group_label = assignment.group.name or str(assignment.group.id) if assignment.group else "—"
-    essay_id = student.id
-    display_label = f"Essay {essay_id}" if essay_id is not None else f"Assignment {assignment.id}"
+    def _load_state() -> SimpleNamespace:
+        score_record = (
+            EssayScore.query.filter_by(
+                assignment_id=assignment.id,
+                teacher_id=teacher.id,
+                stage=stage_enum,
+            )
+            .order_by(EssayScore.id.desc())
+            .first()
+        )
+        essay_path = _essay_pdf_path(student)
+        pdf_available = essay_path is not None
+        stage_global_lock = _is_stage_locked(stage_enum)
+        assignment_lock = assignment.stage1_locked if stage_enum == Stage.STAGE_1 else assignment.stage2_locked
+        score_lock = bool(score_record.locked_by_admin) if score_record else False
+        combined_lock = stage_global_lock or assignment_lock or score_lock
+        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=combined_lock)
+        essay_available = status_info.code not in {"awaiting_finalization", "waiting_upload"}
+        can_edit = essay_available and not combined_lock and (not score_record or not score_record.teacher_finalized)
+        download_allowed = essay_available and not (stage_global_lock or assignment_lock)
+        download_url = (
+            url_for("teacher_portal.download_assignment", assignment_id=assignment.id, stage=stage_enum.value)
+            if download_allowed
+            else None
+        )
+        group_label = assignment.group.name or str(assignment.group.id) if assignment.group else "—"
+        essay_id = student.id
+        display_label = f"Essay {essay_id}" if essay_id is not None else f"Assignment {assignment.id}"
+        return SimpleNamespace(
+            score_record=score_record,
+            status_info=status_info,
+            essay_available=essay_available,
+            can_edit=can_edit,
+            download_url=download_url,
+            group_label=group_label,
+            display_label=display_label,
+            pdf_available=pdf_available,
+            grading_locked=combined_lock,
+            assignment_locked=assignment_lock,
+            global_lock=stage_global_lock,
+            score_lock=score_lock,
+        )
 
+    def _render_response(form: TeacherScoreForm, state: SimpleNamespace):
+        template_name = (
+            "teacher_portal/partials/assignment_detail_content.html"
+            if is_htmx
+            else "teacher_portal/assignment_detail.html"
+        )
+        context = {
+            "form": form,
+            "stage": stage_enum,
+            "stage_label": STAGE_LABELS[stage_enum],
+            "score_record": state.score_record,
+            "essay_available": state.essay_available,
+            "can_edit": state.can_edit,
+            "download_url": state.download_url,
+            "group_label": state.group_label,
+            "display_label": state.display_label,
+            "status_info": state.status_info,
+            "student_finalized": student.essay_finalized,
+            "pdf_available": state.pdf_available,
+            "grading_locked": state.grading_locked,
+            "assignment_locked": state.assignment_locked,
+            "global_lock": state.global_lock,
+            "score_lock": state.score_lock,
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
+
+    state = _load_state()
     form = TeacherScoreForm()
     if request.method == "GET":
-        if score_record and score_record.score is not None:
-            form.score.data = score_record.score
-        if score_record and score_record.comments:
-            form.comments.data = score_record.comments
+        if state.score_record and state.score_record.score is not None:
+            form.score.data = state.score_record.score
+        if state.score_record and state.score_record.comments:
+            form.comments.data = state.score_record.comments
 
     if form.validate_on_submit():
-        if not can_edit:
-            if status_info.code == "awaiting_finalization":
+        if not state.can_edit:
+            if state.status_info.code == "awaiting_finalization":
                 flash("This essay is waiting for the student to finalize their upload before grading can begin.", "warning")
-            elif status_info.code == "waiting_upload":
+            elif state.status_info.code == "waiting_upload":
                 flash("The essay file is not yet available for grading.", "warning")
             else:
                 flash("Scores for this essay have been finalized. Contact the admin team for changes.", "info")
+            if is_htmx:
+                return _render_response(form, state)
             return redirect(url_for("teacher_portal.assignment_detail", assignment_id=assignment.id, stage=stage_enum.value))
 
         finalize_requested = bool(form.finalize.data)
@@ -6103,45 +7714,27 @@ def assignment_detail(assignment_id: int, stage: str):
             form.score.errors.append("Score must be between 0 and 10.")
 
             if form.errors:
-                return render_template(
-                    "teacher_portal/assignment_detail.html",
-                    form=form,
-                    stage=stage_enum,
-                    stage_label=STAGE_LABELS[stage_enum],
-                    score_record=score_record,
-                    essay_available=essay_available,
-                    can_edit=can_edit,
-                    download_url=download_url,
-                    group_label=group_label,
-                    display_label=display_label,
-                    status_info=status_info,
-                    student_finalized=student.essay_finalized,
-                    pdf_available=pdf_available,
-                    grading_locked=combined_lock,
-                    assignment_locked=assignment_lock,
-                    global_lock=stage_global_lock,
-                    score_lock=score_lock,
-                )
+                return _render_response(form, state)
 
-        if score_record is None:
-            score_record = EssayScore(
+        if state.score_record is None:
+            state.score_record = EssayScore(
                 student_id=student.id,
                 teacher_id=teacher.id,
                 assignment_id=assignment.id,
                 stage=stage_enum,
             )
-            db.session.add(score_record)
+            db.session.add(state.score_record)
 
-        score_record.score = float(numeric_score) if numeric_score is not None else None
-        score_record.comments = (form.comments.data or "").strip() or None
-        score_record.submitted_at = datetime.utcnow()
-        score_record.admin_entered = False
-        score_record.admin_override = False
-        score_record.admin_updated_at = None
+        state.score_record.score = float(numeric_score) if numeric_score is not None else None
+        state.score_record.comments = (form.comments.data or "").strip() or None
+        state.score_record.submitted_at = datetime.utcnow()
+        state.score_record.admin_entered = False
+        state.score_record.admin_override = False
+        state.score_record.admin_updated_at = None
 
         if finalize_requested:
-            score_record.teacher_finalized = True
-            score_record.teacher_finalized_at = datetime.utcnow()
+            state.score_record.teacher_finalized = True
+            state.score_record.teacher_finalized_at = datetime.utcnow()
             flash("Score finalized. Thank you!", "success")
             log_activity(
                 "teacher_portal_score_finalized",
@@ -6152,12 +7745,12 @@ def assignment_detail(assignment_id: int, stage: str):
                 details={
                     "stage": stage_enum.value,
                     "student_id": student.id,
-                    "score": score_record.score,
+                    "score": state.score_record.score,
                 },
             )
         else:
-            score_record.teacher_finalized = False
-            score_record.teacher_finalized_at = None
+            state.score_record.teacher_finalized = False
+            state.score_record.teacher_finalized_at = None
             flash("Draft saved.", "success")
             log_activity(
                 "teacher_portal_score_saved",
@@ -6168,32 +7761,22 @@ def assignment_detail(assignment_id: int, stage: str):
                 details={
                     "stage": stage_enum.value,
                     "student_id": student.id,
-                    "score": score_record.score,
+                    "score": state.score_record.score,
                 },
             )
 
         db.session.commit()
+        if is_htmx:
+            updated_state = _load_state()
+            fresh_form = TeacherScoreForm()
+            if updated_state.score_record and updated_state.score_record.score is not None:
+                fresh_form.score.data = updated_state.score_record.score
+            if updated_state.score_record and updated_state.score_record.comments:
+                fresh_form.comments.data = updated_state.score_record.comments
+            return _render_response(fresh_form, updated_state)
         return redirect(url_for("teacher_portal.assignment_detail", assignment_id=assignment.id, stage=stage_enum.value))
 
-    return render_template(
-        "teacher_portal/assignment_detail.html",
-        form=form,
-        stage=stage_enum,
-        stage_label=STAGE_LABELS[stage_enum],
-        score_record=score_record,
-        essay_available=essay_available,
-        can_edit=can_edit,
-        download_url=download_url,
-        group_label=group_label,
-        display_label=display_label,
-        status_info=status_info,
-        student_finalized=student.essay_finalized,
-        pdf_available=pdf_available,
-        grading_locked=combined_lock,
-        assignment_locked=assignment_lock,
-        global_lock=stage_global_lock,
-        score_lock=score_lock,
-    )
+    return _render_response(form, state)
 
 
 @teacher_portal_bp.route("/assignments/<int:assignment_id>/<stage>/download")
@@ -6230,6 +7813,12 @@ def download_assignment(assignment_id: int, stage: str):
     assessors = _stage_assessors(assignment, stage_enum, include_group=stage_enum == Stage.STAGE_1)
     if not any(entry.teacher_id == teacher.id for entry in assessors):
         abort(403)
+
+    stage_global_lock = _is_stage_locked(stage_enum)
+    assignment_lock = assignment.stage1_locked if stage_enum == Stage.STAGE_1 else assignment.stage2_locked
+    if stage_global_lock or assignment_lock:
+        flash("Essay downloads are currently locked by the admin team.", "error")
+        return redirect(url_for("teacher_portal.assignment_detail", assignment_id=assignment.id, stage=stage_enum.value))
 
     if not student.essay_finalized:
         flash("This essay is awaiting student finalization and cannot be downloaded yet.", "error")
@@ -6275,6 +7864,556 @@ def admin_teachers():
     )
 
 
+def _delegation_leader_choices() -> list[tuple[int, str]]:
+    leaders = (
+        Teacher.query.filter(Teacher.delegation_leader.is_(True))
+        .order_by(Teacher.country.asc(), Teacher.last_name.asc(), Teacher.first_name.asc())
+        .all()
+    )
+    choices: list[tuple[int, str]] = []
+    for leader in leaders:
+        full_name = " ".join(part for part in [leader.first_name, leader.last_name] if part).strip() or leader.email
+        label = f"{leader.country} — {full_name} ({leader.email})"
+        if leader.is_absent:
+            label = f"{label} [absent]"
+        choices.append((leader.id, label))
+    return choices
+
+
+def _active_invite_for_email(email: str, role: DelegationInviteRole) -> DelegationInvite | None:
+    return (
+        DelegationInvite.query.filter(
+            DelegationInvite.email == email,
+            DelegationInvite.role == role,
+            DelegationInvite.revoked_at.is_(None),
+            DelegationInvite.accepted_at.is_(None),
+        )
+        .order_by(DelegationInvite.created_at.desc())
+        .first()
+    )
+
+
+def _admin_invitations_context(
+    *,
+    leader_form: DelegationLeaderInviteForm | None = None,
+    delegation_form: AdminDelegationInvitationForm | None = None,
+    normal_form: AdminInvitationForm | None = None,
+) -> dict:
+    auto_email_enabled = _auto_email_enabled()
+    leader_form = leader_form or DelegationLeaderInviteForm(prefix="leader")
+    delegation_form = delegation_form or AdminDelegationInvitationForm(prefix="delegation")
+    normal_form = normal_form or AdminInvitationForm(prefix="normal")
+
+    leader_form.submit.label.text = "Send delegation leader invite"
+    delegation_form.submit.label.text = "Send delegation invite"
+    normal_form.submit.label.text = "Send invite"
+
+    delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
+    delegation_leaders_available = bool(delegation_form.delegation_leader_id.choices)
+
+    invites = (
+        DelegationInvite.query.options(
+            joinedload(DelegationInvite.invited_by),
+        )
+        .order_by(DelegationInvite.created_at.desc())
+        .all()
+    )
+
+    delegation_summary = SimpleNamespace(total=0, pending=0, started=0, completed=0, revoked=0)
+    normal_summary = SimpleNamespace(total=0, pending=0, started=0, completed=0, revoked=0)
+    delegation_entries: list[SimpleNamespace] = []
+    normal_entries: list[SimpleNamespace] = []
+
+    def bump_summary(summary: SimpleNamespace, state: SimpleNamespace) -> None:
+        summary.total += 1
+        if state.status == "pending":
+            summary.pending += 1
+        elif state.status == "started":
+            summary.started += 1
+        elif state.status == "completed":
+            summary.completed += 1
+        elif state.status == "revoked":
+            summary.revoked += 1
+
+    for invite in invites:
+        state = _delegation_invite_state(invite)
+        is_delegation = bool(invite.delegation_leader or invite.invited_by_id)
+        category_label = "Delegation" if is_delegation else "Normal"
+        if invite.role == DelegationInviteRole.TEACHER and invite.delegation_leader:
+            role_label = "Delegation leader"
+        else:
+            role_label = "Teacher" if invite.role == DelegationInviteRole.TEACHER else "Student"
+
+        invite_link = url_for(
+            "web.register_student" if invite.role == DelegationInviteRole.STUDENT else "web.register_teacher",
+            invite=invite.token,
+            _external=True,
+        )
+
+        if invite.email_sent_at:
+            email_status = "Sent"
+            email_detail = invite.email_sent_at.strftime("%Y-%m-%d %H:%M")
+        elif invite.email_error:
+            email_status = "Failed"
+            email_detail = invite.email_error
+        elif auto_email_enabled:
+            email_status = "Not sent"
+            email_detail = None
+        else:
+            email_status = "Auto-email off"
+            email_detail = None
+
+        sender_name = "Organizing team"
+        if invite.invited_by:
+            sender_name = (
+                f"{invite.invited_by.first_name} {invite.invited_by.last_name}".strip()
+                if invite.invited_by.first_name or invite.invited_by.last_name
+                else invite.invited_by.email
+            )
+
+        record_url = None
+        record_label = None
+        if invite.teacher_id:
+            record_url = url_for("web.edit_teacher", teacher_id=invite.teacher_id)
+            record_label = f"Teacher #{invite.teacher_id}"
+        elif invite.student_id:
+            record_url = url_for("web.edit_student", student_id=invite.student_id)
+            record_label = f"Student #{invite.student_id}"
+
+        entry = SimpleNamespace(
+            invite=invite,
+            category_label=category_label,
+            role_label=role_label,
+            full_name=" ".join(part for part in [invite.first_name, invite.last_name] if part).strip() or "-",
+            state=state,
+            invite_link=invite_link,
+            email_status=email_status,
+            email_detail=email_detail,
+            sender_name=sender_name,
+            record_url=record_url,
+            record_label=record_label,
+            can_resend=state.active and auto_email_enabled,
+            can_revoke=state.active,
+        )
+
+        if is_delegation:
+            delegation_entries.append(entry)
+            bump_summary(delegation_summary, state)
+        else:
+            normal_entries.append(entry)
+            bump_summary(normal_summary, state)
+
+    return {
+        "delegation_leader_form": leader_form,
+        "delegation_form": delegation_form,
+        "normal_form": normal_form,
+        "delegation_entries": delegation_entries,
+        "normal_entries": normal_entries,
+        "delegation_summary": delegation_summary,
+        "normal_summary": normal_summary,
+        "auto_email_enabled": auto_email_enabled,
+        "delegation_leaders_available": delegation_leaders_available,
+    }
+
+
+def _render_admin_invitations(
+    *,
+    leader_form: DelegationLeaderInviteForm | None = None,
+    delegation_form: AdminDelegationInvitationForm | None = None,
+    normal_form: AdminInvitationForm | None = None,
+):
+    is_htmx = _is_htmx_request()
+    context = _admin_invitations_context(
+        leader_form=leader_form,
+        delegation_form=delegation_form,
+        normal_form=normal_form,
+    )
+    context["is_htmx"] = is_htmx
+    template_name = "admin/partials/invitations_content.html" if is_htmx else "admin/invitations.html"
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
+
+
+@web_bp.route("/admin/invitations")
+def admin_invitations():
+    if not _current_admin():
+        abort(403)
+    return _render_admin_invitations()
+
+@web_bp.route("/admin/invitations/delegation-leader", methods=["POST"])
+def admin_invitation_create_delegation_leader():
+    if not _current_admin():
+        abort(403)
+
+    leader_form = DelegationLeaderInviteForm(prefix="leader")
+    delegation_form = AdminDelegationInvitationForm(prefix="delegation")
+    normal_form = AdminInvitationForm(prefix="normal")
+    delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
+
+    if not leader_form.validate_on_submit():
+        flash("Please correct the errors below.", "error")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    email = leader_form.email.data.lower().strip()
+    country = leader_form.country.data.strip()
+
+    existing_teacher = Teacher.query.filter(Teacher.email == email).first()
+    if existing_teacher:
+        flash(
+            "This email address is already registered as a teacher. Use Teachers → Edit to mark them as a delegation leader.",
+            "error",
+        )
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    existing_invite = _active_invite_for_email(email, DelegationInviteRole.TEACHER)
+    if existing_invite:
+        flash("An active teacher invite already exists for this email address.", "warning")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=DelegationInviteRole.TEACHER,
+        delegation_leader=True,
+        country=country,
+        first_name=leader_form.first_name.data.strip(),
+        last_name=leader_form.last_name.data.strip(),
+        email=email,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, None)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "invitation_created",
+        f"Invitation created for delegation leader {invite.email}",
+        actor=_current_admin(),
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "category": "delegation",
+            "delegation_leader": True,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Delegation leader invite created and emailed.", "success")
+    elif error == "auto-email-disabled":
+        flash("Delegation leader invite created. Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Delegation leader invite created, but email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
+@web_bp.route("/admin/invitations/delegation", methods=["POST"])
+def admin_invitation_create_delegation():
+    if not _current_admin():
+        abort(403)
+
+    leader_form = DelegationLeaderInviteForm(prefix="leader")
+    delegation_form = AdminDelegationInvitationForm(prefix="delegation")
+    normal_form = AdminInvitationForm(prefix="normal")
+    delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
+
+    if not delegation_form.delegation_leader_id.choices:
+        flash("No delegation leaders found. Create a delegation leader invite first.", "error")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    if not delegation_form.validate_on_submit():
+        flash("Please correct the errors below.", "error")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    inviter = db.session.get(Teacher, int(delegation_form.delegation_leader_id.data))
+    if not inviter or not inviter.delegation_leader:
+        flash("Selected delegation leader is invalid.", "error")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    email = delegation_form.email.data.lower().strip()
+    role = (
+        DelegationInviteRole.STUDENT
+        if delegation_form.role.data == DelegationInviteRole.STUDENT.value
+        else DelegationInviteRole.TEACHER
+    )
+
+    if role == DelegationInviteRole.STUDENT and Student.query.filter(Student.email == email).first():
+        flash("This email address is already registered as a student.", "error")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+    if role == DelegationInviteRole.TEACHER and Teacher.query.filter(Teacher.email == email).first():
+        flash("This email address is already registered as a teacher.", "error")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+
+    existing_invite = _active_invite_for_email(email, role)
+    if existing_invite:
+        flash("An active invite already exists for this email address.", "warning")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=role,
+        country=inviter.country,
+        first_name=delegation_form.first_name.data.strip(),
+        last_name=delegation_form.last_name.data.strip(),
+        email=email,
+        invited_by_id=inviter.id,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, inviter)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "invitation_created",
+        f"Delegation invitation created for {invite.email}",
+        actor=_current_admin(),
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "category": "delegation",
+            "invited_by_id": inviter.id,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Delegation invite created and emailed.", "success")
+    elif error == "auto-email-disabled":
+        flash("Delegation invite created. Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Delegation invite created, but email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
+@web_bp.route("/admin/invitations/normal", methods=["POST"])
+def admin_invitation_create_normal():
+    if not _current_admin():
+        abort(403)
+
+    leader_form = DelegationLeaderInviteForm(prefix="leader")
+    delegation_form = AdminDelegationInvitationForm(prefix="delegation")
+    normal_form = AdminInvitationForm(prefix="normal")
+    delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
+
+    if not normal_form.validate_on_submit():
+        flash("Please correct the errors below.", "error")
+        return _render_admin_invitations(
+            leader_form=leader_form,
+            delegation_form=delegation_form,
+            normal_form=normal_form,
+        )
+
+    email = normal_form.email.data.lower().strip()
+    country = normal_form.country.data.strip()
+    role = (
+        DelegationInviteRole.STUDENT
+        if normal_form.role.data == DelegationInviteRole.STUDENT.value
+        else DelegationInviteRole.TEACHER
+    )
+
+    if role == DelegationInviteRole.STUDENT and Student.query.filter(Student.email == email).first():
+        flash("This email address is already registered as a student.", "error")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+    if role == DelegationInviteRole.TEACHER and Teacher.query.filter(Teacher.email == email).first():
+        flash("This email address is already registered as a teacher.", "error")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+
+    existing_invite = _active_invite_for_email(email, role)
+    if existing_invite:
+        flash("An active invite already exists for this email address.", "warning")
+        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
+
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=role,
+        country=country,
+        first_name=normal_form.first_name.data.strip(),
+        last_name=normal_form.last_name.data.strip(),
+        email=email,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, None)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "invitation_created",
+        f"Normal invitation created for {invite.email}",
+        actor=_current_admin(),
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "category": "normal",
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Invite created and emailed.", "success")
+    elif error == "auto-email-disabled":
+        flash("Invite created. Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Invite created, but email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
+@web_bp.route("/admin/invitations/invite/<int:invite_id>/revoke", methods=["POST"])
+def admin_invitation_revoke(invite_id: int):
+    if not _current_admin():
+        abort(403)
+
+    invite = db.session.get(DelegationInvite, invite_id)
+    if not invite:
+        abort(404)
+
+    if invite.revoked_at is None and invite.accepted_at is None:
+        invite.revoked_at = datetime.utcnow()
+        db.session.flush()
+        log_activity(
+            "invitation_revoked",
+            f"Invitation revoked for {invite.email}",
+            actor=_current_admin(),
+            object_type="delegation_invite",
+            object_id=invite.id,
+            details={
+                "role": invite.role.value,
+                "email": invite.email,
+                "country": invite.country,
+                "delegation_leader": bool(invite.delegation_leader),
+                "invited_by_id": invite.invited_by_id,
+            },
+        )
+        db.session.commit()
+        flash("Invite revoked.", "success")
+    else:
+        flash("This invite can no longer be revoked.", "warning")
+
+    if _is_htmx_request():
+        return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
+@web_bp.route("/admin/invitations/invite/<int:invite_id>/resend", methods=["POST"])
+def admin_invitation_resend(invite_id: int):
+    if not _current_admin():
+        abort(403)
+
+    invite = db.session.get(DelegationInvite, invite_id)
+    if not invite:
+        abort(404)
+
+    state = _delegation_invite_state(invite)
+    if not state.active:
+        flash("This invite is no longer active.", "warning")
+        if _is_htmx_request():
+            return _render_admin_invitations()
+        return redirect(url_for("web.admin_invitations"))
+
+    inviter = invite.invited_by if invite.invited_by_id else None
+    sent, error = _send_delegation_invite_email(invite, inviter)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    log_activity(
+        "invitation_resent",
+        f"Invitation resent for {invite.email}",
+        actor=_current_admin(),
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details={
+            "role": invite.role.value,
+            "email": invite.email,
+            "country": invite.country,
+            "delegation_leader": bool(invite.delegation_leader),
+            "invited_by_id": invite.invited_by_id,
+            "email_sent": sent,
+            "email_error": error,
+        },
+    )
+    db.session.commit()
+
+    if sent:
+        flash("Invite email resent.", "success")
+    elif error == "auto-email-disabled":
+        flash("Automatic emails are disabled; share the link manually.", "warning")
+    else:
+        flash("Email delivery failed. Share the link manually.", "warning")
+
+    if _is_htmx_request():
+        return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
 @web_bp.route("/admin/students/<int:student_id>/edit", methods=["GET", "POST"])
 def edit_student(student_id: int):
     student = db.session.get(Student, student_id)
@@ -6282,7 +8421,13 @@ def edit_student(student_id: int):
         abort(404)
 
     form = StudentRegistrationForm(obj=student)
+    form.accepted_ethics.validators = []
+    form.gdpr_acknowledged.validators = []
+    form.accommodation_room_sharing.validators = []
     form.submit.label.text = "Save changes"
+    if not form.is_submitted():
+        form.gdpr_acknowledged.data = bool(student.gdpr_acknowledged)
+        form.photo_consent.data = "yes" if student.photo_consent else "no"
 
     if form.validate_on_submit():
         student.first_name = form.first_name.data.strip()
@@ -6290,12 +8435,29 @@ def edit_student(student_id: int):
         student.email = form.email.data.lower().strip()
         student.country = form.country.data.strip()
         student.school = form.school.data.strip()
-        student.gender = form.gender.data
+        student.sex_document = form.sex_document.data
+        student.accommodation_room_sharing = form.accommodation_room_sharing.data
         student.date_of_birth = form.date_of_birth.data
         student.essay_language = form.essay_language.data
         student.keyboard_preference = form.keyboard_preference.data
         student.meal_preference = form.meal_preference.data
         student.special_needs = (form.special_needs.data.strip() or None) if form.special_needs.data else None
+        if form.gdpr_acknowledged.data:
+            student.gdpr_acknowledged = True
+            student.gdpr_acknowledged_at = student.gdpr_acknowledged_at or datetime.utcnow()
+        else:
+            student.gdpr_acknowledged = False
+            student.gdpr_acknowledged_at = None
+        new_photo_consent = form.photo_consent.data == "yes"
+        if student.photo_consent != new_photo_consent:
+            student.photo_consent = new_photo_consent
+            student.photo_consent_at = datetime.utcnow()
+        if form.accepted_ethics.data:
+            student.accepted_ethics = True
+            student.accepted_ethics_at = student.accepted_ethics_at or datetime.utcnow()
+        else:
+            student.accepted_ethics = False
+            student.accepted_ethics_at = None
         student.is_absent = bool(form.is_absent.data)
         if not student.upload_username or not student.upload_password_hash:
             _ensure_student_credentials(student)
@@ -6326,6 +8488,10 @@ def edit_student(student_id: int):
         form=form,
         form_title="Edit student",
         show_absence_toggle=True,
+        ethics_consent_html=_ethics_consent_html(),
+        gdpr_notice_html=_gdpr_notice_html(),
+        photo_consent_html=_photo_consent_html(),
+        accommodation_info_html=_accommodation_info_html(),
     )
 
 
@@ -6373,10 +8539,16 @@ def edit_teacher(teacher_id: int):
         abort(404)
 
     form = TeacherRegistrationForm(obj=teacher)
+    form.accepted_ethics.validators = []
+    form.gdpr_acknowledged.validators = []
+    form.declared_assessor_competence.validators = []
+    form.accommodation_room_sharing.validators = []
     if not form.is_submitted():
         languages = [lang.strip() for lang in teacher.languages.split(",")] if teacher.languages else ["English"]
         form.languages.data = [lang for lang in languages if lang]
         form.prior_ipo_assessor_level.data = teacher.prior_ipo_assessor_level or 0
+        form.gdpr_acknowledged.data = bool(teacher.gdpr_acknowledged)
+        form.photo_consent.data = "yes" if teacher.photo_consent else "no"
     form.submit.label.text = "Save changes"
 
     if form.validate_on_submit():
@@ -6385,7 +8557,8 @@ def edit_teacher(teacher_id: int):
         teacher.email = form.email.data.lower().strip()
         teacher.country = form.country.data.strip()
         teacher.school = form.school.data.strip()
-        teacher.gender = form.gender.data
+        teacher.sex_document = form.sex_document.data
+        teacher.accommodation_room_sharing = form.accommodation_room_sharing.data
         teacher.languages = ", ".join(form.languages.data)
 
         current_languages = {entry.language for entry in teacher.language_entries}
@@ -6404,6 +8577,28 @@ def edit_teacher(teacher_id: int):
         teacher.delegation_leader = bool(form.delegation_leader.data)
         teacher.prior_ipo_assessor_level = form.prior_ipo_assessor_level.data
         teacher.prior_ipo_assessor = bool(form.prior_ipo_assessor_level.data)
+        if form.gdpr_acknowledged.data:
+            teacher.gdpr_acknowledged = True
+            teacher.gdpr_acknowledged_at = teacher.gdpr_acknowledged_at or datetime.utcnow()
+        else:
+            teacher.gdpr_acknowledged = False
+            teacher.gdpr_acknowledged_at = None
+        new_photo_consent = form.photo_consent.data == "yes"
+        if teacher.photo_consent != new_photo_consent:
+            teacher.photo_consent = new_photo_consent
+            teacher.photo_consent_at = datetime.utcnow()
+        if form.declared_assessor_competence.data:
+            teacher.declared_assessor_competence = True
+            teacher.declared_assessor_competence_at = teacher.declared_assessor_competence_at or datetime.utcnow()
+        else:
+            teacher.declared_assessor_competence = False
+            teacher.declared_assessor_competence_at = None
+        if form.accepted_ethics.data:
+            teacher.accepted_ethics = True
+            teacher.accepted_ethics_at = teacher.accepted_ethics_at or datetime.utcnow()
+        else:
+            teacher.accepted_ethics = False
+            teacher.accepted_ethics_at = None
         teacher.is_absent = bool(form.is_absent.data)
 
         try:
@@ -6431,6 +8626,11 @@ def edit_teacher(teacher_id: int):
         form=form,
         form_title="Edit teacher",
         show_absence_toggle=True,
+        ethics_consent_html=_ethics_consent_html(),
+        gdpr_notice_html=_gdpr_notice_html(),
+        photo_consent_html=_photo_consent_html(),
+        assessor_competence_html=_assessor_competence_html(),
+        accommodation_info_html=_accommodation_info_html(),
     )
 
 
@@ -6485,7 +8685,17 @@ def admin_uploads():
     for student in students:
         assignment = _get_stage_one_assignment(student)
         status_map[student.id] = _compute_stage_one_status(assignment)
-    return render_template("admin/uploads.html", students=students, status_map=status_map, active_batch=active_batch)
+    is_htmx = _is_htmx_request()
+    template_name = "admin/partials/uploads_content.html" if is_htmx else "admin/uploads.html"
+    context = {
+        "students": students,
+        "status_map": status_map,
+        "active_batch": active_batch,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/uploads/<int:student_id>/download")
@@ -6582,51 +8792,91 @@ def admin_score_student(student_id: int):
         flash("No published Stage 1 assignment found for this student.", "error")
         return redirect(url_for("web.admin_uploads"))
 
-    assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
-    scores_map = {
-        score.teacher_id: score
-        for score in assignment.scores
-        if score.stage == Stage.STAGE_1
-    }
+    is_htmx = _is_htmx_request()
 
-    pdf_available = _essay_pdf_path(student) is not None
-    stage1_global_lock = _is_stage_locked(Stage.STAGE_1)
-    assignment_stage1_locked = assignment.stage1_locked or stage1_global_lock
+    def _load_scoring_state() -> SimpleNamespace:
+        assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
+        scores = EssayScore.query.filter_by(
+            assignment_id=assignment.id,
+            stage=Stage.STAGE_1,
+        ).all()
+        scores_map = {score.teacher_id: score for score in scores}
+        pdf_available = _essay_pdf_path(student) is not None
+        stage1_global_lock = _is_stage_locked(Stage.STAGE_1)
+        assignment_stage1_locked = assignment.stage1_locked or stage1_global_lock
 
-    reader_entries = []
-    for assessor in assessors:
-        teacher = assessor.teacher
-        score_record = scores_map.get(teacher.id)
-        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage1_locked)
-        reader_entries.append(
-            SimpleNamespace(
-                teacher=teacher,
-                teacher_id=teacher.id,
-                source=assessor.source,
-                is_extra=assessor.is_extra,
-                score=score_record.score if score_record else None,
-                updated_at=score_record.updated_at if score_record else None,
-                finalized=score_record.teacher_finalized if score_record else False,
-                finalized_at=score_record.teacher_finalized_at if score_record else None,
-                submitted_at=score_record.submitted_at if score_record else None,
-                portal_status_code=status_info.code,
-                portal_status_label=status_info.label,
-                portal_status_css=status_info.css,
-                portal_status_timestamp=status_info.timestamp,
+        reader_entries = []
+        for assessor in assessors:
+            teacher = assessor.teacher
+            score_record = scores_map.get(teacher.id)
+            status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage1_locked)
+            reader_entries.append(
+                SimpleNamespace(
+                    teacher=teacher,
+                    teacher_id=teacher.id,
+                    source=assessor.source,
+                    is_extra=assessor.is_extra,
+                    score=score_record.score if score_record else None,
+                    updated_at=score_record.updated_at if score_record else None,
+                    finalized=score_record.teacher_finalized if score_record else False,
+                    finalized_at=score_record.teacher_finalized_at if score_record else None,
+                    submitted_at=score_record.submitted_at if score_record else None,
+                    portal_status_code=status_info.code,
+                    portal_status_label=status_info.label,
+                    portal_status_css=status_info.css,
+                    portal_status_timestamp=status_info.timestamp,
+                )
             )
+
+        assigned_teacher_ids = {entry.teacher_id for entry in reader_entries}
+        stage2_teacher_ids = {
+            assessor.teacher.id
+            for assessor in _stage_assessors(assignment, Stage.STAGE_2, include_group=False)
+        }
+        exclude_ids = assigned_teacher_ids.union(stage2_teacher_ids)
+        available_query = Teacher.query.filter_by(is_absent=False)
+        if exclude_ids:
+            available_query = available_query.filter(~Teacher.id.in_(exclude_ids))
+        available_teachers = [
+            teacher
+            for teacher in available_query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
+            if _teacher_can_grade(student, teacher, student.essay_language)
+        ]
+
+        db.session.expire(assignment, ["scores"])
+        status = _compute_stage_one_status(assignment)
+        return SimpleNamespace(
+            scores_map=scores_map,
+            reader_entries=reader_entries,
+            assigned_teacher_ids=assigned_teacher_ids,
+            available_teachers=available_teachers,
+            stage1_global_lock=stage1_global_lock,
+            status=status,
         )
 
-    assigned_teacher_ids = {entry.teacher_id for entry in reader_entries}
-    stage2_teacher_ids = {assessor.teacher.id for assessor in _stage_assessors(assignment, Stage.STAGE_2, include_group=False)}
-    exclude_ids = assigned_teacher_ids.union(stage2_teacher_ids)
-    available_query = Teacher.query.filter_by(is_absent=False)
-    if exclude_ids:
-        available_query = available_query.filter(~Teacher.id.in_(exclude_ids))
-    available_teachers = [
-        teacher
-        for teacher in available_query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
-        if _teacher_can_grade(student, teacher, student.essay_language)
-    ]
+    def _render_score_response():
+        state = _load_scoring_state()
+        template_name = "admin/partials/scoring_content.html" if is_htmx else "admin/scoring.html"
+        context = {
+            "student": student,
+            "assignment": assignment,
+            "reader_entries": state.reader_entries,
+            "status": state.status,
+            "available_teachers": state.available_teachers,
+            "stage1_global_lock": state.stage1_global_lock,
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            context.update(_quick_message_context())
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
+
+    state = _load_scoring_state()
+
+    def _post_response():
+        if is_htmx:
+            return _render_score_response()
+        return redirect(url_for("web.admin_score_student", student_id=student.id))
 
     remove_id = request.form.get("remove_reader")
     unlock_id = request.form.get("unlock_reader")
@@ -6635,9 +8885,10 @@ def admin_score_student(student_id: int):
     if request.method == "POST" and action == "toggle_stage1_lock":
         assignment.stage1_locked = not assignment.stage1_locked
         now = datetime.utcnow()
-        for score in assignment.scores:
-            if score.stage != Stage.STAGE_1:
-                continue
+        for score in EssayScore.query.filter_by(
+            assignment_id=assignment.id,
+            stage=Stage.STAGE_1,
+        ).all():
             score.locked_by_admin = assignment.stage1_locked
             if assignment.stage1_locked:
                 score.admin_updated_at = now
@@ -6653,18 +8904,18 @@ def admin_score_student(student_id: int):
             "Stage 1 grading locked." if assignment.stage1_locked else "Stage 1 grading unlocked.",
             "success",
         )
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        return _post_response()
 
     if request.method == "POST" and unlock_id:
         try:
             teacher_id = int(unlock_id)
         except ValueError:
             flash("Invalid teacher selection.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
-        score_record = scores_map.get(teacher_id)
+            return _post_response()
+        score_record = state.scores_map.get(teacher_id)
         if not score_record or not score_record.teacher_finalized:
             flash("Score is not finalized for this teacher.", "warning")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         score_record.teacher_finalized = False
         score_record.teacher_finalized_at = None
         score_record.admin_updated_at = datetime.utcnow()
@@ -6677,22 +8928,22 @@ def admin_score_student(student_id: int):
         )
         db.session.commit()
         flash("Teacher score unlocked for editing.", "success")
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        return _post_response()
 
     if request.method == "POST" and remove_id:
         try:
             teacher_id = int(remove_id)
         except ValueError:
             flash("Invalid teacher selection.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         extra = EssayAssignmentExtraReader.query.filter_by(assignment_id=assignment.id, teacher_id=teacher_id, stage=Stage.STAGE_1).first()
         if not extra:
             flash("Extra reader not found for this essay.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
-        score_record = scores_map.get(teacher_id)
+            return _post_response()
+        score_record = state.scores_map.get(teacher_id)
         if score_record and score_record.stage == Stage.STAGE_1:
             db.session.delete(score_record)
-            scores_map.pop(teacher_id, None)
+            state.scores_map.pop(teacher_id, None)
         db.session.delete(extra)
         log_activity(
             "stage1_extra_reader_removed",
@@ -6703,28 +8954,28 @@ def admin_score_student(student_id: int):
         )
         db.session.commit()
         flash("Extra reader removed.", "success")
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        return _post_response()
 
     if request.method == "POST" and action == "add_reader":
         teacher_id = request.form.get("teacher_id")
         if not teacher_id:
             flash("Select a teacher to add.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         try:
             teacher_id_int = int(teacher_id)
         except ValueError:
             flash("Invalid teacher selection.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         teacher = db.session.get(Teacher, teacher_id_int)
         if not teacher or teacher.is_absent:
             flash("Teacher not available.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
-        if teacher_id_int in assigned_teacher_ids:
+            return _post_response()
+        if teacher_id_int in state.assigned_teacher_ids:
             flash("Teacher already assigned.", "warning")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         if not _teacher_can_grade(student, teacher, student.essay_language):
             flash("Teacher is not eligible to grade this essay.", "error")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
         db.session.add(EssayAssignmentExtraReader(assignment_id=assignment.id, teacher_id=teacher_id_int, stage=Stage.STAGE_1))
         log_activity(
             "stage1_extra_reader_added",
@@ -6735,12 +8986,12 @@ def admin_score_student(student_id: int):
         )
         db.session.commit()
         flash("Additional reader assigned.", "success")
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        return _post_response()
 
     if request.method == "POST" and action == "update_scores":
         updates = {}
         now = datetime.utcnow()
-        for entry in reader_entries:
+        for entry in state.reader_entries:
             field_name = f"score_{entry.teacher_id}"
             value = request.form.get(field_name, "").strip()
             if not value:
@@ -6749,11 +9000,11 @@ def admin_score_student(student_id: int):
                 numeric = float(value)
             except ValueError:
                 flash(f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}.", "error")
-                return redirect(url_for("web.admin_score_student", student_id=student.id))
+                return _post_response()
             if numeric < 0 or numeric > 10:
                 flash("Scores must be between 0 and 10.", "error")
-                return redirect(url_for("web.admin_score_student", student_id=student.id))
-            score_record = scores_map.get(entry.teacher_id)
+                return _post_response()
+            score_record = state.scores_map.get(entry.teacher_id)
             if not score_record:
                 score_record = EssayScore(
                     student_id=student.id,
@@ -6762,7 +9013,7 @@ def admin_score_student(student_id: int):
                     stage=Stage.STAGE_1,
                 )
                 db.session.add(score_record)
-                scores_map[entry.teacher_id] = score_record
+                state.scores_map[entry.teacher_id] = score_record
             prev_admin_entered = score_record.admin_entered if score_record else False
             prev_admin_override = score_record.admin_override if score_record else False
             had_teacher_input = bool(score_record.submitted_at) or bool(score_record.teacher_finalized)
@@ -6788,7 +9039,7 @@ def admin_score_student(student_id: int):
             updates[entry.teacher_id] = numeric
         if not updates:
             flash("No score changes detected.", "info")
-            return redirect(url_for("web.admin_score_student", student_id=student.id))
+            return _post_response()
 
         _apply_stage_one_rules(assignment)
         log_activity(
@@ -6800,7 +9051,7 @@ def admin_score_student(student_id: int):
         )
         db.session.commit()
         flash("Scores saved.", "success")
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        return _post_response()
 
     if request.method == "POST" and action == "mark_stage2":
         assignment.stage_two_candidate = not assignment.stage_two_candidate
@@ -6813,7 +9064,13 @@ def admin_score_student(student_id: int):
             object_id=student.id,
         )
         db.session.commit()
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
+        flash(
+            "Marked as Stage 2 candidate."
+            if assignment.stage_two_candidate
+            else "Stage 2 recommendation removed.",
+            "success",
+        )
+        return _post_response()
 
     if request.method == "POST" and action == "mark_extra":
         assignment.needs_additional_reading = not assignment.needs_additional_reading
@@ -6826,48 +9083,37 @@ def admin_score_student(student_id: int):
             object_id=student.id,
         )
         db.session.commit()
-        return redirect(url_for("web.admin_score_student", student_id=student.id))
-
-    status = _compute_stage_one_status(assignment)
-    reader_entries = []
-    for assessor in _stage_assessors(assignment, Stage.STAGE_1, include_group=True):
-        teacher = assessor.teacher
-        score_record = scores_map.get(teacher.id)
-        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage1_locked)
-        reader_entries.append(
-            SimpleNamespace(
-                teacher=teacher,
-                teacher_id=teacher.id,
-                source=assessor.source,
-                is_extra=assessor.is_extra,
-                score=score_record.score if score_record else None,
-                updated_at=score_record.updated_at if score_record else None,
-                finalized=score_record.teacher_finalized if score_record else False,
-                finalized_at=score_record.teacher_finalized_at if score_record else None,
-                submitted_at=score_record.submitted_at if score_record else None,
-                portal_status_code=status_info.code,
-                portal_status_label=status_info.label,
-                portal_status_css=status_info.css,
-                portal_status_timestamp=status_info.timestamp,
-            )
+        flash(
+            "Marked as needing extra reading."
+            if assignment.needs_additional_reading
+            else "Extra reading flag removed.",
+            "success",
         )
+        return _post_response()
 
-    return render_template(
-        "admin/scoring.html",
-        student=student,
-        assignment=assignment,
-        reader_entries=reader_entries,
-        status=status,
-        available_teachers=available_teachers,
-        stage1_global_lock=stage1_global_lock,
-        **_quick_message_context(),
-    )
+    return _render_score_response()
 
 
 @web_bp.route("/admin/planner", methods=["GET", "POST"])
 def admin_planner():
     form = AssignmentBatchForm()
     form.stage.data = Stage.STAGE_1.value
+    is_htmx = _is_htmx_request()
+
+    def _render_planner_overview(current_form: AssignmentBatchForm):
+        batches = AssignmentBatch.query.order_by(AssignmentBatch.created_at.desc()).all()
+        active_batch = _get_active_batch(Stage.STAGE_1)
+        template_name = "admin/partials/planner_overview_content.html" if is_htmx else "admin/planner/overview.html"
+        context = {
+            "form": current_form,
+            "batches": batches,
+            "active_batch": active_batch,
+            "PlannerStatus": PlannerStatus,
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
 
     if form.validate_on_submit():
         batch = AssignmentBatch(
@@ -6887,17 +9133,13 @@ def admin_planner():
         )
         db.session.commit()
         flash("Assignment batch created.", "success")
+        if is_htmx:
+            fresh_form = AssignmentBatchForm()
+            fresh_form.stage.data = Stage.STAGE_1.value
+            return _render_planner_overview(fresh_form)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
-    batches = AssignmentBatch.query.order_by(AssignmentBatch.created_at.desc()).all()
-    active_batch = _get_active_batch(Stage.STAGE_1)
-    return render_template(
-        "admin/planner/overview.html",
-        form=form,
-        batches=batches,
-        active_batch=active_batch,
-        PlannerStatus=PlannerStatus,
-    )
+    return _render_planner_overview(form)
 
 
 @web_bp.route("/admin/planner/batches/<int:batch_id>")
@@ -6905,6 +9147,8 @@ def admin_planner_batch(batch_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+
+    is_htmx = _is_htmx_request()
 
     group_form = ReadingGroupForm()
     if not group_form.target_essay_load.data:
@@ -6989,18 +9233,22 @@ def admin_planner_batch(batch_id: int):
             available_teachers.append(teacher)
         available_teachers_map[group.id] = available_teachers
 
-    return render_template(
-        "admin/planner/batch_detail.html",
-        batch=batch,
-        groups=groups,
-        group_form=group_form,
-        member_form=member_form,
-        eligible_students_map=eligible_students_map,
-        available_teachers_map=available_teachers_map,
-        group_status_map=group_status_map,
-        PlannerStatus=PlannerStatus,
-        **_quick_message_context(),
-    )
+    template_name = "admin/partials/planner_batch_content.html" if is_htmx else "admin/planner/batch_detail.html"
+    context = {
+        "batch": batch,
+        "groups": groups,
+        "group_form": group_form,
+        "member_form": member_form,
+        "eligible_students_map": eligible_students_map,
+        "available_teachers_map": available_teachers_map,
+        "group_status_map": group_status_map,
+        "PlannerStatus": PlannerStatus,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        context.update(_quick_message_context())
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route("/admin/planner/batches/<int:batch_id>/groups", methods=["POST"])
@@ -7038,6 +9286,8 @@ def admin_planner_add_group(batch_id: int):
             for error in errors:
                 flash(error, "error")
 
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7057,6 +9307,8 @@ def admin_planner_toggle_lock(batch_id: int, group_id: int):
     )
     db.session.commit()
     flash("Group lock status updated.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7079,6 +9331,8 @@ def admin_planner_delete_group(batch_id: int, group_id: int):
         )
         db.session.commit()
         flash("Reading group deleted.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7094,11 +9348,15 @@ def admin_planner_add_member(batch_id: int):
     group_id_value = request.form.get("group_id")
     if not group_id_value:
         flash("Group selection is required.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     group = ReadingGroup.query.filter_by(id=int(group_id_value), batch_id=batch.id).first()
     if not group:
         flash("Invalid group selection.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     if form.validate_on_submit():
@@ -7136,6 +9394,8 @@ def admin_planner_add_member(batch_id: int):
             for error in errors:
                 flash(error, "error")
 
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7161,6 +9421,8 @@ def admin_planner_remove_member(batch_id: int, member_id: int):
     )
     db.session.commit()
     flash("Group member removed.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7189,10 +9451,14 @@ def admin_planner_update_member_role(batch_id: int, group_id: int, member_id: in
         target_role = GroupMemberRole(target_role_value)
     except Exception:
         flash("Invalid role change requested.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     if target_role not in {GroupMemberRole.LEADER, GroupMemberRole.READER}:
         flash("Invalid role change requested.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     if target_role == GroupMemberRole.LEADER:
@@ -7218,6 +9484,8 @@ def admin_planner_update_member_role(batch_id: int, group_id: int, member_id: in
     )
     db.session.commit()
     flash(message, "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7229,25 +9497,35 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
     group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
     if group.locked:
         flash("Group is locked.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     student_id_value = request.form.get("student_id")
     if not student_id_value:
         flash("Student selection is required.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     student = db.session.get(Student, int(student_id_value))
     if not student:
         flash("Selected student does not exist.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     existing_assignment = EssayAssignment.query.filter_by(batch_id=batch.id, student_id=student.id).first()
     if existing_assignment:
         flash("Student already assigned in this batch.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     if student.essay_language != group.language:
         flash("Student language does not match the group language.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     active_countries = {
@@ -7257,6 +9535,8 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
     }
     if not group.allow_same_country and student.country in active_countries:
         flash("Group cannot read students from the same country.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     assignment = EssayAssignment(
@@ -7282,6 +9562,8 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
     )
     db.session.commit()
     flash("Essay assigned to group.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7294,6 +9576,8 @@ def admin_planner_remove_assignment(batch_id: int, assignment_id: int):
     assignment = EssayAssignment.query.filter_by(id=assignment_id, batch_id=batch.id).first_or_404()
     if batch.status == PlannerStatus.PUBLISHED:
         flash("Cannot modify assignments on a published batch.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     db.session.delete(assignment)
@@ -7306,6 +9590,8 @@ def admin_planner_remove_assignment(batch_id: int, assignment_id: int):
     )
     db.session.commit()
     flash("Assignment removed.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7343,6 +9629,8 @@ def admin_planner_auto_generate(batch_id: int):
         if summary.get("shortfall"):
             shortfall_items = ", ".join(f"{language}: {value}" for language, value in summary["shortfall"].items())
             flash(f"Not enough teachers in: {shortfall_items}. Some language coverage targets were reduced.", "warning")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7368,6 +9656,8 @@ def admin_planner_auto_assign(batch_id: int):
         )
     else:
         flash(f"Assigned {assigned} essays to reading groups.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7378,6 +9668,8 @@ def admin_planner_unpublish(batch_id: int):
         abort(404)
     if batch.status != PlannerStatus.PUBLISHED:
         flash("Batch is not published.", "warning")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     batch.status = PlannerStatus.DRAFT
@@ -7397,6 +9689,8 @@ def admin_planner_unpublish(batch_id: int):
     )
     db.session.commit()
     flash("Batch returned to draft state.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7409,6 +9703,8 @@ def admin_planner_publish(batch_id: int):
     unresolved_groups = [group for group in batch.groups if len(group.members) < 4]
     if unresolved_groups:
         flash("All groups must have at least four members before publishing.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     now = datetime.utcnow()
@@ -7445,6 +9741,8 @@ def admin_planner_publish(batch_id: int):
     )
     db.session.commit()
     flash("Assignment batch published.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
@@ -7468,6 +9766,8 @@ def admin_planner_delete_batch(batch_id: int):
     db.session.delete(batch)
     db.session.commit()
     flash("Batch deleted.", "success")
+    if _is_htmx_request():
+        return admin_planner()
     return redirect(url_for("web.admin_planner"))
 
 
@@ -7664,6 +9964,11 @@ def admin_stage3_packets():
         label = f"Essay {student.id} – {student.first_name} {student.last_name} ({student.country})"
         assignment_choices.append((assignment.id, label))
         assignment_lookup[assignment.id] = assignment
+    if not assignment_choices:
+        flash(
+            "No essays are currently marked for Stage 3. Mark recommendations in Stage 2 scoring before creating packets.",
+            "warning",
+        )
 
     form = Stage3PacketForm()
     form.essay_ids.choices = assignment_choices
@@ -7933,12 +10238,17 @@ def admin_stage2_overview():
         stage1_status_map[assignment.student_id] = _compute_stage_one_status(assignment)
         stage2_status_map[assignment.student_id] = _compute_stage_two_status(assignment)
 
-    return render_template(
-        'admin/stage2/overview.html',
-        assignments=candidates,
-        stage1_status_map=stage1_status_map,
-        stage2_status_map=stage2_status_map,
-    )
+    is_htmx = _is_htmx_request()
+    template_name = "admin/partials/stage2_overview_content.html" if is_htmx else "admin/stage2/overview.html"
+    context = {
+        "assignments": candidates,
+        "stage1_status_map": stage1_status_map,
+        "stage2_status_map": stage2_status_map,
+        "is_htmx": is_htmx,
+    }
+    if not is_htmx:
+        return render_template(template_name, **context)
+    return _render_htmx_template(template_name, **context)
 
 
 @web_bp.route('/admin/stage2/<int:student_id>', methods=['GET', 'POST'])
@@ -7952,127 +10262,184 @@ def admin_stage2_score_student(student_id: int):
         flash('Student is not marked for Stage 2.', 'error')
         return redirect(url_for('web.admin_stage2_overview'))
 
-    stage1_assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
-    stage1_scores_map = {
-        score.teacher_id: score
-        for score in assignment.scores
-        if score.stage == Stage.STAGE_1
-    }
-    stage1_status = _compute_stage_one_status(assignment)
-    stage2_assessors = _stage_assessors(assignment, Stage.STAGE_2, include_group=False)
-    stage2_scores_map = {
-        score.teacher_id: score
-        for score in assignment.scores
-        if score.stage == Stage.STAGE_2
-    }
+    is_htmx = _is_htmx_request()
 
-    pdf_available = _essay_pdf_path(student) is not None
-    stage1_global_lock = _is_stage_locked(Stage.STAGE_1)
-    stage2_global_lock = _is_stage_locked(Stage.STAGE_2)
-    assignment_stage1_locked = assignment.stage1_locked or stage1_global_lock
-    assignment_stage2_locked = assignment.stage2_locked or stage2_global_lock
+    def _load_stage2_state() -> SimpleNamespace:
+        stage1_assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
+        stage1_scores = EssayScore.query.filter_by(
+            assignment_id=assignment.id,
+            stage=Stage.STAGE_1,
+        ).all()
+        stage1_scores_map = {score.teacher_id: score for score in stage1_scores}
+        db.session.expire(assignment, ["scores"])
+        stage1_status = _compute_stage_one_status(assignment)
+        stage2_assessors = _stage_assessors(assignment, Stage.STAGE_2, include_group=False)
+        stage2_scores = EssayScore.query.filter_by(
+            assignment_id=assignment.id,
+            stage=Stage.STAGE_2,
+        ).all()
+        stage2_scores_map = {score.teacher_id: score for score in stage2_scores}
 
-    stage1_entries = []
-    for assessor in stage1_assessors:
-        teacher = assessor.teacher
-        score_record = stage1_scores_map.get(teacher.id)
-        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage1_locked)
-        stage1_entries.append(
-            SimpleNamespace(
-                teacher=teacher,
-                teacher_id=teacher.id,
-                source=assessor.source,
-                is_extra=assessor.is_extra,
-                score=score_record.score if score_record else None,
-                updated_at=score_record.updated_at if score_record else None,
-                submitted_at=score_record.submitted_at if score_record else None,
-                finalized=score_record.teacher_finalized if score_record else False,
-                finalized_at=score_record.teacher_finalized_at if score_record else None,
-                portal_status_code=status_info.code,
-                portal_status_label=status_info.label,
-                portal_status_css=status_info.css,
-                portal_status_timestamp=status_info.timestamp,
-            )
-        )
+        pdf_available = _essay_pdf_path(student) is not None
+        stage1_global_lock = _is_stage_locked(Stage.STAGE_1)
+        stage2_global_lock = _is_stage_locked(Stage.STAGE_2)
+        assignment_stage1_locked = assignment.stage1_locked or stage1_global_lock
+        assignment_stage2_locked = assignment.stage2_locked or stage2_global_lock
 
-    entries = []
-    for assessor in stage2_assessors:
-        teacher = assessor.teacher
-        score_record = stage2_scores_map.get(teacher.id)
-        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage2_locked)
-        entries.append(
-            SimpleNamespace(
-                teacher=teacher,
-                teacher_id=teacher.id,
-                source=assessor.source,
-                is_extra=True,
-                score=score_record.score if score_record else None,
-                updated_at=score_record.updated_at if score_record else None,
-                finalized=score_record.teacher_finalized if score_record else False,
-                finalized_at=score_record.teacher_finalized_at if score_record else None,
-                portal_status_code=status_info.code,
-                portal_status_label=status_info.label,
-                portal_status_css=status_info.css,
-                portal_status_timestamp=status_info.timestamp,
-            )
-        )
-
-    assigned_teacher_ids = {entry.teacher_id for entry in entries}
-    stage1_teacher_ids = {entry.teacher_id for entry in stage1_entries}
-    available_query = Teacher.query.filter_by(is_absent=False)
-    if assigned_teacher_ids or stage1_teacher_ids:
-        available_query = available_query.filter(~Teacher.id.in_(assigned_teacher_ids.union(stage1_teacher_ids)))
-    available_teachers = [
-        teacher
-        for teacher in available_query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
-        if _teacher_can_grade(student, teacher, student.essay_language)
-    ]
-
-    teacher_stats: dict[int, SimpleNamespace] = {}
-    suggested_teachers: list[Teacher] = []
-    if available_teachers:
-        load_assignments = (
-            EssayAssignment.query.options(
-                joinedload(EssayAssignment.scores),
-                joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
-                joinedload(EssayAssignment.group).joinedload(ReadingGroup.members).joinedload(ReadingGroupMember.teacher),
-            )
-            .filter(
-                EssayAssignment.stage == Stage.STAGE_1,
-                EssayAssignment.batch_id == assignment.batch_id,
-            )
-            .all()
-        )
-        load_snapshot = _teacher_load_snapshot(load_assignments)
-        for teacher in available_teachers:
-            entry = load_snapshot.get(teacher.id, _empty_load_entry())
-            stage1_pending = max(entry.stage1_expected - entry.stage1_completed, 0)
-            stage2_pending = max(entry.stage2_assigned - entry.stage2_completed, 0)
-            teacher_stats[teacher.id] = SimpleNamespace(
-                stage1_expected=entry.stage1_expected,
-                stage1_completed=entry.stage1_completed,
-                stage1_pending=stage1_pending,
-                stage2_assigned=entry.stage2_assigned,
-                stage2_completed=entry.stage2_completed,
-                stage2_pending=stage2_pending,
-                last_stage2_activity=entry.last_stage2_activity,
+        stage1_entries = []
+        for assessor in stage1_assessors:
+            teacher = assessor.teacher
+            score_record = stage1_scores_map.get(teacher.id)
+            status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage1_locked)
+            stage1_entries.append(
+                SimpleNamespace(
+                    teacher=teacher,
+                    teacher_id=teacher.id,
+                    source=assessor.source,
+                    is_extra=assessor.is_extra,
+                    score=score_record.score if score_record else None,
+                    updated_at=score_record.updated_at if score_record else None,
+                    submitted_at=score_record.submitted_at if score_record else None,
+                    finalized=score_record.teacher_finalized if score_record else False,
+                    finalized_at=score_record.teacher_finalized_at if score_record else None,
+                    portal_status_code=status_info.code,
+                    portal_status_label=status_info.label,
+                    portal_status_css=status_info.css,
+                    portal_status_timestamp=status_info.timestamp,
+                )
             )
 
-        if teacher_stats:
-            def _suggestion_key(t: Teacher):
-                stats_entry = teacher_stats[t.id]
-                last_activity = stats_entry.last_stage2_activity or datetime.min
-                return (
-                    1 if stats_entry.stage1_pending > 0 else 0,
-                    stats_entry.stage1_pending,
-                    stats_entry.stage2_pending,
-                    stats_entry.stage2_assigned,
-                    last_activity,
-                    t.last_name,
-                    t.first_name,
+        entries = []
+        for assessor in stage2_assessors:
+            teacher = assessor.teacher
+            score_record = stage2_scores_map.get(teacher.id)
+            status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage2_locked)
+            entries.append(
+                SimpleNamespace(
+                    teacher=teacher,
+                    teacher_id=teacher.id,
+                    source=assessor.source,
+                    is_extra=True,
+                    score=score_record.score if score_record else None,
+                    updated_at=score_record.updated_at if score_record else None,
+                    finalized=score_record.teacher_finalized if score_record else False,
+                    finalized_at=score_record.teacher_finalized_at if score_record else None,
+                    portal_status_code=status_info.code,
+                    portal_status_label=status_info.label,
+                    portal_status_css=status_info.css,
+                    portal_status_timestamp=status_info.timestamp,
+                )
+            )
+
+        assigned_teacher_ids = {entry.teacher_id for entry in entries}
+        stage1_teacher_ids = {entry.teacher_id for entry in stage1_entries}
+        available_query = Teacher.query.filter_by(is_absent=False)
+        if assigned_teacher_ids or stage1_teacher_ids:
+            available_query = available_query.filter(
+                ~Teacher.id.in_(assigned_teacher_ids.union(stage1_teacher_ids))
+            )
+        available_teachers = [
+            teacher
+            for teacher in available_query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
+            if _teacher_can_grade(student, teacher, student.essay_language)
+        ]
+
+        teacher_stats: dict[int, SimpleNamespace] = {}
+        suggested_teachers: list[Teacher] = []
+        if available_teachers:
+            load_assignments = (
+                EssayAssignment.query.options(
+                    joinedload(EssayAssignment.scores),
+                    joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
+                    joinedload(EssayAssignment.group)
+                    .joinedload(ReadingGroup.members)
+                    .joinedload(ReadingGroupMember.teacher),
+                )
+                .filter(
+                    EssayAssignment.stage == Stage.STAGE_1,
+                    EssayAssignment.batch_id == assignment.batch_id,
+                )
+                .all()
+            )
+            load_snapshot = _teacher_load_snapshot(load_assignments)
+            for teacher in available_teachers:
+                entry = load_snapshot.get(teacher.id, _empty_load_entry())
+                stage1_pending = max(entry.stage1_expected - entry.stage1_completed, 0)
+                stage2_pending = max(entry.stage2_assigned - entry.stage2_completed, 0)
+                teacher_stats[teacher.id] = SimpleNamespace(
+                    stage1_expected=entry.stage1_expected,
+                    stage1_completed=entry.stage1_completed,
+                    stage1_pending=stage1_pending,
+                    stage2_assigned=entry.stage2_assigned,
+                    stage2_completed=entry.stage2_completed,
+                    stage2_pending=stage2_pending,
+                    last_stage2_activity=entry.last_stage2_activity,
                 )
 
-            suggested_teachers = sorted(available_teachers, key=_suggestion_key)[:5]
+            if teacher_stats:
+                def _suggestion_key(t: Teacher):
+                    stats_entry = teacher_stats[t.id]
+                    last_activity = stats_entry.last_stage2_activity or datetime.min
+                    return (
+                        1 if stats_entry.stage1_pending > 0 else 0,
+                        stats_entry.stage1_pending,
+                        stats_entry.stage2_pending,
+                        stats_entry.stage2_assigned,
+                        last_activity,
+                        t.last_name,
+                        t.first_name,
+                    )
+
+                suggested_teachers = sorted(available_teachers, key=_suggestion_key)[:5]
+
+        stage2_status = _compute_stage_two_status(assignment)
+        combined_status = _compute_combined_status(assignment)
+        return SimpleNamespace(
+            stage1_scores_map=stage1_scores_map,
+            stage2_scores_map=stage2_scores_map,
+            stage1_status=stage1_status,
+            stage1_entries=stage1_entries,
+            entries=entries,
+            available_teachers=available_teachers,
+            teacher_stats=teacher_stats,
+            suggested_teachers=suggested_teachers,
+            assigned_teacher_ids=assigned_teacher_ids,
+            stage1_teacher_ids=stage1_teacher_ids,
+            stage1_global_lock=stage1_global_lock,
+            stage2_global_lock=stage2_global_lock,
+            stage2_status=stage2_status,
+            combined_status=combined_status,
+        )
+
+    def _render_stage2_response():
+        state = _load_stage2_state()
+        template_name = "admin/partials/stage2_scoring_content.html" if is_htmx else "admin/stage2/scoring.html"
+        context = {
+            "student": student,
+            "assignment": assignment,
+            "stage1_status": state.stage1_status,
+            "stage1_entries": state.stage1_entries,
+            "stage2_status": state.stage2_status,
+            "combined_status": state.combined_status,
+            "entries": state.entries,
+            "available_teachers": state.available_teachers,
+            "teacher_stats": state.teacher_stats,
+            "suggested_teachers": state.suggested_teachers,
+            "stage1_global_lock": state.stage1_global_lock,
+            "stage2_global_lock": state.stage2_global_lock,
+            "is_htmx": is_htmx,
+        }
+        if not is_htmx:
+            context.update(_quick_message_context())
+            return render_template(template_name, **context)
+        return _render_htmx_template(template_name, **context)
+
+    def _post_response():
+        if is_htmx:
+            return _render_stage2_response()
+        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+
+    state = _load_stage2_state()
 
     action = request.form.get('action')
     remove_id = request.form.get('remove_reader')
@@ -8081,9 +10448,10 @@ def admin_stage2_score_student(student_id: int):
     if request.method == 'POST' and action == 'toggle_stage2_lock':
         assignment.stage2_locked = not assignment.stage2_locked
         now = datetime.utcnow()
-        for score in assignment.scores:
-            if score.stage != Stage.STAGE_2:
-                continue
+        for score in EssayScore.query.filter_by(
+            assignment_id=assignment.id,
+            stage=Stage.STAGE_2,
+        ).all():
             score.locked_by_admin = assignment.stage2_locked
             if assignment.stage2_locked:
                 score.admin_updated_at = now
@@ -8096,18 +10464,18 @@ def admin_stage2_score_student(student_id: int):
         )
         db.session.commit()
         flash('Stage 2 grading locked.' if assignment.stage2_locked else 'Stage 2 grading unlocked.', 'success')
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+        return _post_response()
 
     if request.method == 'POST' and unlock_id:
         try:
             teacher_id = int(unlock_id)
         except ValueError:
             flash('Invalid teacher selection.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
-        score_record = stage2_scores_map.get(teacher_id)
+            return _post_response()
+        score_record = state.stage2_scores_map.get(teacher_id)
         if not score_record or not score_record.teacher_finalized:
             flash('Score is not finalized for this teacher.', 'warning')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         score_record.teacher_finalized = False
         score_record.teacher_finalized_at = None
         score_record.admin_updated_at = datetime.utcnow()
@@ -8120,22 +10488,22 @@ def admin_stage2_score_student(student_id: int):
         )
         db.session.commit()
         flash('Teacher score unlocked for editing.', 'success')
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+        return _post_response()
 
     if request.method == 'POST' and remove_id:
         try:
             teacher_id = int(remove_id)
         except ValueError:
             flash('Invalid teacher selection.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         extra = EssayAssignmentExtraReader.query.filter_by(assignment_id=assignment.id, teacher_id=teacher_id, stage=Stage.STAGE_2).first()
         if not extra:
             flash('Extra reader not found for this essay.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
-        score_record = stage2_scores_map.get(teacher_id)
+            return _post_response()
+        score_record = state.stage2_scores_map.get(teacher_id)
         if score_record and score_record.stage == Stage.STAGE_2:
             db.session.delete(score_record)
-            stage2_scores_map.pop(teacher_id, None)
+            state.stage2_scores_map.pop(teacher_id, None)
         db.session.delete(extra)
         log_activity(
             'stage2_extra_reader_removed',
@@ -8146,28 +10514,28 @@ def admin_stage2_score_student(student_id: int):
         )
         db.session.commit()
         flash('Stage 2 reader removed.', 'success')
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+        return _post_response()
 
     if request.method == 'POST' and action == 'add_reader':
         teacher_id = request.form.get('teacher_id')
         if not teacher_id:
             flash('Select a teacher to add.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         try:
             teacher_id_int = int(teacher_id)
         except ValueError:
             flash('Invalid teacher selection.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
-        if teacher_id_int in assigned_teacher_ids or teacher_id_int in stage1_teacher_ids:
+            return _post_response()
+        if teacher_id_int in state.assigned_teacher_ids or teacher_id_int in state.stage1_teacher_ids:
             flash('Teacher already assigned to this essay.', 'warning')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         teacher = db.session.get(Teacher, teacher_id_int)
         if not teacher or teacher.is_absent:
             flash('Teacher not available.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         if not _teacher_can_grade(student, teacher, student.essay_language):
             flash('Teacher is not eligible to grade this essay.', 'error')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
         db.session.add(
             EssayAssignmentExtraReader(
                 assignment_id=assignment.id,
@@ -8184,12 +10552,12 @@ def admin_stage2_score_student(student_id: int):
         )
         db.session.commit()
         flash('Stage 2 reader assigned.', 'success')
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+        return _post_response()
 
     if request.method == 'POST' and action == 'update_scores':
         updates = {}
         now = datetime.utcnow()
-        for entry in entries:
+        for entry in state.entries:
             field_name = f'score_{entry.teacher_id}'
             value = request.form.get(field_name, '').strip()
             if not value:
@@ -8198,11 +10566,11 @@ def admin_stage2_score_student(student_id: int):
                 numeric = float(value)
             except ValueError:
                 flash(f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}.", 'error')
-                return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+                return _post_response()
             if numeric < 0 or numeric > 10:
                 flash('Scores must be between 0 and 10.', 'error')
-                return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
-            score_record = stage2_scores_map.get(entry.teacher_id)
+                return _post_response()
+            score_record = state.stage2_scores_map.get(entry.teacher_id)
             if not score_record:
                 score_record = EssayScore(
                     student_id=student.id,
@@ -8211,7 +10579,7 @@ def admin_stage2_score_student(student_id: int):
                     stage=Stage.STAGE_2,
                 )
                 db.session.add(score_record)
-                stage2_scores_map[entry.teacher_id] = score_record
+                state.stage2_scores_map[entry.teacher_id] = score_record
             prev_admin_entered = score_record.admin_entered if score_record else False
             prev_admin_override = score_record.admin_override if score_record else False
             had_teacher_input = bool(score_record.submitted_at) or bool(score_record.teacher_finalized)
@@ -8237,7 +10605,7 @@ def admin_stage2_score_student(student_id: int):
             updates[entry.teacher_id] = numeric
         if not updates:
             flash('No score changes detected.', 'info')
-            return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+            return _post_response()
 
         log_activity(
             'stage2_scores_updated',
@@ -8248,7 +10616,7 @@ def admin_stage2_score_student(student_id: int):
         )
         db.session.commit()
         flash('Stage 2 scores saved.', 'success')
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
+        return _post_response()
 
     if request.method == 'POST' and action == 'mark_stage3':
         assignment.stage_three_recommended = not assignment.stage_three_recommended
@@ -8259,49 +10627,15 @@ def admin_stage2_score_student(student_id: int):
             object_id=student.id,
         )
         db.session.commit()
-        return redirect(url_for('web.admin_stage2_score_student', student_id=student.id))
-
-    stage2_status = _compute_stage_two_status(assignment)
-    combined_status = _compute_combined_status(assignment)
-    entries = []
-    for assessor in _stage_assessors(assignment, Stage.STAGE_2, include_group=False):
-        teacher = assessor.teacher
-        score_record = stage2_scores_map.get(teacher.id)
-        status_info = _resolve_portal_status(student, score_record, pdf_available, locked=assignment_stage2_locked)
-        entries.append(
-            SimpleNamespace(
-                teacher=teacher,
-                teacher_id=teacher.id,
-                source=assessor.source,
-                is_extra=True,
-                score=score_record.score if score_record else None,
-                updated_at=score_record.updated_at if score_record else None,
-                finalized=score_record.teacher_finalized if score_record else False,
-                finalized_at=score_record.teacher_finalized_at if score_record else None,
-                submitted_at=score_record.submitted_at if score_record else None,
-                portal_status_code=status_info.code,
-                portal_status_label=status_info.label,
-                portal_status_css=status_info.css,
-                portal_status_timestamp=status_info.timestamp,
-            )
+        flash(
+            'Marked for Stage 3 recommendation.'
+            if assignment.stage_three_recommended
+            else 'Stage 3 recommendation removed.',
+            'success',
         )
+        return _post_response()
 
-    return render_template(
-        'admin/stage2/scoring.html',
-        student=student,
-        assignment=assignment,
-        stage1_status=stage1_status,
-        stage1_entries=stage1_entries,
-        stage2_status=stage2_status,
-        combined_status=combined_status,
-        entries=entries,
-        available_teachers=available_teachers,
-        teacher_stats=teacher_stats,
-        suggested_teachers=suggested_teachers,
-        stage1_global_lock=stage1_global_lock,
-        stage2_global_lock=stage2_global_lock,
-        **_quick_message_context(),
-    )
+    return _render_stage2_response()
 
 def _ordered_survey_questions(survey: Survey) -> list[SurveyQuestion]:
     return sorted(survey.questions, key=lambda question: (question.position or 0, question.id))
@@ -8827,6 +11161,10 @@ def export_teachers():
 
 
 def _students_workbook(students: list[Student]) -> io.BytesIO:
+    room_sharing_labels = {
+        "same_sex": "a room only with persons of this same sex as in official documents",
+        "any_sex": "a room with persons of any sex",
+    }
     wb = Workbook()
     ws = wb.active
     ws.title = "Students"
@@ -8838,7 +11176,8 @@ def _students_workbook(students: list[Student]) -> io.BytesIO:
             "Last name",
             "Email",
             "School",
-            "Gender",
+            "Sex (official document)",
+            "Accommodation",
             "Date of birth",
             "Essay language",
             "Keyboard preference",
@@ -8858,7 +11197,8 @@ def _students_workbook(students: list[Student]) -> io.BytesIO:
                 student.last_name,
                 student.email,
                 student.school,
-                student.gender,
+                student.sex_document or "",
+                room_sharing_labels.get(student.accommodation_room_sharing, ""),
                 student.date_of_birth.isoformat() if student.date_of_birth else "",
                 student.essay_language,
                 student.keyboard_preference,
@@ -8879,6 +11219,10 @@ def _students_workbook(students: list[Student]) -> io.BytesIO:
 
 
 def _teachers_workbook(teachers: list[Teacher]) -> io.BytesIO:
+    room_sharing_labels = {
+        "same_sex": "a room only with persons of this same sex as in official documents",
+        "any_sex": "a room with persons of any sex",
+    }
     wb = Workbook()
     ws = wb.active
     ws.title = "Teachers"
@@ -8890,7 +11234,8 @@ def _teachers_workbook(teachers: list[Teacher]) -> io.BytesIO:
             "Last name",
             "Email",
             "School",
-            "Gender",
+            "Sex (official document)",
+            "Accommodation",
             "Languages",
             "Meal preference",
             "T-shirt size",
@@ -8910,7 +11255,8 @@ def _teachers_workbook(teachers: list[Teacher]) -> io.BytesIO:
                 teacher.last_name,
                 teacher.email,
                 teacher.school,
-                teacher.gender,
+                teacher.sex_document or "",
+                room_sharing_labels.get(teacher.accommodation_room_sharing, ""),
                 teacher.languages,
                 teacher.meal_preference,
                 teacher.tshirt_size,

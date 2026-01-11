@@ -1,0 +1,4 @@
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% set oob = true %}
+  {% include "partials/toast_messages.html" %}
+{% endwith %}

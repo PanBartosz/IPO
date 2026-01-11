@@ -1,0 +1,98 @@
+<section class="portal-hero">
+  <div>
+    <h2>Delegation essays - {{ delegation_country }}</h2>
+    <p class="fine-print">Review student upload status and download finalized essays after the event ends.</p>
+  </div>
+  <div class="portal-actions">
+    <a class="button secondary" href="{{ url_for('teacher_portal.dashboard') }}">Back to dashboard</a>
+    <a class="button secondary" href="{{ url_for('teacher_portal.delegation') }}">Delegation invites</a>
+    <a class="button secondary" href="{{ url_for('web.teacher_board') }}">Message board</a>
+    <a class="button" href="{{ url_for('teacher_portal.logout') }}">Sign out</a>
+  </div>
+</section>
+
+{% if event_state.override == "force_end" %}
+  <div class="portal-alert success">
+    Downloads are unlocked by the organizers (manual override).
+  </div>
+{% elif event_state.override == "force_open" %}
+  <div class="portal-alert warning">
+    Downloads are temporarily locked by the organizers (manual override).
+  </div>
+{% elif not event_state.event_over %}
+  <div class="portal-alert warning">
+    {% if event_state.display %}
+      Downloads unlock after the event ends ({{ event_state.display }}).
+    {% else %}
+      Downloads unlock after the event ends. Ask the organizers to set the event end time in Settings.
+    {% endif %}
+  </div>
+{% endif %}
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Students</h3>
+    <ul>
+      <li><strong>Total:</strong> {{ summary.total }}</li>
+      <li><strong>Uploaded:</strong> {{ summary.uploaded }}</li>
+      <li><strong>Finalized:</strong> {{ summary.finalized }}</li>
+      <li><strong>Missing upload:</strong> {{ summary.pending }}</li>
+      <li><strong>Download ready:</strong> {{ summary.downloadable }}</li>
+    </ul>
+  </div>
+</section>
+
+<div class="table-card">
+  <div class="table-header">
+    <h3>Essays</h3>
+  </div>
+  {% if entries %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Student</th>
+          <th>Status</th>
+          <th>Uploaded</th>
+          <th>Finalized</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td>
+              {{ entry.student.first_name }} {{ entry.student.last_name }}
+              <div class="fine-print">{{ entry.student.email }}</div>
+            </td>
+            <td>
+              <span class="status-tag {{ entry.status_css }}">{{ entry.status_label }}</span>
+            </td>
+            <td>
+              {% if entry.student.uploaded_at %}
+                {{ entry.student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>
+              {% if entry.student.essay_finalized_at %}
+                {{ entry.student.essay_finalized_at.strftime('%Y-%m-%d %H:%M') }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>
+              {% if entry.download_url %}
+                <a class="button-link" href="{{ entry.download_url }}">Download</a>
+              {% else %}
+                <span class="fine-print">Unavailable</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="fine-print">No students registered yet.</p>
+  {% endif %}
+</div>

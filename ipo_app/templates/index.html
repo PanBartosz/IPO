@@ -5,10 +5,16 @@
 {% block content %}
   <section class="hero">
     <h2>Welcome to the IPO registration portal</h2>
-    <p>Please choose the appropriate registration form.</p>
-    <div class="cta-group">
-      <a class="button" href="{{ url_for('web.register_student') }}">Register a student</a>
-      <a class="button secondary" href="{{ url_for('web.register_teacher') }}">Register a teacher</a>
-    </div>
+    {% if invite_only %}
+      <div class="portal-alert warning">
+        Registrations are available by invitation only. Please use your invite link or contact your delegation leader.
+      </div>
+    {% else %}
+      <p>Please choose the appropriate registration form.</p>
+      <div class="cta-group">
+        <a class="button" href="{{ url_for('web.register_student') }}">Register a student</a>
+        <a class="button secondary" href="{{ url_for('web.register_teacher') }}">Register a teacher</a>
+      </div>
+    {% endif %}
   </section>
 {% endblock %}

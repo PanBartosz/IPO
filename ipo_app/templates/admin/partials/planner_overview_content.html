@@ -1,0 +1,70 @@
+<div class="table-card table-card-wide">
+  <div class="table-header">
+    <h2>Assignment batches</h2>
+    {% if batches %}
+      <span class="status-tag">Stage 1 planner</span>
+    {% endif %}
+  </div>
+  <form method="post" class="form-grid" novalidate hx-boost="true" hx-target="#planner-overview-content">
+    {{ form.hidden_tag() }}
+    <div class="form-field">
+      {{ form.name.label }}
+      {{ form.name(size=40) }}
+      {% for error in form.name.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field full-width">
+      {{ form.notes.label }}
+      {{ form.notes(rows=3) }}
+      {% for error in form.notes.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-actions">
+      {{ form.submit(class_="button") }}
+    </div>
+  </form>
+</div>
+
+<div class="table-card table-card-wide">
+  <table class="data-table display" id="batches-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Created</th>
+        <th>Updated</th>
+        <th>Groups</th>
+        <th>Assignments</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for batch in batches %}
+        <tr>
+          <td>{{ batch.name }}</td>
+          <td>{{ batch.status.value.title() }}</td>
+          <td>{{ batch.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else '—' }}</td>
+          <td>{{ batch.groups|length }}</td>
+          <td>{{ batch.assignments|length }}</td>
+          <td class="table-actions">
+            <a class="button-link" href="{{ url_for('web.admin_planner_batch', batch_id=batch.id) }}">Open</a>
+            <form
+              method="post"
+              action="{{ url_for('web.admin_planner_delete_batch', batch_id=batch.id) }}"
+              style="display:inline;"
+              onsubmit="return confirm('Delete this batch?');"
+              hx-post="{{ url_for('web.admin_planner_delete_batch', batch_id=batch.id) }}"
+              hx-target="#planner-overview-content"
+            >
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="button-link danger" {% if batch.status == PlannerStatus.PUBLISHED %}disabled{% endif %}>Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

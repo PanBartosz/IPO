@@ -16,8 +16,10 @@
           <span class="brand-text">International Philosophy Olympiad</span>
         </a>
         <nav>
-          <a href="{{ url_for('web.register_student') }}">Student registration</a>
-          <a href="{{ url_for('web.register_teacher') }}">Teacher registration</a>
+          {% if not registration_invite_only %}
+            <a href="{{ url_for('web.register_student') }}">Student registration</a>
+            <a href="{{ url_for('web.register_teacher') }}">Teacher registration</a>
+          {% endif %}
           <a href="{{ url_for('web.student_portal') }}">Student portal</a>
           {% if essay_upload_enabled %}
             <a href="{{ url_for('web.student_login') }}">Essay upload</a>
@@ -44,16 +46,12 @@
     </div>
     {% endif %}
 {% endwith %}
-    <main class="{% block main_class %}container{% endblock %}">
+    <div id="toast-stack" class="toast-stack" role="region" aria-live="polite" aria-label="Notifications">
       {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-          <ul class="flash-messages">
-            {% for category, message in messages %}
-              <li class="flash flash-{{ category }}">{{ message }}</li>
-            {% endfor %}
-          </ul>
-        {% endif %}
+        {% include "partials/toast_messages.html" %}
       {% endwith %}
+    </div>
+    <main class="{% block main_class %}container{% endblock %}">
       {% block content %}{% endblock %}
     </main>
     <footer class="site-footer">
@@ -61,6 +59,168 @@
         <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
       </div>
     </footer>
+    <script src="{{ url_for('static', filename='vendor/htmx/htmx.min.js') }}" defer></script>
+    <script>
+      (function () {
+        const DEFAULT_TIMEOUTS = {
+          success: 4000,
+          info: 5000,
+          warning: 6500,
+          error: 8000,
+        };
+
+        function dismissToast(toast) {
+          if (!toast || toast.classList.contains("is-leaving")) {
+            return;
+          }
+          toast.classList.add("is-leaving");
+          const reduceMotion =
+            window.matchMedia &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          if (reduceMotion) {
+            toast.remove();
+            return;
+          }
+          let removed = false;
+          function finalize() {
+            if (removed) {
+              return;
+            }
+            removed = true;
+            toast.remove();
+          }
+          toast.addEventListener("animationend", finalize, { once: true });
+          window.setTimeout(finalize, 300);
+        }
+
+        function initToast(toast) {
+          if (!toast || toast.dataset.toastReady === "true") {
+            return;
+          }
+          toast.dataset.toastReady = "true";
+          const level = toast.dataset.toastLevel || "info";
+          const timeoutValue = parseInt(toast.dataset.toastTimeout, 10);
+          const timeout = Number.isFinite(timeoutValue)
+            ? timeoutValue
+            : DEFAULT_TIMEOUTS[level] || 5000;
+          toast.style.setProperty("--toast-duration", `${timeout}ms`);
+
+          const dismissButton = toast.querySelector("[data-toast-dismiss]");
+          if (dismissButton) {
+            dismissButton.addEventListener("click", function () {
+              dismissToast(toast);
+            });
+          }
+
+          let timerId = null;
+          function startTimer() {
+            if (timeout <= 0) {
+              return;
+            }
+            timerId = window.setTimeout(function () {
+              dismissToast(toast);
+            }, timeout);
+          }
+          function clearTimer() {
+            if (timerId) {
+              window.clearTimeout(timerId);
+              timerId = null;
+            }
+          }
+
+          toast.addEventListener("mouseenter", clearTimer);
+          toast.addEventListener("mouseleave", startTimer);
+          startTimer();
+        }
+
+        function collectToasts(root) {
+          const toasts = [];
+          if (root && root.matches && root.matches("[data-toast]")) {
+            toasts.push(root);
+          }
+          if (root && root.querySelectorAll) {
+            root.querySelectorAll("[data-toast]").forEach(function (toast) {
+              toasts.push(toast);
+            });
+          }
+          return toasts;
+        }
+
+        function initToasts(root) {
+          if (!root) {
+            return;
+          }
+          const toasts = collectToasts(root);
+          const toastStack = document.getElementById("toast-stack");
+          if (toastStack) {
+            toasts.forEach(function (toast) {
+              if (!toastStack.contains(toast)) {
+                toastStack.appendChild(toast);
+              }
+            });
+          }
+          toasts.forEach(initToast);
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+          initToasts(document);
+        });
+
+        document.addEventListener("htmx:afterSwap", function () {
+          initToasts(document);
+        });
+
+        document.addEventListener("htmx:oobAfterSwap", function () {
+          initToasts(document);
+        });
+
+        let preservedScroll = null;
+
+        function getPreserveRoot(target) {
+          if (!target || !target.closest) {
+            return null;
+          }
+          return target.closest("[data-preserve-scroll]");
+        }
+
+        function clearPreservedScroll() {
+          preservedScroll = null;
+        }
+
+        document.addEventListener("htmx:beforeRequest", function (event) {
+          const target =
+            (event.detail && event.detail.target) || event.target || null;
+          if (!getPreserveRoot(target)) {
+            return;
+          }
+          preservedScroll = {
+            x: window.scrollX || 0,
+            y: window.scrollY || 0,
+          };
+        });
+
+        document.addEventListener("htmx:afterSwap", function (event) {
+          if (!preservedScroll) {
+            return;
+          }
+          const target =
+            (event.detail && event.detail.target) || event.target || null;
+          if (!getPreserveRoot(target)) {
+            return;
+          }
+          const { x, y } = preservedScroll;
+          preservedScroll = null;
+          window.requestAnimationFrame(function () {
+            window.scrollTo(x, y);
+          });
+        });
+
+        document.addEventListener("htmx:abort", clearPreservedScroll);
+        document.addEventListener("htmx:responseError", clearPreservedScroll);
+        document.addEventListener("htmx:sendError", clearPreservedScroll);
+        document.addEventListener("htmx:timeout", clearPreservedScroll);
+      })();
+    </script>
     {% block extra_scripts %}{% endblock %}
   </body>
 </html>

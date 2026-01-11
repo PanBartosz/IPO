@@ -25,7 +25,8 @@
           <th>Last name</th>
           <th>Email</th>
           <th>School</th>
-          <th>Gender</th>
+          <th>Sex (official document)</th>
+          <th>Accommodation</th>
           <th>Languages</th>
           <th>IPO veteran</th>
           <th>Meal preference</th>
@@ -46,7 +47,16 @@
             <td>{{ teacher.last_name }}</td>
             <td>{{ teacher.email }}</td>
             <td>{{ teacher.school }}</td>
-            <td>{{ teacher.gender }}</td>
+            <td>{{ teacher.sex_document or '—' }}</td>
+            <td>
+              {% if teacher.accommodation_room_sharing == 'same_sex' %}
+                Same sex only
+              {% elif teacher.accommodation_room_sharing == 'any_sex' %}
+                Any sex
+              {% else %}
+                —
+              {% endif %}
+            </td>
             <td>{{ teacher.languages }}</td>
             <td>
               {% if teacher.veteran_level %}
@@ -73,6 +83,7 @@
             </button>
             <a class="button-link" href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}">Edit</a>
             <form method="post" action="{{ url_for('web.admin_teacher_reset_password', teacher_id=teacher.id) }}" onsubmit="return confirm('Reset portal password for {{ teacher.first_name }} {{ teacher.last_name }}?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="button-link secondary">Reset password</button>
             </form>
           </td>

@@ -1,0 +1,216 @@
+<div id="stage1-scoring-content" data-preserve-scroll="true">
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Scores &middot; {{ student.first_name }} {{ student.last_name }}</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_uploads') }}">Back to Stage 1</a>
+        <a class="button-link" href="{{ url_for('web.admin_extra_reader_packet', assignment_id=assignment.id) }}">Extra reader packet</a>
+      </div>
+    </div>
+    <p><strong>Country:</strong> {{ student.country }} &middot; <strong>Essay language:</strong> {{ student.essay_language }}</p>
+    <p><strong>Upload status:</strong>
+      {% if student.uploaded_filename %}
+        <span class="status-tag">Uploaded on {{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% else %}
+        <span class="status-tag warning">Not uploaded</span>
+      {% endif %}
+    </p>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Stage 1 readers</h3>
+    <form method="post" class="form-grid" novalidate hx-boost="true" hx-target="#stage1-scoring-content" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="update_scores">
+      <table class="data-table" style="width: 100%;">
+        <thead>
+          <tr>
+            <th>Teacher</th>
+            <th>Country</th>
+            <th>Score (0-10)</th>
+            <th>Portal status</th>
+            <th>Last updated</th>
+            <th>Source</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in reader_entries %}
+            <tr>
+              <td>
+                <span class="teacher-name-cell">
+                  {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}
+                  <button
+                    type="button"
+                    class="icon-button message-launch"
+                    data-teacher-id="{{ entry.teacher.id }}"
+                    data-teacher-name="{{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                    aria-label="Message {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}"
+                  >
+                    Message
+                  </button>
+                </span>
+              </td>
+              <td>{{ entry.teacher.country }}</td>
+              <td>
+                <input type="number" min="0" max="10" step="0.1" name="score_{{ entry.teacher.id }}" value="{{ entry.score or '' }}" style="width: 5rem;">
+              </td>
+              <td>
+                {% set status_code = entry.portal_status_code or '' %}
+                {% if status_code == '' %}
+                  {% if entry.finalized %}
+                    {% set status_code = "finalized" %}
+                  {% elif entry.score is not none %}
+                    {% set status_code = "in_progress" %}
+                  {% else %}
+                    {% set status_code = "pending" %}
+                  {% endif %}
+                {% endif %}
+                {% if entry.finalized %}
+                  {% set status_code = "finalized" %}
+                {% endif %}
+                {% if status_code == "finalized" %}
+                  <span class="status-tag success">Teacher finalized</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">finalized on {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_override" %}
+                  <span class="status-tag warning">Admin override</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">overridden {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "admin_entered" %}
+                  <span class="status-tag">Admin entered</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">entered {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "locked" %}
+                  <span class="status-tag warning">Locked by admin</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">locked {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "in_progress" %}
+                  <span class="status-tag">Draft saved</span>
+                  {% if entry.portal_status_timestamp %}
+                    <div class="fine-print">updated {{ entry.portal_status_timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                {% elif status_code == "awaiting_finalization" %}
+                  <span class="status-tag warning">Awaiting student finalization</span>
+                  <div class="fine-print">Student must finalize their submission.</div>
+                {% elif status_code == "waiting_upload" %}
+                  <span class="status-tag warning">Awaiting essay upload</span>
+                  <div class="fine-print">Essay file not yet available.</div>
+                {% else %}
+                  <span class="status-tag">Not started</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.updated_at %}
+                  {{ entry.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  &mdash;
+                {% endif %}
+              </td>
+              <td>{{ entry.source }}</td>
+              <td>
+                {% if entry.finalized or entry.is_extra %}
+                  {% if entry.finalized %}
+                    <button type="submit" name="unlock_reader" value="{{ entry.teacher_id }}" class="button-link">Unlock</button>
+                    {% if entry.is_extra %}
+                      <span class="button-spacer">&middot;</span>
+                    {% endif %}
+                  {% endif %}
+                  {% if entry.is_extra %}
+                    <button type="submit" name="remove_reader" value="{{ entry.teacher_id }}" class="button-link danger">Remove</button>
+                  {% endif %}
+                {% else %}
+                  &mdash;
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="form-actions" style="margin-top: 1rem;">
+        <button type="submit" class="button">Save scores</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Add additional reader</h3>
+    {% if available_teachers %}
+      <form method="post" class="form-grid" novalidate hx-boost="true" hx-target="#stage1-scoring-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="add_reader">
+        <div class="form-field">
+          <label for="extra-reader">Teacher</label>
+          <select id="extra-reader" name="teacher_id" required>
+            <option value="" disabled selected>Select teacher</option>
+            {% for teacher in available_teachers %}
+              <option value="{{ teacher.id }}">{{ teacher.first_name }} {{ teacher.last_name }} &middot; {{ teacher.country }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="button">Add reader</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="fine-print">No additional teachers available.</p>
+    {% endif %}
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Stage 1 status</h3>
+    <p><strong>Entered scores:</strong> {{ status.entered_scores }} / {{ status.expected_scores }}</p>
+    <p><strong>Average:</strong>
+      {% if status.average_score is not none %}
+        {{ "%.2f"|format(status.average_score) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </p>
+    <p><strong>Maximum difference:</strong>
+      {% if status.score_range is not none %}
+        {{ "%.2f"|format(status.score_range) }}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </p>
+    <p><strong>Recommended action:</strong> {{ status.recommendation }}</p>
+    <p>
+      <strong>Grading access:</strong>
+      {% if stage1_global_lock %}
+        <span class="status-tag warning">Globally locked</span>
+      {% elif assignment.stage1_locked %}
+        <span class="status-tag warning">Locked</span>
+      {% else %}
+        <span class="status-tag success">Open</span>
+      {% endif %}
+    </p>
+    <div class="cta-group" style="margin-top: 1rem;">
+      <form method="post" style="display: inline;" hx-boost="true" hx-target="#stage1-scoring-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="toggle_stage1_lock">
+        <button type="submit" class="button secondary">
+          {% if assignment.stage1_locked %}Unlock assignment grading{% else %}Lock assignment grading{% endif %}
+        </button>
+      </form>
+      <form method="post" style="display: inline;" hx-boost="true" hx-target="#stage1-scoring-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="mark_stage2">
+        <button type="submit" class="button{{ ' secondary' if not assignment.stage_two_candidate else '' }}">
+          {% if assignment.stage_two_candidate %}Stage 2 qualified{% else %}Mark as Stage 2 qualified{% endif %}
+        </button>
+      </form>
+      <form method="post" style="display: inline;" hx-boost="true" hx-target="#stage1-scoring-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="mark_extra">
+        <button type="submit" class="button{{ ' secondary' if not assignment.needs_additional_reading else '' }}">
+          {% if assignment.needs_additional_reading %}Needs extra reading{% else %}Mark needs extra reading{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+</div>

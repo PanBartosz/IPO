@@ -8,21 +8,52 @@
       <h2>Dashboard Settings</h2>
       <a class="button-link" href="{{ url_for('web.admin_dashboard') }}">Back to dashboard</a>
     </div>
-    <form method="post" class="form-grid" novalidate>
-      {{ form.hidden_tag() }}
-      <div class="form-field">
-        {{ form.upload_deadline.label }}
-        {{ form.upload_deadline(type="datetime-local") }}
-        <span class="form-help">Leave blank to use default ({{ config.DASHBOARD_UPLOAD_DEADLINE or 'none' }}).</span>
-        {% for error in form.upload_deadline.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
-      </div>
+    <div class="settings-layout">
+      <aside class="settings-sidebar">
+        <div class="settings-sidebar__title">Settings Sections</div>
+        <nav class="settings-nav">
+          <a href="#settings-deadlines">Deadlines & SLA</a>
+          <a href="#settings-uploads">Uploads & Limits</a>
+          <a href="#settings-modules">Modules & Automation</a>
+          <a href="#settings-consents">Consent Texts</a>
+          <a href="#settings-emails">Email Templates</a>
+        </nav>
+      </aside>
+      <div class="settings-content">
+        <form method="post" class="form-grid" novalidate>
+          {{ form.hidden_tag() }}
+          <div class="form-field full-width">
+            <h3 id="settings-deadlines" class="settings-section-title">Deadlines & SLA</h3>
+          </div>
+          <div class="form-field">
+            {{ form.upload_deadline.label }}
+            {{ form.upload_deadline(type="datetime-local") }}
+            <span class="form-help">Leave blank to use default ({{ config.DASHBOARD_UPLOAD_DEADLINE or 'none' }}).</span>
+            {% for error in form.upload_deadline.errors %}
+              <div class="field-error">{{ error }}</div>
+            {% endfor %}
+          </div>
       <div class="form-field">
         {{ form.stage2_deadline.label }}
         {{ form.stage2_deadline(type="datetime-local") }}
         <span class="form-help">Leave blank to use default ({{ config.DASHBOARD_STAGE2_DEADLINE or 'none' }}).</span>
         {% for error in form.stage2_deadline.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.event_end.label }}
+        {{ form.event_end(type="datetime-local") }}
+        <span class="form-help">Controls when student and delegation leader essay downloads unlock. Default: {{ config.DASHBOARD_EVENT_END or 'none' }}.</span>
+        {% for error in form.event_end.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.event_end_override.label }}
+        {{ form.event_end_override() }}
+        <span class="form-help">Use this to manually end or reopen essay downloads regardless of the event end time.</span>
+        {% for error in form.event_end_override.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
@@ -42,11 +73,30 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
+      <div class="form-field full-width">
+        <h3 id="settings-uploads" class="settings-section-title">Uploads & Limits</h3>
+      </div>
       <div class="form-field">
         {{ form.packet_print_mode.label }}
         {{ form.packet_print_mode() }}
         <span class="form-help">Controls whether automatically generated packets insert blank pages for duplex printing.</span>
         {% for error in form.packet_print_mode.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.essay_word_limit.label }}
+        {{ form.essay_word_limit(min=1) }}
+        <span class="form-help">Default: 1500 words (approx. 5 pages at ~300 words/page). Applies to uploaded PDFs using text extraction.</span>
+        {% for error in form.essay_word_limit.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.essay_word_limit_mode.label }}
+        {{ form.essay_word_limit_mode() }}
+        <span class="form-help">Soft shows a warning; Hard blocks finalization when above the limit.</span>
+        {% for error in form.essay_word_limit_mode.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
@@ -61,12 +111,25 @@
         {% endfor %}
       </div>
       <div class="form-field full-width">
+        <h3 id="settings-modules" class="settings-section-title">Modules & Automation</h3>
+      </div>
+      <div class="form-field full-width">
         <label class="checkbox">
           {{ form.teacher_portal_enabled() }}
           {{ form.teacher_portal_enabled.label.text }}
         </label>
         <span class="form-help">When enabled, teachers receive individual credentials, can download assigned essays, submit scores, and view personalized board messages.</span>
         {% for error in form.teacher_portal_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.registration_invite_only() }}
+          {{ form.registration_invite_only.label.text }}
+        </label>
+        <span class="form-help">Requires invite links for student and teacher registrations. Delegation leaders can issue invites from the teacher portal; admins can bootstrap and manage invites via Admin → Invitation.</span>
+        {% for error in form.registration_invite_only.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
@@ -79,6 +142,55 @@
         {% for error in form.email_auto_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-consents" class="settings-section-title">Consent Texts</h3>
+      </div>
+      <div class="form-field full-width">
+        {{ form.ethics_consent_html.label }}
+        {{ form.ethics_consent_html(class_="js-richtext", id="ethics-consent-html") }}
+        <span class="form-help">Shown on student and teacher registration forms. HTML is allowed.</span>
+        {% for error in form.ethics_consent_html.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.gdpr_notice_html.label }}
+        {{ form.gdpr_notice_html(class_="js-richtext", id="gdpr-notice-html") }}
+        <span class="form-help">Shown on student and teacher registration forms. HTML is allowed.</span>
+        {% for error in form.gdpr_notice_html.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.photo_consent_html.label }}
+        {{ form.photo_consent_html(class_="js-richtext", id="photo-consent-html") }}
+        <span class="form-help">Shown on student and teacher registration forms. HTML is allowed.</span>
+        {% for error in form.photo_consent_html.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.assessor_competence_html.label }}
+        {{ form.assessor_competence_html(class_="js-richtext", id="assessor-competence-html") }}
+        <span class="form-help">Shown on the teacher registration form. HTML is allowed.</span>
+        {% for error in form.assessor_competence_html.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.accommodation_info_html.label }}
+        {{ form.accommodation_info_html(class_="js-richtext", id="accommodation-info-html") }}
+        <span class="form-help">Shown on student and teacher registration forms under Accommodation. HTML is allowed.</span>
+        {% for error in form.accommodation_info_html.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-emails" class="settings-section-title">Email Templates</h3>
+      </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Student confirmation</h4>
       </div>
       <div class="form-field">
         {{ form.email_student_subject.label }}
@@ -95,6 +207,9 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Teacher confirmation</h4>
+      </div>
       <div class="form-field">
         {{ form.email_teacher_subject.label }}
         {{ form.email_teacher_subject() }}
@@ -110,6 +225,42 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Delegation invites</h4>
+      </div>
+      <div class="form-field">
+        {{ form.email_student_invite_subject.label }}
+        {{ form.email_student_invite_subject() }}
+        {% for error in form.email_student_invite_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_student_invite_body.label }}
+        {{ form.email_student_invite_body() }}
+        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ email }}' }}, {{ '{{ country }}' }}, {{ '{{ invite_link }}' }}, {{ '{{ inviter_name }}' }}, {{ '{{ role_label }}' }}.</span>
+        {% for error in form.email_student_invite_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ form.email_teacher_invite_subject.label }}
+        {{ form.email_teacher_invite_subject() }}
+        {% for error in form.email_teacher_invite_subject.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.email_teacher_invite_body.label }}
+        {{ form.email_teacher_invite_body() }}
+        <span class="form-help">Available variables: same as student invite.</span>
+        {% for error in form.email_teacher_invite_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Teacher message emails</h4>
+      </div>
       <div class="form-field">
         {{ form.email_message_subject.label }}
         {{ form.email_message_subject() }}
@@ -124,6 +275,9 @@
         {% for error in form.email_message_body.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Survey emails</h4>
       </div>
       <div class="form-field">
         {{ form.email_survey_publish_subject.label }}
@@ -155,6 +309,9 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Student password reset</h4>
+      </div>
       <div class="form-field">
         {{ form.email_student_reset_link_subject.label }}
         {{ form.email_student_reset_link_subject() }}
@@ -185,6 +342,9 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Teacher password reset</h4>
+      </div>
       <div class="form-field">
         {{ form.email_teacher_reset_link_subject.label }}
         {{ form.email_teacher_reset_link_subject() }}
@@ -200,24 +360,43 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
-      <div class="form-field">
-        {{ form.email_teacher_reset_subject.label }}
-        {{ form.email_teacher_reset_subject() }}
-        {% for error in form.email_teacher_reset_subject.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
+          <div class="form-field">
+            {{ form.email_teacher_reset_subject.label }}
+            {{ form.email_teacher_reset_subject() }}
+            {% for error in form.email_teacher_reset_subject.errors %}
+              <div class="field-error">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="form-field full-width">
+            {{ form.email_teacher_reset_body.label }}
+            {{ form.email_teacher_reset_body() }}
+            <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
+            {% for error in form.email_teacher_reset_body.errors %}
+              <div class="field-error">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="form-actions">
+            {{ form.submit(class_="button") }}
+          </div>
+        </form>
       </div>
-      <div class="form-field full-width">
-        {{ form.email_teacher_reset_body.label }}
-        {{ form.email_teacher_reset_body() }}
-        <span class="form-help">Available variables: {{ '{{ first_name }}' }}, {{ '{{ last_name }}' }}, {{ '{{ portal_username }}' }}, {{ '{{ portal_password }}' }}, {{ '{{ portal_link }}' }}, {{ '{{ portal_login_link }}' }}.</span>
-        {% for error in form.email_teacher_reset_body.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
-      </div>
-      <div class="form-actions">
-        {{ form.submit(class_="button") }}
-      </div>
-    </form>
+    </div>
   </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ url_for('static', filename='vendor/tinymce/js/tinymce/tinymce.min.js') }}"></script>
+  <script>
+    tinymce.init({
+      selector: '.js-richtext',
+      menubar: false,
+      statusbar: false,
+      height: 260,
+      plugins: 'lists link',
+      toolbar: 'undo redo | bold italic underline | bullist numlist | link | removeformat',
+      branding: false,
+      default_link_target: '_blank',
+      link_default_protocol: 'https'
+    });
+  </script>
 {% endblock %}

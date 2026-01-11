@@ -550,6 +550,7 @@ _teacher_email_counts: dict[str, int] = {}
 _student_email_counts: dict[str, int] = {}
 _student_username_set: set[str] = set()
 _seed_teacher_credentials: list[tuple[str, str, str]] = []
+_seed_delegation_leader_credentials: list[tuple[str, str, str, str]] = []
 
 
 def _generate_seed_username(entry: dict, index: int) -> str:
@@ -574,7 +575,7 @@ def _unique_email(base: str, domain: str, cache: dict[str, int]) -> str:
     return f"{base}{count}@{domain}"
 
 
-def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
+def create_teacher(entry: dict, languages: list[str], index: int, delegation_leader: bool) -> Teacher:
     base = f"{_slugify(entry['first'])}.{_slugify(entry['last'])}"
     email = _unique_email(base, "ipo.ts", _teacher_email_counts)
     veteran_level = random.choice([1, 2, 3]) if random.random() < 0.7 else 0
@@ -584,12 +585,13 @@ def create_teacher(entry: dict, languages: list[str], index: int) -> Teacher:
         email=email,
         country=entry["country"],
         school=f"{entry['country']} National School",
-        gender="Male" if index % 2 == 0 else "Female",
+        sex_document="male" if index % 2 == 0 else "female",
+        accommodation_room_sharing="any_sex" if index % 3 == 0 else "same_sex",
         languages=", ".join(languages),
         meal_preference=MEAL_PREFERENCES[index % len(MEAL_PREFERENCES)],
         special_needs=None,
         tshirt_size=["S", "M", "L", "XL"][index % 4],
-        delegation_leader=index % 8 == 0,
+        delegation_leader=delegation_leader,
         prior_ipo_assessor_level=veteran_level,
         prior_ipo_assessor=bool(veteran_level),
         is_absent=False,
@@ -608,7 +610,8 @@ def create_student(entry: dict, language: str, index: int) -> Student:
         email=email,
         country=entry["country"],
         school=f"{entry['country']} College",
-        gender="Male" if index % 2 == 0 else "Female",
+        sex_document="male" if index % 2 == 0 else "female",
+        accommodation_room_sharing="any_sex" if index % 3 == 0 else "same_sex",
         date_of_birth=date(birth_year, (index % 12) + 1, ((index % 20) + 1)),
         essay_language=language,
         keyboard_preference="AZERTY" if language == "French" else "QWERTY",
@@ -635,6 +638,7 @@ def build_entries(kind: str) -> list[dict]:
 
 def seed_teachers() -> int:
     _seed_teacher_credentials.clear()
+    _seed_delegation_leader_credentials.clear()
     entries = build_entries("teacher")
     random.shuffle(entries)
 
@@ -671,15 +675,24 @@ def seed_teachers() -> int:
             cfg["languages"].add(language)
             current += 1
 
+    leaders_by_country: set[str] = set()
     for index, cfg in enumerate(teacher_configs):
         languages = sorted(cfg["languages"], key=lambda lang: (lang != cfg["data"]["native"], lang))
-        teacher = create_teacher(cfg["data"], languages, index)
+        country = cfg["data"]["country"]
+        is_leader = country not in leaders_by_country
+        if is_leader:
+            leaders_by_country.add(country)
+        teacher = create_teacher(cfg["data"], languages, index, is_leader)
         db.session.add(teacher)
         username, plain_password = _ensure_teacher_portal_credentials(teacher, reset_password=True)
         if plain_password:
             _seed_teacher_credentials.append(
                 (f"{teacher.first_name} {teacher.last_name}", username, plain_password)
             )
+            if is_leader:
+                _seed_delegation_leader_credentials.append(
+                    (teacher.country, f"{teacher.first_name} {teacher.last_name}", username, plain_password)
+                )
 
     return total
 
@@ -804,6 +817,10 @@ def main() -> None:
             print("Sample teacher portal credentials (first 5 teachers):")
             for name, username, password in _seed_teacher_credentials[:5]:
                 print(f"  {name}: {username} / {password}")
+        if _seed_delegation_leader_credentials:
+            country, name, username, password = _seed_delegation_leader_credentials[0]
+            print("Delegation leader credential (sample):")
+            print(f"  {country} - {name}: {username} / {password}")
         print("Sample student credentials (first 5 non-absent students):")
         for student in Student.query.filter_by(is_absent=False).limit(5).all():
             raw_password = getattr(student, "_seed_password_plain", "<hashed>")

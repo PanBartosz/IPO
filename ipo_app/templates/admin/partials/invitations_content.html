@@ -1,0 +1,361 @@
+<div class="table-card">
+  <div class="table-header">
+    <h2>Invitation</h2>
+    <div class="table-actions">
+      <a class="button-link" href="{{ url_for('web.admin_dashboard') }}">Back to dashboard</a>
+    </div>
+  </div>
+  <p class="fine-print">
+    Send invitation links for invite-only registration and track progress. Delegation invites are sent on behalf of an existing delegation leader.
+  </p>
+  {% if not auto_email_enabled %}
+    <div class="portal-alert warning">
+      Automatic emails are disabled. Create invites and share the invite links manually.
+    </div>
+  {% endif %}
+</div>
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Delegation invitations</h3>
+    <ul>
+      <li><strong>Total:</strong> {{ delegation_summary.total }}</li>
+      <li><strong>Pending:</strong> {{ delegation_summary.pending }}</li>
+      <li><strong>Started:</strong> {{ delegation_summary.started }}</li>
+      <li><strong>Completed:</strong> {{ delegation_summary.completed }}</li>
+      <li><strong>Revoked:</strong> {{ delegation_summary.revoked }}</li>
+    </ul>
+  </div>
+  <div class="portal-summary-card">
+    <h3>Normal invitations</h3>
+    <ul>
+      <li><strong>Total:</strong> {{ normal_summary.total }}</li>
+      <li><strong>Pending:</strong> {{ normal_summary.pending }}</li>
+      <li><strong>Started:</strong> {{ normal_summary.started }}</li>
+      <li><strong>Completed:</strong> {{ normal_summary.completed }}</li>
+      <li><strong>Revoked:</strong> {{ normal_summary.revoked }}</li>
+    </ul>
+  </div>
+</section>
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Delegation leader invite</h3>
+    <p class="fine-print">Creates a teacher invite that registers the user as a delegation leader.</p>
+    <form
+      method="post"
+      action="{{ url_for('web.admin_invitation_create_delegation_leader') }}"
+      class="form-grid"
+      novalidate
+      hx-post="{{ url_for('web.admin_invitation_create_delegation_leader') }}"
+      hx-target="#admin-invitations-content"
+    >
+      {{ delegation_leader_form.hidden_tag() }}
+      <div class="form-field">
+        {{ delegation_leader_form.first_name.label }}
+        {{ delegation_leader_form.first_name() }}
+        {% for error in delegation_leader_form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ delegation_leader_form.last_name.label }}
+        {{ delegation_leader_form.last_name() }}
+        {% for error in delegation_leader_form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ delegation_leader_form.email.label }}
+        {{ delegation_leader_form.email() }}
+        {% for error in delegation_leader_form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ delegation_leader_form.country.label }}
+        {{ delegation_leader_form.country() }}
+        {% for error in delegation_leader_form.country.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ delegation_leader_form.submit(class_="button") }}
+      </div>
+    </form>
+    <p class="fine-print">If the teacher is already registered, use <strong>Teachers → Edit</strong> to set <strong>Delegation leader</strong>.</p>
+  </div>
+
+  <div class="portal-summary-card">
+    <h3>Delegation invite</h3>
+    <p class="fine-print">Sends a student/teacher invite on behalf of a selected delegation leader (country is taken from the leader).</p>
+    {% if not delegation_leaders_available %}
+      <div class="portal-alert warning">No delegation leaders found. Create a delegation leader invite first.</div>
+    {% endif %}
+    <form
+      method="post"
+      action="{{ url_for('web.admin_invitation_create_delegation') }}"
+      class="form-grid"
+      novalidate
+      hx-post="{{ url_for('web.admin_invitation_create_delegation') }}"
+      hx-target="#admin-invitations-content"
+    >
+      {{ delegation_form.hidden_tag() }}
+      <div class="form-field full-width">
+        {{ delegation_form.delegation_leader_id.label }}
+        {{ delegation_form.delegation_leader_id() }}
+        {% for error in delegation_form.delegation_leader_id.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ delegation_form.role.label }}
+        {{ delegation_form.role() }}
+        {% for error in delegation_form.role.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ delegation_form.first_name.label }}
+        {{ delegation_form.first_name() }}
+        {% for error in delegation_form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ delegation_form.last_name.label }}
+        {{ delegation_form.last_name() }}
+        {% for error in delegation_form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ delegation_form.email.label }}
+        {{ delegation_form.email() }}
+        {% for error in delegation_form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {% if delegation_leaders_available %}
+          {{ delegation_form.submit(class_="button") }}
+        {% else %}
+          {{ delegation_form.submit(class_="button", disabled=true) }}
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+  <div class="portal-summary-card">
+    <h3>Normal invite</h3>
+    <p class="fine-print">Sends a student/teacher invite from the organizing team (any country).</p>
+    <form
+      method="post"
+      action="{{ url_for('web.admin_invitation_create_normal') }}"
+      class="form-grid"
+      novalidate
+      hx-post="{{ url_for('web.admin_invitation_create_normal') }}"
+      hx-target="#admin-invitations-content"
+    >
+      {{ normal_form.hidden_tag() }}
+      <div class="form-field full-width">
+        {{ normal_form.role.label }}
+        {{ normal_form.role() }}
+        {% for error in normal_form.role.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ normal_form.first_name.label }}
+        {{ normal_form.first_name() }}
+        {% for error in normal_form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ normal_form.last_name.label }}
+        {{ normal_form.last_name() }}
+        {% for error in normal_form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ normal_form.email.label }}
+        {{ normal_form.email() }}
+        {% for error in normal_form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ normal_form.country.label }}
+        {{ normal_form.country() }}
+        {% for error in normal_form.country.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ normal_form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+</section>
+
+<div class="table-card">
+  <div class="table-header">
+    <h3>Delegation invitations</h3>
+  </div>
+  {% if delegation_entries %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Country</th>
+          <th>Sender</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Email</th>
+          <th>Invite link</th>
+          <th>Record</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in delegation_entries %}
+          {% set status_class = "success" if entry.state.status == "completed" else "warning" if entry.state.status == "revoked" else "" %}
+          <tr>
+            <td>{{ entry.role_label }}</td>
+            <td>{{ entry.invite.country }}</td>
+            <td>{{ entry.sender_name }}</td>
+            <td>{{ entry.full_name }}</td>
+            <td>{{ entry.invite.email }}</td>
+            <td><span class="status-tag {{ status_class }}">{{ entry.state.label }}</span></td>
+            <td>
+              {{ entry.email_status }}
+              {% if entry.email_detail %}
+                <div class="fine-print">{{ entry.email_detail }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <a class="button-link" href="{{ entry.invite_link }}" target="_blank" rel="noopener">Open invite</a>
+              <div class="fine-print" style="word-break: break-all;">{{ entry.invite_link }}</div>
+            </td>
+            <td>
+              {% if entry.record_url %}
+                <a class="button-link" href="{{ entry.record_url }}">Edit {{ entry.record_label }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="table-actions">
+              {% if entry.can_resend %}
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_invitation_resend', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('web.admin_invitation_resend', invite_id=entry.invite.id) }}"
+                  hx-target="#admin-invitations-content"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link">Resend</button>
+                </form>
+              {% endif %}
+              {% if entry.can_revoke %}
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_invitation_revoke', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('web.admin_invitation_revoke', invite_id=entry.invite.id) }}"
+                  hx-target="#admin-invitations-content"
+                  onsubmit="return confirm('Revoke this invite?');"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link secondary">Revoke</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="fine-print">No delegation invitations yet.</p>
+  {% endif %}
+</div>
+
+<div class="table-card">
+  <div class="table-header">
+    <h3>Normal invitations</h3>
+  </div>
+  {% if normal_entries %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Country</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Email</th>
+          <th>Invite link</th>
+          <th>Record</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in normal_entries %}
+          {% set status_class = "success" if entry.state.status == "completed" else "warning" if entry.state.status == "revoked" else "" %}
+          <tr>
+            <td>{{ entry.role_label }}</td>
+            <td>{{ entry.invite.country }}</td>
+            <td>{{ entry.full_name }}</td>
+            <td>{{ entry.invite.email }}</td>
+            <td><span class="status-tag {{ status_class }}">{{ entry.state.label }}</span></td>
+            <td>
+              {{ entry.email_status }}
+              {% if entry.email_detail %}
+                <div class="fine-print">{{ entry.email_detail }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <a class="button-link" href="{{ entry.invite_link }}" target="_blank" rel="noopener">Open invite</a>
+              <div class="fine-print" style="word-break: break-all;">{{ entry.invite_link }}</div>
+            </td>
+            <td>
+              {% if entry.record_url %}
+                <a class="button-link" href="{{ entry.record_url }}">Edit {{ entry.record_label }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="table-actions">
+              {% if entry.can_resend %}
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_invitation_resend', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('web.admin_invitation_resend', invite_id=entry.invite.id) }}"
+                  hx-target="#admin-invitations-content"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link">Resend</button>
+                </form>
+              {% endif %}
+              {% if entry.can_revoke %}
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_invitation_revoke', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('web.admin_invitation_revoke', invite_id=entry.invite.id) }}"
+                  hx-target="#admin-invitations-content"
+                  onsubmit="return confirm('Revoke this invite?');"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link secondary">Revoke</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="fine-print">No normal invitations yet.</p>
+  {% endif %}
+</div>

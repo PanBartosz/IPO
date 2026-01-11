@@ -11,6 +11,7 @@ services:
       SECRET_KEY: dev-secret-key
       DATABASE_URL: mysql+pymysql://ipo_app:ipo_password@db:3306/ipo_app?charset=utf8mb4
       ADMIN_USERS: admin:dev-password
+      TEACHER_BOARD_PASSWORD: dev-board-password
       PYTHONPATH: /app
     volumes:
     - .:/app

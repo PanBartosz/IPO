@@ -1,0 +1,103 @@
+<section class="portal-hero">
+  <div>
+    <h2>Welcome, {{ student.first_name }} {{ student.last_name }}</h2>
+    <p class="fine-print">Review your essay upload status and complete outstanding surveys.</p>
+  </div>
+  <div class="portal-actions">
+    {% if upload_available %}
+      <a class="button secondary" href="{{ url_for('web.student_upload') }}">Essay upload</a>
+    {% else %}
+      <span class="button secondary" aria-disabled="true" style="pointer-events: none; opacity: 0.6;">Essay upload</span>
+    {% endif %}
+    <a class="button" href="{{ url_for('web.student_logout') }}">Sign out</a>
+  </div>
+</section>
+
+{% if not upload_module_enabled %}
+  <div class="portal-alert warning" style="margin-bottom: 1.5rem;">
+    Essay uploads are currently disabled. The organizing team will enable this module during the competition window.
+  </div>
+{% elif upload_locked %}
+  <div class="portal-alert warning" style="margin-bottom: 1.5rem;">
+    Essay uploads are temporarily locked by the organizing team. Please try again shortly.
+  </div>
+{% endif %}
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Essay status</h3>
+    <ul>
+      <li>
+        <strong>Upload:</strong>
+        {% if upload_status.has_upload %}
+          Uploaded {{ upload_status.uploaded_at.strftime('%Y-%m-%d %H:%M') if upload_status.uploaded_at else '—' }}
+        {% else %}
+          Not uploaded
+        {% endif %}
+      </li>
+      <li>
+        <strong>Finalized:</strong>
+        {% if upload_status.finalized %}
+          Yes{% if upload_status.finalized_at %} ({{ upload_status.finalized_at.strftime('%Y-%m-%d %H:%M') }}){% endif %}
+        {% else %}
+          No
+        {% endif %}
+      </li>
+    </ul>
+    {% if essay_access.download_allowed %}
+      <a class="button-link" href="{{ url_for('web.student_upload_download') }}">Download essay PDF →</a>
+    {% elif download_notice %}
+      <p class="fine-print">{{ download_notice }}</p>
+    {% endif %}
+    {% if upload_available %}
+      <a class="button-link" href="{{ url_for('web.student_upload') }}">Go to essay upload →</a>
+    {% elif not upload_module_enabled %}
+      <p class="fine-print">Uploads will open during the competition window.</p>
+    {% else %}
+      <p class="fine-print">Uploads are temporarily locked. Check back soon.</p>
+    {% endif %}
+  </div>
+  <div class="portal-summary-card">
+    <h3>Surveys</h3>
+    <ul>
+      <li><strong>Total:</strong> {{ survey_summary.total }}</li>
+      <li><strong>Completed:</strong> {{ survey_summary.completed }}</li>
+      <li><strong>Outstanding:</strong> {{ survey_summary.outstanding }}</li>
+      <li><strong>Closed:</strong> {{ survey_summary.closed }}</li>
+    </ul>
+    <a class="button-link" href="{{ url_for('web.student_surveys') }}">View all surveys →</a>
+  </div>
+</section>
+
+<section class="portal-survey-section">
+  <h3>Outstanding surveys</h3>
+  {% if survey_outstanding %}
+    <ul class="portal-survey-list">
+      {% for item in survey_outstanding %}
+        <li class="portal-survey-card">
+          <header>
+            <h4>{{ item.survey.title }}</h4>
+            {% if item.survey.close_at %}
+              <span class="fine-print">Due {{ item.survey.close_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            {% endif %}
+          </header>
+          {% if item.survey.description %}
+            <p class="fine-print">{{ item.survey.description }}</p>
+          {% endif %}
+          <footer>
+            <a class="button" href="{{ item.detail_url }}">Complete survey</a>
+          </footer>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="fine-print">All surveys completed. Thank you for your response!</p>
+  {% endif %}
+</section>
+
+<div
+  aria-hidden="true"
+  hx-get="{{ url_for('web.student_portal') }}"
+  hx-trigger="every 60s"
+  hx-target="#student-portal-content"
+></div>

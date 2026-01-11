@@ -10,10 +10,6 @@
     </div>
     <p>Generate personalised packets for steering committee members to review Stage 3 essays. Provide the committee member names and select the essays to include. The generated PDF contains a title sheet for each member followed by full essays with space for comments.</p>
 
-    {% if not form.essay_ids.choices %}
-      <div class="flash flash-warning">No essays are currently marked for Stage 3. Mark recommendations in Stage 2 scoring before creating packets.</div>
-    {% endif %}
-
     <form method="post" class="form-grid" novalidate>
       {{ form.hidden_tag() }}
       <div class="form-field">

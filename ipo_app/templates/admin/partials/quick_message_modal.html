@@ -6,7 +6,7 @@
     launch_selector='.message-launch'
 ) -%}
   <div id="{{ modal_id }}" class="message-modal" aria-hidden="true">
-    <div class="message-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="{{ modal_id }}-title">
+    <div class="message-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="{{ modal_id }}-title" tabindex="-1">
       <header class="message-modal__header">
         <h3 id="{{ modal_id }}-title">Send message</h3>
         <p class="message-modal__recipient">To: <span data-role="teacher-name">—</span></p>
@@ -24,7 +24,7 @@
             </select>
           </div>
         {% endif %}
-        <form method="post" action="{{ url_for('web.admin_message_quick') }}" class="form-grid message-modal__form" novalidate>
+        <form method="post" action="{{ url_for('web.admin_message_quick') }}" class="form-grid message-modal__form" novalidate hx-post="{{ url_for('web.admin_message_quick') }}" hx-swap="none">
           {{ form.hidden_tag() }}
           {{ form.teacher_id() }}
           <div class="form-field">
@@ -58,6 +58,7 @@
       if (!modal) {
         return;
       }
+      const dialog = modal.querySelector(".message-modal__dialog");
       const form = modal.querySelector(".message-modal__form");
       const teacherField = form ? form.querySelector('input[name="teacher_id"]') : null;
       const teacherNameTarget = modal.querySelector('[data-role="teacher-name"]');
@@ -68,6 +69,46 @@
       const defaultPriority = prioritySelect ? prioritySelect.value : "normal";
       const templateSelect = document.getElementById(modalId + "-template");
       const messageTemplates = {{ templates_data | tojson }};
+      let openerElement = null;
+
+      function getFocusableElements() {
+        if (!dialog) {
+          return [];
+        }
+        const selector =
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+        return Array.from(dialog.querySelectorAll(selector)).filter((el) => el.getAttribute("aria-hidden") !== "true");
+      }
+
+      function trapFocus(event) {
+        if (event.key !== "Tab" || !modal.classList.contains("is-visible")) {
+          return;
+        }
+        const focusables = getFocusableElements();
+        if (focusables.length === 0) {
+          event.preventDefault();
+          if (dialog) {
+            dialog.focus();
+          }
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+
+        if (event.shiftKey) {
+          if (active === first || active === dialog) {
+            event.preventDefault();
+            last.focus();
+          }
+          return;
+        }
+
+        if (active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
 
       function resetForm() {
         if (form) {
@@ -104,25 +145,35 @@
         }
       }
 
-      function openModal(teacherId, teacherName) {
+      function openModal(teacherId, teacherName, opener) {
         resetForm();
+        openerElement = opener || document.activeElement;
         if (teacherField) {
           teacherField.value = teacherId;
         }
         if (teacherNameTarget) {
           teacherNameTarget.textContent = teacherName;
         }
+        modal.setAttribute("aria-hidden", "false");
         modal.classList.add("is-visible");
         document.body.classList.add("modal-open");
         if (titleInput) {
           titleInput.focus();
+        } else if (dialog) {
+          const focusables = getFocusableElements();
+          (focusables[0] || dialog).focus();
         }
       }
 
       function closeModal() {
+        modal.setAttribute("aria-hidden", "true");
         modal.classList.remove("is-visible");
         document.body.classList.remove("modal-open");
         resetForm();
+        if (openerElement instanceof HTMLElement && document.contains(openerElement)) {
+          openerElement.focus();
+        }
+        openerElement = null;
       }
 
       modal.addEventListener("click", function (event) {
@@ -140,6 +191,7 @@
         if (event.key === "Escape" && modal.classList.contains("is-visible")) {
           closeModal();
         }
+        trapFocus(event);
       });
 
       if (templateSelect) {
@@ -148,17 +200,27 @@
         });
       }
 
-      const launchButtons = document.querySelectorAll(launchSelector);
-      launchButtons.forEach(function (button) {
-        button.addEventListener("click", function () {
-          const teacherId = button.getAttribute("data-teacher-id");
-          const teacherName = button.getAttribute("data-teacher-name") || "Unknown";
-          if (!teacherId) {
-            return;
-          }
-          openModal(teacherId, teacherName);
-        });
+      document.body.addEventListener("quick-message-sent", function () {
+        closeModal();
       });
+
+      function handleLaunchClick(event) {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        const button = event.target.closest(launchSelector);
+        if (!button) {
+          return;
+        }
+        const teacherId = button.getAttribute("data-teacher-id");
+        const teacherName = button.getAttribute("data-teacher-name") || "Unknown";
+        if (!teacherId) {
+          return;
+        }
+        openModal(teacherId, teacherName, button);
+      }
+
+      document.addEventListener("click", handleLaunchClick);
     });
   </script>
 {%- endmacro %}

@@ -18,7 +18,8 @@ class Student(db.Model, TimestampMixin):
     last_name = db.Column(db.String(80), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
     school = db.Column(db.String(120), nullable=False)
-    gender = db.Column(db.String(10), nullable=False)
+    sex_document = db.Column(db.String(10), nullable=True)
+    accommodation_room_sharing = db.Column(db.String(32), nullable=True)
     date_of_birth = db.Column(db.Date, nullable=False)
     essay_language = db.Column(db.String(20), nullable=False)
     keyboard_preference = db.Column(db.String(20), nullable=False)
@@ -26,11 +27,20 @@ class Student(db.Model, TimestampMixin):
     special_needs = db.Column(db.Text, nullable=True)
     is_absent = db.Column(db.Boolean, nullable=False, default=False)
 
+    accepted_ethics = db.Column(db.Boolean, nullable=False, default=False)
+    accepted_ethics_at = db.Column(db.DateTime, nullable=True)
+    gdpr_acknowledged = db.Column(db.Boolean, nullable=False, default=False)
+    gdpr_acknowledged_at = db.Column(db.DateTime, nullable=True)
+    photo_consent = db.Column(db.Boolean, nullable=False, default=False)
+    photo_consent_at = db.Column(db.DateTime, nullable=True)
+
     upload_username = db.Column(db.String(64), nullable=True, unique=True)
     upload_password_hash = db.Column(db.String(255), nullable=True)
     upload_token = db.Column(db.String(64), nullable=True, unique=True)
     uploaded_filename = db.Column(db.String(255), nullable=True)
     uploaded_at = db.Column(db.DateTime, nullable=True)
+    essay_word_count = db.Column(db.Integer, nullable=True)
+    essay_word_counted_at = db.Column(db.DateTime, nullable=True)
     essay_finalized = db.Column(db.Boolean, nullable=False, default=False)
     essay_finalized_at = db.Column(db.DateTime, nullable=True)
 
@@ -39,6 +49,29 @@ class Student(db.Model, TimestampMixin):
         "SurveyAssignment",
         back_populates="student",
         cascade="all, delete-orphan",
+    )
+    essay_uploads = db.relationship(
+        "EssayUpload",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+
+
+class EssayUpload(db.Model, TimestampMixin):
+    __tablename__ = "essay_uploads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    word_count = db.Column(db.Integer, nullable=True)
+    word_counted_at = db.Column(db.DateTime, nullable=True)
+    finalized_at = db.Column(db.DateTime, nullable=True)
+
+    student = db.relationship("Student", back_populates="essay_uploads")
+
+    __table_args__ = (
+        db.Index("ix_essay_upload_student_id", "student_id"),
+        db.Index("ix_essay_upload_filename", "filename"),
     )
 
 
@@ -128,7 +161,8 @@ class Teacher(db.Model, TimestampMixin):
     last_name = db.Column(db.String(80), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
     school = db.Column(db.String(120), nullable=False)
-    gender = db.Column(db.String(10), nullable=False)
+    sex_document = db.Column(db.String(10), nullable=True)
+    accommodation_room_sharing = db.Column(db.String(32), nullable=True)
     languages = db.Column(db.String(120), nullable=False)
     prior_ipo_assessor = db.Column(db.Boolean, nullable=False, default=False)
     prior_ipo_assessor_level = db.Column(db.Integer, nullable=False, default=0)
@@ -137,6 +171,16 @@ class Teacher(db.Model, TimestampMixin):
     tshirt_size = db.Column(db.String(5), nullable=False)
     delegation_leader = db.Column(db.Boolean, nullable=False, default=False)
     is_absent = db.Column(db.Boolean, nullable=False, default=False)
+
+    accepted_ethics = db.Column(db.Boolean, nullable=False, default=False)
+    accepted_ethics_at = db.Column(db.DateTime, nullable=True)
+    declared_assessor_competence = db.Column(db.Boolean, nullable=False, default=False)
+    declared_assessor_competence_at = db.Column(db.DateTime, nullable=True)
+    gdpr_acknowledged = db.Column(db.Boolean, nullable=False, default=False)
+    gdpr_acknowledged_at = db.Column(db.DateTime, nullable=True)
+    photo_consent = db.Column(db.Boolean, nullable=False, default=False)
+    photo_consent_at = db.Column(db.DateTime, nullable=True)
+
     portal_username = db.Column(db.String(64), unique=True)
     portal_password_hash = db.Column(db.String(255))
     portal_token = db.Column(db.String(64), unique=True)
@@ -194,6 +238,41 @@ class PasswordResetToken(db.Model, TimestampMixin):
             "(student_id IS NULL AND teacher_id IS NOT NULL)",
             name="ck_password_reset_token_audience_target",
         ),
+    )
+
+
+class DelegationInviteRole(enum.StrEnum):
+    STUDENT = "student"
+    TEACHER = "teacher"
+
+
+class DelegationInvite(db.Model, TimestampMixin):
+    __tablename__ = "delegation_invites"
+
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    role = db.Column(db.Enum(DelegationInviteRole), nullable=False)
+    delegation_leader = db.Column(db.Boolean, nullable=False, default=False)
+    country = db.Column(db.String(100), nullable=False)
+    first_name = db.Column(db.String(80), nullable=True)
+    last_name = db.Column(db.String(80), nullable=True)
+    email = db.Column(db.String(255), nullable=False)
+    invited_by_id = db.Column(db.Integer, db.ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True)
+    student_id = db.Column(db.Integer, db.ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey("teachers.id", ondelete="SET NULL"), nullable=True)
+    opened_at = db.Column(db.DateTime, nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+    email_sent_at = db.Column(db.DateTime, nullable=True)
+    email_error = db.Column(db.Text, nullable=True)
+
+    invited_by = db.relationship("Teacher", foreign_keys=[invited_by_id])
+    student = db.relationship("Student")
+    teacher = db.relationship("Teacher", foreign_keys=[teacher_id])
+
+    __table_args__ = (
+        db.Index("ix_delegation_invite_token", "token"),
+        db.Index("ix_delegation_invite_country_role", "country", "role"),
     )
 
 

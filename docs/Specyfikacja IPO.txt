@@ -1,0 +1,192 @@
+Załącznik nr 1
+
+Specyfikacja funkcjonalna systemu do obsługi Międzynarodowej Olimpiady
+Filozoficznej
+
+1. Przedmiot
+Przedmiotem zamówienia jest wykonanie i wdrożenie systemu informatycznego do obsługi
+esejów w Olimpiadzie, obejmującego rejestrację uczestników i nauczycieli, przesyłanie prac,
+planowanie i realizację ocen na kilku etapach, komunikację oraz raportowanie wyników.
+
+System działa w przeglądarce internetowej i składa się z panelu administratora oraz dwóch
+portali: portalu ucznia i portalu nauczyciela.
+
+2. Role użytkowników i dostęp
+    ●​ Administrator - ma dostęp do panelu zarządzania, w szczególności do:
+          -​ rejestrów uczniów i nauczycieli,
+          -​ konfiguracji grup oceniających eseje i przydziałów esejów do
+              skonfigurowanych grup,
+          -​ podglądu i modyfikacji ocen na poszczególnych etapach zawodów,
+          -​ eksportów danych i dokumentów,
+          -​ ustawień systemu i szablonów wiadomości,
+          -​ dziennika zdarzeń (logów).
+    ●​ Uczeń - loguje się do portalu ucznia. Może:
+          -​ przeglądać swoje dane podstawowe i status udziału,
+          -​ wgrywać, podmieniać i finalizować własny esej,
+          -​ przeglądać status przesłania eseju,
+          -​ wypełniać i przeglądać swoje ankiety w udostępnionym okresie.
+    ●​ Nauczyciel - loguje się do portalu nauczyciela. Może:
+          -​ przeglądać listę przydzielonych prac do oceny (Etap 1 i Etap 2),
+          -​ pobierać eseje, wystawiać i finalizować oceny,
+          -​ przeglądać skrótowy widok swoich postępów,
+          -​ czytać komunikaty z tablicy oraz wypełniać ankiety.
+    ●​ System umożliwia oznaczanie uczestników jako nieobecnych, co automatycznie
+       wyklucza ich z logowania, przydziałów i wysyłek, chyba że administrator świadomie
+       włączy ich w wybrane operacje.
+    ●​ System zapewnia mechanizm resetowania haseł dla portalu ucznia i portalu
+       nauczyciela za pomocą jednorazowego łącza ważnego 24 godziny.
+
+3. Rejestracja i zarządzanie danymi
+    ●​ System udostępnia publiczne formularze rejestracji dla uczniów i nauczycieli, które
+       zbierają co najmniej:
+           ○​ dane osobowe,
+           ○​ szkołę i kraj,
+           ○​ język pracy,
+           ○​ preferencje techniczne (np. rodzaj klawiatury),
+           ○​ informacje o posiłkach,
+           ○​ potrzeby specjalne,
+           ○​ znacznik nieobecności (w razie potrzeby).
+   ●​ Po przyjęciu zgłoszenia system automatycznie:
+         ○​ generuje login i hasło dla odpowiedniego portalu (uczeń / nauczyciel),
+         ○​ opcjonalnie wysyła wiadomość e-mail z potwierdzeniem i danymi logowania.
+   ●​ Administrator może:
+         ○​ przeglądać i edytować dane uczniów i nauczycieli,
+         ○​ uzupełniać lub resetować loginy i hasła,
+         ○​ zmieniać status obecności,
+         ○​ eksportować listy uczniów i nauczycieli do plików XLSX.
+
+4. Portal ucznia - przesyłanie eseju
+    ●​ Uczeń może wgrać pracę wyłącznie w formacie PDF, o maksymalnym rozmiarze 10
+       MB. System zapewnia podgląd przesłanego pliku.
+    ●​ Do momentu oznaczenia eseju jako „zakończony” uczeń może wielokrotnie
+       podmieniać plik. Po finalizacji dalsze zmiany są blokowane.
+    ●​ Administrator może globalnie:
+           ○​ wyłączyć moduł przesyłania,
+           ○​ zablokować możliwość przesyłania lub finalizacji prac.
+    ●​ W portalu uczeń widzi:
+           ○​ aktualny status przesłania eseju (w tym datę i godzinę ostatniej zmiany),
+           ○​ listę przydzielonych ankiet wraz ze statusem ich wypełnienia.
+
+5. Portal nauczyciela - ocenianie prac
+    ●​ Nauczyciel widzi listę przydzielonych esejów w Etapie 1 i Etapie 2 z informacją o:
+           ○​ etapie i grupie czytelniczej,
+           ○​ statusie pracy (oczekuje na finalizację ucznia, gotowa do pobrania,
+               zablokowana, oceniona).
+    ●​ Pobranie eseju jest możliwe wyłącznie:
+           ○​ po finalizacji pracy przez ucznia,
+           ○​ przy braku blokad ustawionych przez administratora.
+    ●​ Formularz oceny umożliwia:
+           ○​ wprowadzanie i zapisywanie ocen w wersji roboczej,
+           ○​ finalizację oceny w skali 0-10 punktów,
+           ○​ dodanie komentarza do pracy.
+    ●​ Portal nauczyciela prezentuje:
+           ○​ podsumowanie postępów oceniania,
+           ○​ ostatnie komunikaty z tablicy,
+           ○​ listę ankiet przydzielonych temu nauczycielowi.
+
+6. Planowanie i przydziały esejów
+
+   ●​ System umożliwia tworzenie konfiguracji przydziałów dla Etapu 1 i Etapu 2. Każda
+      konfiguracja przydziałów ma status roboczy lub opublikowany; na jeden etap może
+      być aktywna tylko jedna opublikowana konfiguracja.
+   ●​ Administrator definiuje grupy czytelnicze, w szczególności:
+         ○​ język grupy,
+         ○​ docelową liczbę esejów,
+         ○​ dopuszczalność lub zakaz oceniania prac z tego samego kraju,
+         ○​ status (robocza/publikowana) oraz możliwość blokady edycji.
+   ●​ Członkowie grupy mają nadawaną rolę (lider, czytelnik, rezerwowy). System
+      kontroluje, aby nauczyciel nie był równocześnie przypisany sprzecznie w wielu
+      aktywnych grupach danego etapu.
+   ●​ System umożliwia:
+          ○​ automatyczne tworzenie grup na podstawie dostępności i języków
+             nauczycieli,
+          ○​ automatyczny przydział esejów do grup z uwzględnieniem języka i reguł
+             kraju,
+          ○​ ręczne modyfikacje konfiguracji przydziałów przez administratora.
+   ●​ Publikacja przydziałów:
+          ○​ uaktualnia statusy grup i konfiguracji przydziałów na opublikowane,
+          ○​ unieważnia inne konfiguracje przydziałów dla danego etapu danego etapu,
+          ○​ może zostać cofnięta wyłącznie przez powrót przydziałów do statusu
+             roboczego
+
+7. Ocena i etapy
+    ●​ Etap 1 - widok administratora dla pojedynczego ucznia obejmuje:
+           ○​ listę przypisanych czytelników,
+           ○​ możliwość dodawania i usuwania dodatkowych czytelników,
+           ○​ odblokowanie finalizacji ocen,
+           ○​ ręczną korektę punktów,
+           ○​ oznaczenie „kandydat Etapu 2” oraz „wymaga dodatkowej lektury”.
+    ●​ System stosuje automatyczną regułę:
+           ○​ po zebraniu kompletu ocen oblicza średnią i rozstęp,
+           ○​ jeśli różnica między ocenami przekracza 3 punkty, oznacza potrzebę
+              dodatkowego czytelnika,
+           ○​ jeśli średnia wynosi co najmniej 7 punktów - oznacza kandydata do Etapu 2.
+    ●​ Etap 2 - administrator może:
+           ○​ zarządzać konfiguracją przydziału czytelników Etapu 2,
+           ○​ korygować punktację,
+           ○​ stosować blokady ocen,
+           ○​ oznaczać rekomendację do Etapu 3.
+    ●​ System przewiduje globalne blokady ocen Etapu 1 i Etapu 2 oraz blokady per
+       zadanie, wpływające na możliwość edycji w portalu nauczyciela i w panelu
+       administratora.
+
+8. Komunikacja i ankiety
+    ●​ Tablica komunikatów nauczycielskich umożliwia:
+          ○​ publikację komunikatów do wszystkich nauczycieli lub wybranego
+               nauczyciela,
+          ○​ nadawanie priorytetu i kategorii,
+          ○​ archiwizację i przywracanie komunikatów.
+    ●​ Administrator może tworzyć szablony komunikatów i wysyłać powiązane
+       powiadomienia e-mail.
+    ●​ Moduł kampanii e-mailowych umożliwia:
+          ○​ tworzenie masowych wiadomości (temat, treść w formacie tekstowym i
+               HTML),
+        ○​ wybór odbiorców (uczniowie, nauczyciele, obie grupy) z możliwością
+            filtrowania po krajach i statusie obecności,
+        ○​ budowę listy bez duplikatów, podgląd i wysyłkę,
+        ○​ monitorowanie statusu wysyłki oraz powtarzanie wysyłki do adresów
+            nieobsłużonych.
+   ●​ Moduł ankiet umożliwia:
+        ○​ tworzenie ankiet z pytaniami różnych typów (krótka/rozszerzona odpowiedź,
+            wybór jednokrotny, lista wyboru, data),
+        ○​ określenie audytorium (uczniowie, nauczyciele, mieszane), kolejności pytań i
+            wymagalności odpowiedzi,
+        ○​ publikację do wszystkich lub wybranych osób w ramach audytorium oraz
+            wskazanie okresu dostępności,
+        ○​ wypełnianie ankiet z poziomu portali z uwzględnieniem okna czasowego i
+            ewentualnej możliwości edycji,
+        ○​ podgląd, filtrowanie i eksport odpowiedzi przez administratora, w tym
+            możliwość wysyłania przypomnień e-mail.
+
+9. Eksporty, dokumenty i ustawienia
+    ●​ System umożliwia tworzenie raportów ocen z filtrami (kraj, etap, rekomendacje Etapu
+       3), z opcją anonimizacji uczniów i nauczycieli oraz z dołączonymi znacznikami czasu.
+       Raporty są generowane w formacie XLSX lub PDF.
+    ●​ System umożliwia:
+           ○​ eksport bazy danych w formie pliku zrzutu oraz archiwum ZIP z esejami (w
+               tym wariant tylko prace zfinalizowane),
+           ○​ generowanie pakietów PDF: kart uczniów i nauczycieli z danymi logowania,
+               pakietów czytelniczych Etapu 1, pakietów Etapu 2 i Etapu 3, z opcjonalnym
+               trybem dwustronnym (dodawanie pustych stron).
+    ●​ W ustawieniach systemu administrator może:
+           ○​ włączać lub wyłączać moduł przesyłania esejów, portal nauczyciela oraz
+               automatyczne wysyłanie wiadomości e-mail,
+           ○​ edytować szablony wiadomości związane z rejestracją, komunikatami,
+               ankietami i resetem haseł,
+           ○​ konfigurować dane nadawcy automatycznie wysyłanych wiadomości e-mail.
+
+10. Bezpieczeństwo i audyt
+    ●​ System rejestruje w dzienniku zdarzeń co najmniej:
+           ○​ logowania i próby logowania,
+           ○​ rejestracje użytkowników,
+           ○​ zmiany ocen i publikacje przydziałów,
+           ○​ eksporty danych i generowanie dokumentów.
+    ●​ Dziennik można filtrować według rodzaju zdarzenia, osoby wykonującej operację,
+       typu obiektu i zakresu dat oraz eksportować do pliku CSV (do ustalonego limitu
+       wpisów).
+    ●​ Panel administratora jest dostępny wyłącznie po poprawnej autoryzacji, a portale
+       ucznia i nauczyciela uwzględniają statusy blokad i nieobecności.
+    ●​ System przyjmuje wyłącznie pliki PDF w określonym limicie rozmiaru, nadaje im
+       bezpieczne nazwy i przechowuje je w wydzielonym katalogu w sposób
+       uniemożliwiający bezpośredni dostęp osobom nieuprawnionym.
+

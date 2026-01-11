@@ -1,0 +1,105 @@
+<div class="table-card">
+  <h2>Filter activity</h2>
+  <form method="get" class="form-grid" novalidate hx-get="{{ url_for('web.admin_logs') }}" hx-target="#logs-content" hx-push-url="true">
+    <div class="form-field">
+      <label for="actor">Actor</label>
+      <input type="text" id="actor" name="actor" value="{{ filters.actor or '' }}">
+    </div>
+    <div class="form-field">
+      <label for="action">Action</label>
+      <select id="action" name="action">
+        <option value="">All actions</option>
+        {% for value in actions %}
+          <option value="{{ value }}"{% if filters.action == value %} selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-field">
+      <label for="object_type">Object type</label>
+      <select id="object_type" name="object_type">
+        <option value="">All types</option>
+        {% for value in object_types %}
+          <option value="{{ value }}"{% if filters.object_type == value %} selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-field">
+      <label for="q">Search text</label>
+      <input type="text" id="q" name="q" value="{{ filters.q or '' }}" placeholder="Description or details">
+    </div>
+    <div class="form-field">
+      <label for="start">Start</label>
+      <input type="datetime-local" id="start" name="start" value="{{ filters.start or '' }}">
+    </div>
+    <div class="form-field">
+      <label for="end">End</label>
+      <input type="datetime-local" id="end" name="end" value="{{ filters.end or '' }}">
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="button">Apply filters</button>
+      <a href="{{ url_for('web.admin_logs') }}" class="button-link" hx-get="{{ url_for('web.admin_logs') }}" hx-target="#logs-content" hx-push-url="true">Reset</a>
+    </div>
+  </form>
+</div>
+
+<div class="table-card table-card-wide">
+  <div class="table-header">
+    <h2>Activity logs</h2>
+    <div class="table-actions">
+      <a class="button-link secondary" href="{{ export_url }}">Export CSV</a>
+    </div>
+  </div>
+  {% if logs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Object</th>
+          <th>Description</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+          <tr>
+            <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '—' }}</td>
+            <td>{{ log.actor }}</td>
+            <td>{{ log.action }}</td>
+            <td>
+              {% if log.object_type %}
+                {{ log.object_type }}
+                {% if log.object_id %}<span class="fine-print">#{{ log.object_id }}</span>{% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>{{ log.description or '—' }}</td>
+            <td>
+              {% if log.details %}
+                <details>
+                  <summary>View</summary>
+                  <pre>{{ log.details | tojson(indent=2) }}</pre>
+                </details>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="pagination">
+      {% if prev_url %}
+        <a href="{{ prev_url }}" hx-get="{{ prev_url }}" hx-target="#logs-content" hx-push-url="true">Previous</a>
+      {% endif %}
+      <span>Page {{ pagination.page }} of {{ pagination.pages }}</span>
+      {% if next_url %}
+        <a href="{{ next_url }}" hx-get="{{ next_url }}" hx-target="#logs-content" hx-push-url="true">Next</a>
+      {% endif %}
+    </div>
+  {% else %}
+    <p class="fine-print">No log entries match the current filters.</p>
+  {% endif %}
+</div>

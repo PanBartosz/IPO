@@ -1,0 +1,189 @@
+<section class="portal-hero">
+  <div>
+    <h2>Delegation invites - {{ delegation_country }}</h2>
+    <p class="fine-print">Invite students and teachers to complete their registration and track progress.</p>
+  </div>
+  <div class="portal-actions">
+    <a class="button secondary" href="{{ url_for('teacher_portal.dashboard') }}">Back to dashboard</a>
+    <a class="button secondary" href="{{ url_for('teacher_portal.delegation_essays') }}">Delegation essays</a>
+    <a class="button secondary" href="{{ url_for('web.teacher_board') }}">Message board</a>
+    <a class="button" href="{{ url_for('teacher_portal.logout') }}">Sign out</a>
+  </div>
+</section>
+
+{% if not auto_email_enabled %}
+  <div class="portal-alert warning">
+    Automatic emails are disabled. Copy and share the invite links manually.
+  </div>
+{% endif %}
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Students</h3>
+    <ul>
+      <li><strong>Invited:</strong> {{ student_summary.total }}</li>
+      <li><strong>Pending:</strong> {{ student_summary.pending }}</li>
+      <li><strong>Started:</strong> {{ student_summary.started }}</li>
+      <li><strong>Completed:</strong> {{ student_summary.completed }}</li>
+      <li><strong>Revoked:</strong> {{ student_summary.revoked }}</li>
+    </ul>
+  </div>
+  <div class="portal-summary-card">
+    <h3>Teachers</h3>
+    <ul>
+      <li><strong>Invited:</strong> {{ teacher_summary.total }}</li>
+      <li><strong>Pending:</strong> {{ teacher_summary.pending }}</li>
+      <li><strong>Started:</strong> {{ teacher_summary.started }}</li>
+      <li><strong>Completed:</strong> {{ teacher_summary.completed }}</li>
+      <li><strong>Revoked:</strong> {{ teacher_summary.revoked }}</li>
+    </ul>
+  </div>
+</section>
+
+<section class="portal-summary-grid">
+  <div class="portal-summary-card">
+    <h3>Invite a student</h3>
+    <form
+      method="post"
+      action="{{ url_for('teacher_portal.delegation_invite_student') }}"
+      class="form-grid"
+      novalidate
+      hx-post="{{ url_for('teacher_portal.delegation_invite_student') }}"
+      hx-target="#delegation-content"
+    >
+      {{ student_form.hidden_tag() }}
+      <div class="form-field">
+        {{ student_form.first_name.label }}
+        {{ student_form.first_name() }}
+        {% for error in student_form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ student_form.last_name.label }}
+        {{ student_form.last_name() }}
+        {% for error in student_form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ student_form.email.label }}
+        {{ student_form.email() }}
+        {% for error in student_form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ student_form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+  <div class="portal-summary-card">
+    <h3>Invite a teacher</h3>
+    <form
+      method="post"
+      action="{{ url_for('teacher_portal.delegation_invite_teacher') }}"
+      class="form-grid"
+      novalidate
+      hx-post="{{ url_for('teacher_portal.delegation_invite_teacher') }}"
+      hx-target="#delegation-content"
+    >
+      {{ teacher_form.hidden_tag() }}
+      <div class="form-field">
+        {{ teacher_form.first_name.label }}
+        {{ teacher_form.first_name() }}
+        {% for error in teacher_form.first_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ teacher_form.last_name.label }}
+        {{ teacher_form.last_name() }}
+        {% for error in teacher_form.last_name.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ teacher_form.email.label }}
+        {{ teacher_form.email() }}
+        {% for error in teacher_form.email.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        {{ teacher_form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+</section>
+
+<div class="table-card">
+  <div class="table-header">
+    <h3>Invites</h3>
+  </div>
+  {% if invite_entries %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Email</th>
+          <th>Invite link</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in invite_entries %}
+          {% set status_class = "success" if entry.state.status == "completed" else "warning" if entry.state.status == "revoked" else "" %}
+          <tr>
+            <td>{{ entry.role_label }}</td>
+            <td>{{ entry.full_name }}</td>
+            <td>{{ entry.invite.email }}</td>
+            <td>
+              <span class="status-tag {{ status_class }}">{{ entry.state.label }}</span>
+            </td>
+            <td>
+              {{ entry.email_status }}
+              {% if entry.email_detail %}
+                <div class="fine-print">{{ entry.email_detail }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <a class="button-link" href="{{ entry.invite_link }}" target="_blank" rel="noopener">Open invite</a>
+              <div class="fine-print" style="word-break: break-all;">{{ entry.invite_link }}</div>
+            </td>
+            <td class="table-actions">
+              {% if entry.can_resend %}
+                <form
+                  method="post"
+                  action="{{ url_for('teacher_portal.delegation_invite_resend', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('teacher_portal.delegation_invite_resend', invite_id=entry.invite.id) }}"
+                  hx-target="#delegation-content"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link">Resend</button>
+                </form>
+              {% endif %}
+              {% if entry.can_revoke %}
+                <form
+                  method="post"
+                  action="{{ url_for('teacher_portal.delegation_invite_revoke', invite_id=entry.invite.id) }}"
+                  hx-post="{{ url_for('teacher_portal.delegation_invite_revoke', invite_id=entry.invite.id) }}"
+                  hx-target="#delegation-content"
+                  onsubmit="return confirm('Revoke this invite?');"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link secondary">Revoke</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="fine-print">No invites yet. Create one above to get started.</p>
+  {% endif %}
+</div>

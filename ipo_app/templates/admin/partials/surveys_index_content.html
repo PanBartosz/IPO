@@ -1,0 +1,18 @@
+<div class="table-card">
+  <div class="table-header">
+    <h2>Surveys</h2>
+    <div class="table-actions">
+      <a class="button-link" href="{{ url_for('web.admin_new_survey') }}">New survey</a>
+    </div>
+  </div>
+  {% if surveys %}
+    <div class="survey-grid">
+      {% for survey in surveys %}
+        {% set summary = stats.get(survey.id, {'total': 0, 'completed': 0, 'pending': 0, 'responses': 0}) %}
+        {% include "admin/partials/survey_card.html" %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="fine-print">No surveys created yet.</p>
+  {% endif %}
+</div>

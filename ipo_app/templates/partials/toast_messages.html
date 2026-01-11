@@ -1,0 +1,48 @@
+{% set use_oob = oob if oob is defined else false %}
+{% if messages %}
+  {% for category, message in messages %}
+    {% set toast_level = category or "info" %}
+    {% if toast_level == "error" %}
+      {% set toast_timeout = 8000 %}
+    {% elif toast_level == "warning" %}
+      {% set toast_timeout = 6500 %}
+    {% elif toast_level == "success" %}
+      {% set toast_timeout = 4000 %}
+    {% else %}
+      {% set toast_timeout = 5000 %}
+    {% endif %}
+    {% set is_alert = toast_level in ["error", "warning"] %}
+    {% if use_oob %}
+      <div hx-swap-oob="beforeend:#toast-stack">
+    {% endif %}
+    <div
+      class="toast toast-{{ toast_level }}"
+      data-toast
+      data-toast-level="{{ toast_level }}"
+      data-toast-timeout="{{ toast_timeout }}"
+      role="{{ 'alert' if is_alert else 'status' }}"
+      aria-live="{{ 'assertive' if is_alert else 'polite' }}"
+    >
+      <div class="toast-icon" aria-hidden="true">
+        {% if toast_level == "success" %}
+          OK
+        {% elif toast_level == "warning" %}
+          !
+        {% elif toast_level == "error" %}
+          X
+        {% else %}
+          i
+        {% endif %}
+      </div>
+      <div class="toast-body">
+        <div class="toast-title">{{ toast_level|title }}</div>
+        <div class="toast-message">{{ message }}</div>
+      </div>
+      <button class="toast-dismiss" type="button" data-toast-dismiss aria-label="Dismiss notification">x</button>
+      <div class="toast-progress" aria-hidden="true"></div>
+    </div>
+    {% if use_oob %}
+      </div>
+    {% endif %}
+  {% endfor %}
+{% endif %}

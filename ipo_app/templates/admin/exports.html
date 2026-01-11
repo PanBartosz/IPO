@@ -15,6 +15,7 @@
         <p class="fine-print">Generates an SQL dump of the IPO database.</p>
         {% if database_available %}
           <form method="post" action="{{ url_for('web.admin_export_database') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="button">Download database SQL</button>
           </form>
         {% else %}
@@ -35,6 +36,7 @@
         <h3>Essay archive</h3>
         <p class="fine-print">Download all stored essays with a manifest CSV.</p>
         <form method="post" action="{{ url_for('web.admin_export_essays') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label class="checkbox" style="margin-bottom: 0.5rem;">
             <input type="checkbox" name="finalized_only" value="1">
             Only include finalized essays

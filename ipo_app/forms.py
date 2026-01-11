@@ -9,6 +9,7 @@ from wtforms import (
     EmailField,
     IntegerField,
     PasswordField,
+    RadioField,
     SelectField,
     SelectMultipleField,
     StringField,
@@ -44,11 +45,17 @@ MEAL_CHOICES = [
     ("Vegan", "Vegan"),
 ]
 
-GENDER_CHOICES = [
-    ("Female", "Female"),
-    ("Male", "Male"),
-    ("Other", "Other"),
-    ("Prefer not to say", "Prefer not to say"),
+SEX_DOCUMENT_CHOICES = [
+    ("female", "female"),
+    ("male", "male"),
+]
+
+ACCOMMODATION_ROOM_SHARING_CHOICES = [
+    (
+        "same_sex",
+        "a room only with persons of this same sex as in official documents",
+    ),
+    ("any_sex", "a room with persons of any sex"),
 ]
 
 KEYBOARD_CHOICES = [
@@ -62,6 +69,12 @@ TSHIRT_CHOICES = [
     ("L", "L"),
     ("XL", "XL"),
     ("XXL", "XXL"),
+]
+
+PHOTO_CONSENT_CHOICES = [
+    ("", "Select an option"),
+    ("yes", "I consent to photo publication"),
+    ("no", "I do not consent to photo publication"),
 ]
 
 VETERAN_LEVEL_CHOICES = [
@@ -104,7 +117,16 @@ class StudentRegistrationForm(FlaskForm):
     email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
     country = StringField("Country", validators=[DataRequired(), Length(max=100)])
     school = StringField("School", validators=[DataRequired(), Length(max=120)])
-    gender = SelectField("Gender", validators=[DataRequired()], choices=GENDER_CHOICES)
+    sex_document = RadioField(
+        "Sex according to your official identity document",
+        validators=[InputRequired()],
+        choices=SEX_DOCUMENT_CHOICES,
+    )
+    accommodation_room_sharing = RadioField(
+        "Regarding accommodation, I feel safe staying in",
+        validators=[InputRequired()],
+        choices=ACCOMMODATION_ROOM_SHARING_CHOICES,
+    )
     date_of_birth = DateField("Date of birth", validators=[DataRequired()], format="%Y-%m-%d")
     essay_language = SelectField(
         "Essay language", validators=[DataRequired()], choices=LANGUAGE_CHOICES
@@ -118,6 +140,19 @@ class StudentRegistrationForm(FlaskForm):
     special_needs = TextAreaField(
         "Special dietary, health, or religious needs", validators=[Optional(), Length(max=5000)]
     )
+    gdpr_acknowledged = BooleanField(
+        "I confirm I have read the data processing information",
+        validators=[InputRequired()],
+    )
+    photo_consent = SelectField(
+        "Photo publication consent",
+        validators=[DataRequired()],
+        choices=PHOTO_CONSENT_CHOICES,
+    )
+    accepted_ethics = BooleanField(
+        "I confirm I have read and accept the IPO Code of Ethics",
+        validators=[InputRequired()],
+    )
     is_absent = BooleanField("Marked absent")
     submit = SubmitField("Submit registration")
 
@@ -128,7 +163,16 @@ class TeacherRegistrationForm(FlaskForm):
     email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
     country = StringField("Country", validators=[DataRequired(), Length(max=100)])
     school = StringField("School", validators=[DataRequired(), Length(max=120)])
-    gender = SelectField("Gender", validators=[DataRequired()], choices=GENDER_CHOICES)
+    sex_document = RadioField(
+        "Sex according to your official identity document",
+        validators=[InputRequired()],
+        choices=SEX_DOCUMENT_CHOICES,
+    )
+    accommodation_room_sharing = RadioField(
+        "Regarding accommodation, I feel safe staying in",
+        validators=[InputRequired()],
+        choices=ACCOMMODATION_ROOM_SHARING_CHOICES,
+    )
     languages = SelectMultipleField(
         "Languages",
         validators=[Optional()],
@@ -154,6 +198,23 @@ class TeacherRegistrationForm(FlaskForm):
     special_needs = TextAreaField(
         "Special dietary, health, or religious needs", validators=[Optional(), Length(max=5000)]
     )
+    gdpr_acknowledged = BooleanField(
+        "I confirm I have read the data processing information",
+        validators=[InputRequired()],
+    )
+    photo_consent = SelectField(
+        "Photo publication consent",
+        validators=[DataRequired()],
+        choices=PHOTO_CONSENT_CHOICES,
+    )
+    declared_assessor_competence = BooleanField(
+        "I confirm I am qualified and competent to assess philosophical essays",
+        validators=[InputRequired()],
+    )
+    accepted_ethics = BooleanField(
+        "I confirm I have read and accept the IPO Code of Ethics",
+        validators=[InputRequired()],
+    )
     is_absent = BooleanField("Marked absent")
     submit = SubmitField("Submit registration")
 
@@ -165,6 +226,45 @@ class TeacherRegistrationForm(FlaskForm):
         invalid = selected - available
         if invalid:
             raise ValidationError("Invalid language selection detected.")
+
+
+class DelegationInviteForm(FlaskForm):
+    first_name = StringField("First name", validators=[DataRequired(), Length(max=80)])
+    last_name = StringField("Last name", validators=[DataRequired(), Length(max=80)])
+    email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
+    submit = SubmitField("Send invite")
+
+
+class DelegationLeaderInviteForm(FlaskForm):
+    first_name = StringField("First name", validators=[DataRequired(), Length(max=80)])
+    last_name = StringField("Last name", validators=[DataRequired(), Length(max=80)])
+    email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
+    country = StringField("Country", validators=[DataRequired(), Length(max=100)])
+    submit = SubmitField("Create invite")
+
+
+INVITE_ROLE_CHOICES = [
+    ("student", "Student"),
+    ("teacher", "Teacher"),
+]
+
+
+class AdminDelegationInvitationForm(FlaskForm):
+    delegation_leader_id = SelectField("Delegation leader", validators=[DataRequired()], coerce=int)
+    role = SelectField("Role", validators=[DataRequired()], choices=INVITE_ROLE_CHOICES)
+    first_name = StringField("First name", validators=[DataRequired(), Length(max=80)])
+    last_name = StringField("Last name", validators=[DataRequired(), Length(max=80)])
+    email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
+    submit = SubmitField("Send delegation invite")
+
+
+class AdminInvitationForm(FlaskForm):
+    role = SelectField("Role", validators=[DataRequired()], choices=INVITE_ROLE_CHOICES)
+    first_name = StringField("First name", validators=[DataRequired(), Length(max=80)])
+    last_name = StringField("Last name", validators=[DataRequired(), Length(max=80)])
+    email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
+    country = StringField("Country", validators=[DataRequired(), Length(max=100)])
+    submit = SubmitField("Send invite")
 
 
 class AdminLoginForm(FlaskForm):
@@ -225,6 +325,19 @@ class DashboardSettingsForm(FlaskForm):
     stage2_deadline = DateTimeField(
         "Stage 2 deadline", format="%Y-%m-%dT%H:%M", validators=[Optional()]
     )
+    event_end = DateTimeField(
+        "Event end (essay access unlock)", format="%Y-%m-%dT%H:%M", validators=[Optional()]
+    )
+    event_end_override = SelectField(
+        "Event access override",
+        choices=[
+            ("auto", "Auto (use event end time)"),
+            ("force_end", "Force end (unlock downloads now)"),
+            ("force_open", "Force open (keep downloads locked)"),
+        ],
+        validators=[DataRequired(), AnyOf(["auto", "force_end", "force_open"])],
+        default="auto",
+    )
     stage1_sla = IntegerField(
         "Stage 1 score SLA (hours)", validators=[Optional()]
     )
@@ -237,13 +350,53 @@ class DashboardSettingsForm(FlaskForm):
         validators=[DataRequired(), AnyOf(["single", "double"])],
         default="single",
     )
+    essay_word_limit = IntegerField(
+        "Essay word limit",
+        validators=[Optional(), NumberRange(min=1, max=100000)],
+    )
+    essay_word_limit_mode = SelectField(
+        "Essay word limit mode",
+        choices=[("off", "Off"), ("soft", "Soft warning"), ("hard", "Hard block finalization")],
+        validators=[DataRequired(), AnyOf(["off", "soft", "hard"])],
+        default="soft",
+    )
+    ethics_consent_html = TextAreaField(
+        "Code of Ethics consent text (HTML)",
+        validators=[Optional()],
+        render_kw={"rows": 6},
+    )
+    gdpr_notice_html = TextAreaField(
+        "GDPR data processing information (HTML)",
+        validators=[Optional()],
+        render_kw={"rows": 6},
+    )
+    photo_consent_html = TextAreaField(
+        "Photo publication consent text (HTML)",
+        validators=[Optional()],
+        render_kw={"rows": 6},
+    )
+    assessor_competence_html = TextAreaField(
+        "Assessor competence statement text (HTML)",
+        validators=[Optional()],
+        render_kw={"rows": 6},
+    )
+    accommodation_info_html = TextAreaField(
+        "Accommodation important information block (HTML)",
+        validators=[Optional()],
+        render_kw={"rows": 6},
+    )
     essay_upload_enabled = BooleanField("Enable essay upload module")
     teacher_portal_enabled = BooleanField("Enable teacher portal (individual login & online grading)")
+    registration_invite_only = BooleanField("Require invite link for registrations")
     email_auto_enabled = BooleanField("Enable automatic emails")
     email_student_subject = StringField("Student confirmation subject", validators=[Optional(), Length(max=200)])
     email_student_body = TextAreaField("Student confirmation body", validators=[Optional()], render_kw={"rows": 6})
     email_teacher_subject = StringField("Teacher confirmation subject", validators=[Optional(), Length(max=200)])
     email_teacher_body = TextAreaField("Teacher confirmation body", validators=[Optional()], render_kw={"rows": 6})
+    email_student_invite_subject = StringField("Student invite subject", validators=[Optional(), Length(max=200)])
+    email_student_invite_body = TextAreaField("Student invite body", validators=[Optional()], render_kw={"rows": 6})
+    email_teacher_invite_subject = StringField("Teacher invite subject", validators=[Optional(), Length(max=200)])
+    email_teacher_invite_body = TextAreaField("Teacher invite body", validators=[Optional()], render_kw={"rows": 6})
     email_message_subject = StringField("Teacher message email subject", validators=[Optional(), Length(max=200)])
     email_message_body = TextAreaField("Teacher message email body", validators=[Optional()], render_kw={"rows": 6})
     email_survey_publish_subject = StringField("Survey publish email subject", validators=[Optional(), Length(max=200)])
