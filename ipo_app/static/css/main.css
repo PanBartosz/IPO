@@ -1021,6 +1021,61 @@ textarea {
   font-size: 0.9rem;
 }
 
+.invite-tabs {
+  display: grid;
+  gap: 1rem;
+}
+
+.invite-tabs__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.75rem;
+}
+
+.invite-tabs__tab {
+  appearance: none;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #1f2937;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.invite-tabs__tab:hover {
+  background: #f3f4f6;
+}
+
+.invite-tabs__tab[aria-selected="true"] {
+  background: #14213d;
+  color: #fca311;
+  border-color: #14213d;
+}
+
+.invite-tabs__tab:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
+.invite-tabs__panel > h4 {
+  margin-top: 0;
+}
+
+.invite-tabs__panel .form-grid {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.invite-tabs__panel .form-actions {
+  margin-top: 0.5rem;
+}
+
 .portal-columns {
   display: grid;
   gap: 1.5rem;
@@ -1642,6 +1697,7 @@ body.modal-open {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .table-actions form {

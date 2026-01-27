@@ -7,3 +7,166 @@
     {% include "admin/partials/invitations_content.html" %}
   </div>
 {% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    (function () {
+      function initInviteTabs(root) {
+        if (!root || !root.querySelectorAll) {
+          return;
+        }
+
+        root.querySelectorAll("[data-invite-tabs]").forEach(function (container) {
+          if (container.dataset.inviteTabsReady === "true") {
+            return;
+          }
+          container.dataset.inviteTabsReady = "true";
+
+          const tabButtons = Array.from(
+            container.querySelectorAll("[data-invite-tab]")
+          );
+          const panels = Array.from(
+            container.querySelectorAll("[data-invite-panel]")
+          );
+
+          function setActiveTab(nextTab) {
+            if (!nextTab) {
+              return;
+            }
+
+            tabButtons.forEach(function (button) {
+              const isActive = button.dataset.inviteTab === nextTab;
+              button.setAttribute("aria-selected", isActive ? "true" : "false");
+              button.tabIndex = isActive ? 0 : -1;
+            });
+
+            panels.forEach(function (panel) {
+              const isActive = panel.dataset.invitePanel === nextTab;
+              if (isActive) {
+                panel.removeAttribute("hidden");
+              } else {
+                panel.setAttribute("hidden", "");
+              }
+            });
+
+            container.dataset.activeTab = nextTab;
+          }
+
+          const initialTab =
+            container.dataset.activeTab ||
+            (tabButtons[0] && tabButtons[0].dataset.inviteTab);
+          setActiveTab(initialTab);
+
+          container.addEventListener("click", function (event) {
+            if (!event.target || !event.target.closest) {
+              return;
+            }
+            const clicked = event.target.closest("[data-invite-tab]");
+            if (!clicked || !container.contains(clicked)) {
+              return;
+            }
+            const tab = clicked.dataset.inviteTab;
+            setActiveTab(tab);
+          });
+
+          container.addEventListener("keydown", function (event) {
+            if (!event.target || !event.target.matches) {
+              return;
+            }
+            if (!event.target.matches("[data-invite-tab]")) {
+              return;
+            }
+
+            const currentIndex = tabButtons.indexOf(event.target);
+            if (currentIndex === -1) {
+              return;
+            }
+
+            let nextIndex = null;
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              nextIndex = (currentIndex + 1) % tabButtons.length;
+            } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+              nextIndex = (currentIndex - 1 + tabButtons.length) % tabButtons.length;
+            } else if (event.key === "Home") {
+              nextIndex = 0;
+            } else if (event.key === "End") {
+              nextIndex = tabButtons.length - 1;
+            }
+
+            if (nextIndex === null) {
+              return;
+            }
+
+            event.preventDefault();
+            const nextButton = tabButtons[nextIndex];
+            nextButton.focus();
+            setActiveTab(nextButton.dataset.inviteTab);
+          });
+        });
+      }
+
+      async function writeClipboard(text) {
+        if (!text) {
+          return false;
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (error) {
+            // fall through to legacy method
+          }
+        }
+
+        try {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "");
+          textarea.style.position = "fixed";
+          textarea.style.top = "-1000px";
+          textarea.style.left = "-1000px";
+          document.body.appendChild(textarea);
+          textarea.select();
+          textarea.setSelectionRange(0, textarea.value.length);
+          const ok = document.execCommand("copy");
+          textarea.remove();
+          return ok;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      document.addEventListener("click", async function (event) {
+        if (!event.target || !event.target.closest) {
+          return;
+        }
+        const button = event.target.closest("[data-copy-text]");
+        if (!button) {
+          return;
+        }
+        event.preventDefault();
+
+        const text = button.dataset.copyText;
+        const ok = await writeClipboard(text);
+        if (!ok) {
+          return;
+        }
+
+        const originalLabel = button.textContent;
+        button.textContent = "Copied";
+        window.setTimeout(function () {
+          button.textContent = originalLabel;
+        }, 1800);
+      });
+
+      document.addEventListener("DOMContentLoaded", function () {
+        initInviteTabs(document);
+      });
+
+      document.addEventListener("htmx:afterSwap", function () {
+        initInviteTabs(document);
+      });
+    })();
+  </script>
+{% endblock %}
