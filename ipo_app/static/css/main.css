@@ -618,11 +618,11 @@ textarea {
   gap: 0.75rem;
   align-items: start;
   padding: 0.85rem 1rem 0.75rem 1rem;
-  background: #ffffff;
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.15);
-  color: #111827;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
   transform: translateX(16px);
   opacity: 0;
   pointer-events: auto;
@@ -636,8 +636,8 @@ textarea {
   top: 0;
   bottom: 0;
   width: 4px;
-  border-radius: 12px 0 0 12px;
-  background: var(--toast-accent, #3b82f6);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: var(--toast-accent, var(--brand-purple));
 }
 
 .toast-success {
@@ -653,15 +653,15 @@ textarea {
 }
 
 .toast-warning {
-  --toast-accent: #f59e0b;
-  --toast-icon-bg: #fef3c7;
-  --toast-icon-color: #92400e;
+  --toast-accent: var(--brand-orange);
+  --toast-icon-bg: rgba(222, 116, 59, 0.18);
+  --toast-icon-color: rgba(18, 18, 18, 0.86);
 }
 
 .toast-info {
-  --toast-accent: #3b82f6;
-  --toast-icon-bg: #dbeafe;
-  --toast-icon-color: #1e3a8a;
+  --toast-accent: var(--brand-purple);
+  --toast-icon-bg: rgba(130, 45, 128, 0.16);
+  --toast-icon-color: var(--brand-purple);
 }
 
 .toast-icon {
@@ -670,8 +670,8 @@ textarea {
   width: 2rem;
   height: 2rem;
   border-radius: 999px;
-  background: var(--toast-icon-bg, #dbeafe);
-  color: var(--toast-icon-color, #1e3a8a);
+  background: var(--toast-icon-bg, rgba(130, 45, 128, 0.16));
+  color: var(--toast-icon-color, var(--brand-purple));
   font-size: 0.85rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -714,7 +714,7 @@ textarea {
   height: 3px;
   overflow: hidden;
   border-radius: 0 0 12px 12px;
-  background: rgba(15, 23, 42, 0.06);
+  background: rgba(18, 18, 18, 0.06);
 }
 
 .toast-progress::after {
@@ -722,7 +722,7 @@ textarea {
   display: block;
   height: 100%;
   width: 100%;
-  background: var(--toast-accent, #3b82f6);
+  background: var(--toast-accent, var(--brand-purple));
   transform-origin: left;
   animation: toast-progress var(--toast-duration, 5000ms) linear forwards;
 }
@@ -920,22 +920,33 @@ textarea {
 
 .question-actions .button-link {
   padding: 0.35rem 0.6rem;
-  border-radius: 6px;
-  background: #14213d;
-  color: #fca311;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.06);
+  border: 1px solid rgba(18, 18, 18, 0.14);
+  color: var(--brand-purple);
   text-decoration: none;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .question-actions .button-link.secondary {
-  background: #e5e7eb;
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(18, 18, 18, 0.82);
+  border-color: var(--border);
 }
 
 .question-actions .button-link.danger {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.question-actions .button-link:hover {
+  background: rgba(18, 18, 18, 0.1);
+  border-color: rgba(225, 76, 225, 0.35);
+  color: var(--brand-magenta);
 }
 
 .question-actions .button-link:disabled {
@@ -1021,7 +1032,7 @@ textarea {
 .survey-preview input[type="radio"],
 .survey-preview input[type="checkbox"] {
   width: auto;
-  accent-color: #0f172a;
+  accent-color: var(--brand-magenta);
 }
 
 .planner-grid {
@@ -1142,9 +1153,9 @@ textarea {
 }
 
 .member-role-leader {
-  color: #0b3ea2;
-  background: #dbeafe;
-  border: 1px solid #bfdbfe;
+  color: var(--brand-purple);
+  background: rgba(130, 45, 128, 0.12);
+  border: 1px solid rgba(130, 45, 128, 0.25);
 }
 
 .member-role-reader {
@@ -1169,9 +1180,9 @@ textarea {
 }
 
 .veteran-level-1 {
-  background: #dbeafe;
-  color: #0b3ea2;
-  border-color: #bfdbfe;
+  background: rgba(130, 45, 128, 0.12);
+  color: var(--brand-purple);
+  border-color: rgba(130, 45, 128, 0.25);
 }
 
 .veteran-level-2 {
@@ -1222,7 +1233,7 @@ textarea {
 .group-assignments .form-inline select {
   padding: 0.4rem 0.6rem;
   border-radius: 6px;
-  border: 1px solid #cbd5f5;
+  border: 1px solid var(--border-strong);
 }
 
 .link-like {
@@ -1236,7 +1247,7 @@ textarea {
 .icon-button {
   border: none;
   background: none;
-  color: #2563eb;
+  color: var(--brand-purple);
   cursor: pointer;
   font-size: 0.85rem;
   padding: 0;
@@ -1244,11 +1255,11 @@ textarea {
 
 .icon-button:hover,
 .icon-button:focus {
-  color: #1d4ed8;
+  color: var(--brand-magenta);
 }
 
 .icon-button:focus {
-  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline: 2px solid rgba(225, 76, 225, 0.42);
   outline-offset: 2px;
 }
 
@@ -1260,12 +1271,13 @@ textarea {
 }
 
 .pagination a {
-  color: #2563eb;
+  color: var(--brand-purple);
   text-decoration: none;
   font-weight: 600;
 }
 
 .pagination a:hover {
+  color: var(--brand-magenta);
   text-decoration: underline;
 }
 
@@ -1370,13 +1382,14 @@ textarea {
 }
 
 .invite-tabs__tab[aria-selected="true"] {
-  background: #14213d;
-  color: #fca311;
-  border-color: #14213d;
+  background: var(--brand-gradient);
+  color: var(--brand-white);
+  border-color: transparent;
+  box-shadow: var(--shadow-sm);
 }
 
 .invite-tabs__tab:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline: 3px solid rgba(225, 76, 225, 0.42);
   outline-offset: 2px;
 }
 
@@ -1518,8 +1531,8 @@ textarea {
   font-size: 0.75rem;
   border-radius: 999px;
   padding: 0.15rem 0.6rem;
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: rgba(130, 45, 128, 0.12);
+  color: var(--brand-purple);
 }
 
 .portal-assignment-card.status-finalized {
@@ -1527,19 +1540,19 @@ textarea {
 }
 
 .portal-assignment-card.status-waiting_upload {
-  border-color: #f59e0b;
+  border-color: var(--brand-orange);
 }
 
 .portal-assignment-card.status-pending {
-  border-color: #93c5fd;
+  border-color: rgba(130, 45, 128, 0.28);
 }
 
 .portal-assignment-card.status-in_progress {
-  border-color: #3b82f6;
+  border-color: var(--brand-magenta);
 }
 
 .portal-assignment-card.status-admin_entered {
-  border-color: #3b82f6;
+  border-color: var(--brand-magenta);
 }
 
 .portal-assignment-card.status-admin_override {
@@ -1547,7 +1560,7 @@ textarea {
 }
 
 .portal-assignment-card.status-locked {
-  border-color: #f59e0b;
+  border-color: var(--brand-orange);
 }
 
 .portal-survey-columns {
@@ -1983,33 +1996,37 @@ body.modal-open {
 .data-table thead th {
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid var(--border);
   padding: 0.6rem 0.4rem;
 }
 
 .data-table tbody td {
-  border-bottom: 1px solid #f1f3f9;
+  border-bottom: 1px solid rgba(18, 18, 18, 0.08);
   padding: 0.55rem 0.4rem;
 }
 
 .dataTables_wrapper .dataTables_paginate .paginate_button {
   padding: 0.25rem 0.75rem;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  color: rgba(18, 18, 18, 0.82) !important;
   margin-left: 0.25rem;
 }
 
 .dataTables_wrapper .dataTables_paginate .paginate_button.current {
-  background: #14213d;
-  color: #fca311 !important;
-  border-color: #14213d;
+  background: var(--brand-gradient);
+  color: var(--brand-white) !important;
+  border-color: transparent;
+  box-shadow: var(--shadow-sm);
 }
 
 .dataTables_wrapper .dataTables_length select,
 .dataTables_wrapper .dataTables_filter input {
-  border: 1px solid #cfcfd6;
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.65rem;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .table-actions {
@@ -2027,35 +2044,49 @@ body.modal-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.4rem 0.8rem;
-  border-radius: 6px;
-  background: #14213d;
-  color: #fca311;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
   text-decoration: none;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.86rem;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .table-actions .button-link.secondary {
-  background: #e5e7eb;
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.82);
+  border-color: var(--border);
+  color: rgba(18, 18, 18, 0.82);
 }
 
 .table-actions .button-link.danger {
   background: #fee2e2;
   color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.2);
 }
 
 .table-actions .button-link:not(.secondary):not(.danger):hover {
-  background: #0f1a31;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .table-actions .button-link.secondary:hover {
-  background: #d1d5db;
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(225, 76, 225, 0.4);
+  color: var(--brand-purple);
 }
 
 .table-actions .button-link.danger:hover {
   background: #fecaca;
+}
+
+.table-actions .button-link:not(.secondary):not(.danger) {
+  background: var(--brand-gradient);
+  color: var(--brand-white);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: var(--shadow-sm);
 }
 
 .survey-grid {
@@ -2139,7 +2170,7 @@ body.modal-open {
   justify-content: center;
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
-  background: #2563eb;
+  background: var(--brand-purple);
   color: #fff;
   font-size: 0.78rem;
   font-weight: 700;
@@ -2264,20 +2295,23 @@ body.modal-open {
   border-radius: 10px;
   padding: 0.75rem 1rem;
   font-weight: 600;
+  border: 1px solid var(--border);
 }
 
 .alert-list li a {
-  color: #0ea5e9;
+  color: var(--brand-magenta);
 }
 
 .alert-warning {
-  background: #fef3c7;
-  color: #92400e;
+  background: rgba(222, 116, 59, 0.14);
+  color: rgba(18, 18, 18, 0.86);
+  border-color: rgba(222, 116, 59, 0.28);
 }
 
 .alert-info {
-  background: #e0f2fe;
-  color: #075985;
+  background: rgba(130, 45, 128, 0.12);
+  color: var(--brand-purple);
+  border-color: rgba(130, 45, 128, 0.25);
 }
 
 .fine-list {
@@ -2297,12 +2331,12 @@ body.modal-open {
 
 .compact-table thead th {
   text-align: left;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
   padding: 0.5rem 0.25rem;
 }
 
 .compact-table tbody td {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid rgba(18, 18, 18, 0.08);
   padding: 0.45rem 0.25rem;
 }
 
@@ -2331,8 +2365,8 @@ body.modal-open {
 
 .filter-form select {
   padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid #cbd5f5;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
   min-width: 160px;
 }
 
@@ -2357,8 +2391,8 @@ body.modal-open {
 }
 .board-filter input, .board-filter select {
   padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid #cbd5f5;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
   min-width: 160px;
 }
 .board-filter .filter-actions {
@@ -2374,9 +2408,10 @@ body.modal-open {
 }
 
 .message-card {
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
@@ -2394,8 +2429,8 @@ body.modal-open {
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 600;
-  background: #e0f2fe;
-  color: #075985;
+  background: rgba(130, 45, 128, 0.12);
+  color: var(--brand-purple);
 }
 
 .message-card.priority-high .priority-tag {
@@ -2439,8 +2474,8 @@ body.modal-open {
 }
 .template-select select {
   padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid #cbd5f5;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
   min-width: 200px;
 }
 
@@ -2472,12 +2507,12 @@ body.modal-open {
 }
 
 .message-card.priority-normal .priority-tag {
-  background: #e0f2fe;
-  color: #075985;
+  background: rgba(130, 45, 128, 0.12);
+  color: var(--brand-purple);
 }
 
 .message-card.priority-low {
-  background: #f1f5f9;
+  background: rgba(18, 18, 18, 0.03);
 }
 
 .message-card.priority-low .priority-tag {
@@ -2489,5 +2524,5 @@ body.modal-open {
   background: #fee2e2;
 }
 .data-table tr.priority-low > td {
-  background: #f1f5f9;
+  background: rgba(18, 18, 18, 0.03);
 }
