@@ -1,6 +1,16 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&family=Raleway:wght@400;500;600;700&display=swap");
+
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --brand-purple: #822D80;
+  --brand-magenta: #E14CE1;
+  --brand-orange: #DE743B;
+  --brand-black: #121212;
+  --brand-white: #FFFFFF;
+  --font-heading: "Roboto Condensed", "Arial Narrow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Raleway", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --brand-gradient: linear-gradient(270deg, var(--brand-purple) 0%, var(--brand-magenta) 45%, var(--brand-orange) 100%);
+  font-family: var(--font-body);
   line-height: 1.5;
 }
 
@@ -8,6 +18,15 @@ body {
   margin: 0;
   background: #f5f6fb;
   color: #202124;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
 }
 
 a {
