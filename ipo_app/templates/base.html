@@ -10,12 +10,15 @@
   </head>
   <body>
     <header class="site-header">
-      <div class="container">
+      <div class="container-wide site-header__inner">
         <a class="brand" href="{{ url_for('web.index') }}">
-          <img src="{{ url_for('static', filename='img/logo-variant5.svg') }}" alt="International Philosophy Olympiad Portal logo" class="brand-logo">
-          <span class="brand-text">International Philosophy Olympiad</span>
+          <img src="{{ url_for('static', filename='img/ipo-warsaw-2026/6c.png') }}" alt="IPO Warsaw 2026 logo" class="brand-logo">
+          <span class="brand-text">
+            <span class="brand-title">IPO Warsaw 2026</span>
+            <span class="brand-subtitle">International Philosophy Olympiad portal</span>
+          </span>
         </a>
-        <nav>
+        <nav class="site-nav" aria-label="Primary">
           {% if not registration_invite_only %}
             <a href="{{ url_for('web.register_student') }}">Student registration</a>
             <a href="{{ url_for('web.register_teacher') }}">Teacher registration</a>
@@ -35,8 +38,8 @@
     {% with current_admin=current_admin, admin_modules=ADMIN_MODULES %}
 {% if current_admin %}
     <div class="admin-nav">
-      <div class="container">
-        <nav>
+      <div class="container-wide admin-nav__inner">
+        <nav aria-label="Admin">
           {% for label, endpoint in admin_modules %}
             <a href="{{ url_for(endpoint) }}">{{ label }}</a>
           {% endfor %}
@@ -55,8 +58,14 @@
       {% block content %}{% endblock %}
     </main>
     <footer class="site-footer">
-      <div class="container">
-        <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
+      <div class="container-wide site-footer__inner">
+        <div class="site-footer__brand">
+          <img src="{{ url_for('static', filename='img/ipo-warsaw-2026/7.png') }}" alt="" class="site-footer__logo" aria-hidden="true">
+          <div class="site-footer__text">
+            <div class="site-footer__title">IPO Warsaw 2026</div>
+            <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
+          </div>
+        </div>
       </div>
     </footer>
     <script src="{{ url_for('static', filename='vendor/htmx/htmx.min.js') }}" defer></script>
