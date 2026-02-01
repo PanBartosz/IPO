@@ -205,6 +205,11 @@ a:hover {
   z-index: 1;
   padding-top: 1.35rem;
   padding-bottom: 1.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
 }
 
 .site-footer__brand {
@@ -230,6 +235,36 @@ a:hover {
 
 .site-footer__text small {
   color: rgba(255, 255, 255, 0.72);
+}
+
+.site-footer__partners {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.site-footer__partner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-heading);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.72rem;
+}
+
+.site-footer__partner-label {
+  white-space: nowrap;
+}
+
+.site-footer__partner-logo {
+  width: 120px;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35));
 }
 
 .hero {
@@ -494,6 +529,33 @@ a:hover {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
+.consent-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.2rem;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  display: grid;
+  gap: 0.85rem;
+}
+
+.consent-block .richtext-block {
+  border: none;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.consent-block__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.consent-block__action {
+  align-items: center;
+}
+
 @media (max-width: 980px) {
   .settings-layout {
     grid-template-columns: 1fr;
@@ -590,6 +652,13 @@ textarea {
   display: flex;
   justify-content: flex-end;
   margin-top: 1rem;
+}
+
+.form-action-status {
+  align-self: center;
+  margin-right: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
 
 .checkbox {
@@ -1364,8 +1433,21 @@ textarea {
 }
 
 .portal-login-card {
-  max-width: 420px;
+  max-width: 480px;
   margin: 2rem auto;
+}
+
+.login-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.login-brand__logo {
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  display: block;
 }
 
 .portal-hero {
@@ -1979,6 +2061,21 @@ textarea {
     width: 100%;
     justify-content: flex-start;
   }
+
+  .site-footer__inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .site-footer__partners {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .site-footer__partner {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 
@@ -2068,7 +2165,8 @@ textarea {
   gap: 0.75rem;
 }
 
-.button.disabled {
+.button.disabled,
+.button:disabled {
   background: #e5e7eb;
   color: #9ca3af;
   cursor: not-allowed;

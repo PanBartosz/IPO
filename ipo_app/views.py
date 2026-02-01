@@ -3826,8 +3826,6 @@ def register_teacher():
                 form.first_name.data = invite.first_name
             if invite.last_name:
                 form.last_name.data = invite.last_name
-    if invite_active:
-        form.delegation_leader.data = False
     if invite_active and invite.opened_at is None:
         invite.opened_at = datetime.utcnow()
         db.session.commit()
@@ -3850,9 +3848,7 @@ def register_teacher():
         now = datetime.utcnow()
         email = invite.email.lower().strip() if invite_active else form.email.data.lower().strip()
         country = invite.country.strip() if invite_active else form.country.data.strip()
-        delegation_leader = bool(form.delegation_leader.data)
-        if invite_active:
-            delegation_leader = bool(invite.delegation_leader)
+        delegation_leader = bool(invite.delegation_leader) if invite_active else False
         teacher = Teacher(
             first_name=form.first_name.data.strip(),
             last_name=form.last_name.data.strip(),

@@ -187,7 +187,6 @@ class TeacherRegistrationForm(FlaskForm):
     tshirt_size = SelectField(
         "T-shirt size", validators=[DataRequired()], choices=TSHIRT_CHOICES
     )
-    delegation_leader = BooleanField("Yes, this teacher is a delegation leader")
     prior_ipo_assessor_level = SelectField(
         "IPO assessing experience",
         validators=[InputRequired()],

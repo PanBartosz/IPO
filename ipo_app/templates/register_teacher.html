@@ -120,17 +120,6 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
-      {% if not invite_active %}
-        <div class="form-field full-width">
-          <label class="checkbox">
-            {{ form.delegation_leader() }}
-            {{ form.delegation_leader.label.text }}
-          </label>
-          {% for error in form.delegation_leader.errors %}
-            <div class="field-error">{{ error }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
       <div class="form-field full-width">
         {{ form.prior_ipo_assessor_level.label }}
         {{ form.prior_ipo_assessor_level() }}
@@ -146,50 +135,55 @@
         {% endfor %}
       </div>
       <div class="form-field full-width">
-        <div class="richtext-block">{{ gdpr_notice_html | safe }}</div>
+        <h3>Consents</h3>
       </div>
       <div class="form-field full-width">
-        <label class="checkbox">
-          {{ form.gdpr_acknowledged() }}
-          {{ form.gdpr_acknowledged.label.text }}
-        </label>
-        {% for error in form.gdpr_acknowledged.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
+        <div class="consent-block">
+          <div class="richtext-block">{{ gdpr_notice_html | safe }}</div>
+          <label class="checkbox consent-block__action">
+            {{ form.gdpr_acknowledged() }}
+            {{ form.gdpr_acknowledged.label.text }}
+          </label>
+          {% for error in form.gdpr_acknowledged.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
       </div>
       <div class="form-field full-width">
-        <div class="richtext-block">{{ photo_consent_html | safe }}</div>
+        <div class="consent-block">
+          <div class="richtext-block">{{ photo_consent_html | safe }}</div>
+          <div class="consent-block__field">
+            {{ form.photo_consent.label }}
+            {{ form.photo_consent() }}
+          </div>
+          {% for error in form.photo_consent.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
       </div>
       <div class="form-field full-width">
-        {{ form.photo_consent.label }}
-        {{ form.photo_consent() }}
-        {% for error in form.photo_consent.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
+        <div class="consent-block">
+          <div class="richtext-block">{{ assessor_competence_html | safe }}</div>
+          <label class="checkbox consent-block__action">
+            {{ form.declared_assessor_competence() }}
+            {{ form.declared_assessor_competence.label.text }}
+          </label>
+          {% for error in form.declared_assessor_competence.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
       </div>
       <div class="form-field full-width">
-        <div class="richtext-block">{{ assessor_competence_html | safe }}</div>
-      </div>
-      <div class="form-field full-width">
-        <label class="checkbox">
-          {{ form.declared_assessor_competence() }}
-          {{ form.declared_assessor_competence.label.text }}
-        </label>
-        {% for error in form.declared_assessor_competence.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
-      </div>
-      <div class="form-field full-width">
-        <div class="richtext-block">{{ ethics_consent_html | safe }}</div>
-      </div>
-      <div class="form-field full-width">
-        <label class="checkbox">
-          {{ form.accepted_ethics() }}
-          {{ form.accepted_ethics.label.text }}
-        </label>
-        {% for error in form.accepted_ethics.errors %}
-          <div class="field-error">{{ error }}</div>
-        {% endfor %}
+        <div class="consent-block">
+          <div class="richtext-block">{{ ethics_consent_html | safe }}</div>
+          <label class="checkbox consent-block__action">
+            {{ form.accepted_ethics() }}
+            {{ form.accepted_ethics.label.text }}
+          </label>
+          {% for error in form.accepted_ethics.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
       </div>
       {% if show_absence_toggle %}
         <div class="form-field full-width">

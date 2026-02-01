@@ -4,21 +4,24 @@
 
 {% block content %}
   <div class="table-card portal-login-card">
+    <div class="login-brand">
+      <img src="{{ url_for('static', filename='img/ipo-official-logo.png') }}" alt="International Philosophy Olympiad official logo" class="login-brand__logo">
+    </div>
     <h2>Teacher portal access</h2>
     <p class="fine-print">Use your individualized credentials to download assigned essays and submit scores.</p>
-    <form method="post" novalidate>
+    <form method="post" class="form-grid" novalidate>
       {{ form.hidden_tag() }}
       {% if next_value %}
         <input type="hidden" name="next" value="{{ next_value }}">
       {% endif %}
-      <div class="form-field">
+      <div class="form-field full-width">
         {{ form.username.label }}
         {{ form.username(autocomplete="username") }}
         {% for error in form.username.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
-      <div class="form-field">
+      <div class="form-field full-width">
         {{ form.password.label }}
         {{ form.password(type="password", autocomplete="current-password") }}
         {% for error in form.password.errors %}

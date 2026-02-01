@@ -67,6 +67,12 @@
             <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
           </div>
         </div>
+        <div class="site-footer__partners" aria-label="Partners">
+          <div class="site-footer__partner">
+            <span class="site-footer__partner-label">Organized by</span>
+            <img src="{{ url_for('static', filename='img/ptf-logo.png') }}" alt="Polskie Towarzystwo Filozoficzne (PTF) logo" class="site-footer__partner-logo">
+          </div>
+        </div>
       </div>
     </footer>
     <script src="{{ url_for('static', filename='vendor/htmx/htmx.min.js') }}" defer></script>
