@@ -237,6 +237,178 @@
         document.addEventListener("htmx:timeout", clearPreservedScroll);
       })();
     </script>
+    <script>
+      (function () {
+        const menuSelector = "[data-action-menu]";
+
+        function setExpanded(menu, expanded) {
+          const toggle = menu.querySelector("[data-action-menu-toggle]");
+          if (toggle) {
+            toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+          }
+        }
+
+        function closeMenu(menu) {
+          if (!menu) {
+            return;
+          }
+          menu.classList.remove("is-open");
+          setExpanded(menu, false);
+        }
+
+        function closeAllMenus() {
+          document.querySelectorAll(`${menuSelector}.is-open`).forEach((menu) => {
+            closeMenu(menu);
+          });
+        }
+
+        function toggleMenu(menu) {
+          if (!menu) {
+            return;
+          }
+          const isOpen = menu.classList.contains("is-open");
+          closeAllMenus();
+          if (!isOpen) {
+            menu.classList.add("is-open");
+            setExpanded(menu, true);
+          }
+        }
+
+        document.addEventListener("click", function (event) {
+          const toggle = event.target.closest("[data-action-menu-toggle]");
+          if (toggle) {
+            event.preventDefault();
+            toggleMenu(toggle.closest(menuSelector));
+            return;
+          }
+
+          const item = event.target.closest("[data-action-menu-item]");
+          if (item) {
+            const menu = item.closest(menuSelector);
+            if (menu) {
+              closeMenu(menu);
+            }
+            return;
+          }
+
+          if (!event.target.closest(menuSelector)) {
+            closeAllMenus();
+          }
+        });
+
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            closeAllMenus();
+          }
+        });
+      })();
+    </script>
+    <script>
+      (function () {
+        const modalSelector = "[data-delete-modal]";
+
+        function normalize(value) {
+          return (value || "").trim().toLowerCase();
+        }
+
+        function openModal(modal, trigger) {
+          const expected = normalize(trigger.dataset.deleteEmail);
+          modal.dataset.expectedEmail = expected;
+
+          const nameTarget = modal.querySelector("[data-delete-name]");
+          const emailTarget = modal.querySelector("[data-delete-email]");
+          if (nameTarget) {
+            nameTarget.textContent = trigger.dataset.deleteName || "this record";
+          }
+          if (emailTarget) {
+            emailTarget.textContent = trigger.dataset.deleteEmail || "—";
+          }
+
+          const form = modal.querySelector("[data-delete-form]");
+          if (form && trigger.dataset.deleteAction) {
+            form.action = trigger.dataset.deleteAction;
+          }
+
+          const input = modal.querySelector("[data-delete-input]");
+          const submit = modal.querySelector("[data-delete-submit]");
+          if (input) {
+            input.value = "";
+          }
+          if (submit) {
+            submit.disabled = true;
+          }
+
+          modal.classList.add("is-visible");
+          modal.setAttribute("aria-hidden", "false");
+          document.body.classList.add("modal-open");
+          if (input) {
+            input.focus();
+          }
+        }
+
+        function closeModal(modal) {
+          if (!modal) {
+            return;
+          }
+          modal.classList.remove("is-visible");
+          modal.setAttribute("aria-hidden", "true");
+          document.body.classList.remove("modal-open");
+        }
+
+        function closeAllModals() {
+          document.querySelectorAll(`${modalSelector}.is-visible`).forEach((modal) => {
+            closeModal(modal);
+          });
+        }
+
+        document.addEventListener("click", function (event) {
+          const trigger = event.target.closest("[data-delete-trigger]");
+          if (trigger) {
+            event.preventDefault();
+            const modal = document.querySelector(trigger.dataset.deleteModal);
+            if (modal) {
+              openModal(modal, trigger);
+            }
+            return;
+          }
+
+          const closeButton = event.target.closest("[data-delete-close]");
+          if (closeButton) {
+            event.preventDefault();
+            closeModal(closeButton.closest(modalSelector));
+            return;
+          }
+
+          const modal = event.target.closest(modalSelector);
+          if (modal && event.target === modal) {
+            closeModal(modal);
+            return;
+          }
+        });
+
+        document.addEventListener("input", function (event) {
+          const input = event.target.closest("[data-delete-input]");
+          if (!input) {
+            return;
+          }
+          const modal = input.closest(modalSelector);
+          if (!modal) {
+            return;
+          }
+          const expected = modal.dataset.expectedEmail || "";
+          const submit = modal.querySelector("[data-delete-submit]");
+          if (submit) {
+            submit.disabled = normalize(input.value) !== expected;
+          }
+        });
+
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            closeAllModals();
+          }
+        });
+      })();
+    </script>
     {% block extra_scripts %}{% endblock %}
   </body>
 </html>

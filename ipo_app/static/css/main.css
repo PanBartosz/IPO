@@ -451,6 +451,17 @@ a:hover {
   z-index: 1;
 }
 
+.modal-form {
+  background: transparent;
+  border: none;
+  padding: 0;
+  box-shadow: none;
+}
+
+.modal-form::before {
+  display: none;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -2418,6 +2429,77 @@ body.modal-open {
   color: var(--brand-white);
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow: var(--shadow-sm);
+}
+
+.action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.action-menu__toggle {
+  min-width: 110px;
+  justify-content: center;
+}
+
+.action-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 0.4rem;
+  display: none;
+  flex-direction: column;
+  gap: 0.2rem;
+  z-index: 50;
+}
+
+.action-menu.is-open .action-menu__panel {
+  display: flex;
+}
+
+.action-menu__panel form {
+  margin: 0;
+}
+
+.action-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: rgba(18, 18, 18, 0.86);
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+}
+
+.action-menu__item:hover,
+.action-menu__item:focus {
+  background: rgba(18, 18, 18, 0.08);
+  color: var(--brand-purple);
+  outline: none;
+}
+
+.action-menu__item.danger {
+  color: #b91c1c;
+}
+
+.action-menu__item.danger:hover,
+.action-menu__item.danger:focus {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .survey-grid {

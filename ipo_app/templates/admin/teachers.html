@@ -72,20 +72,61 @@
             <td>{% if teacher.is_absent %}<span class="status-tag warning">Absent</span>{% else %}—{% endif %}</td>
             <td>{{ teacher.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td class="table-actions">
-            <button
-              type="button"
-              class="icon-button message-launch"
-              data-teacher-id="{{ teacher.id }}"
-              data-teacher-name="{{ teacher.first_name }} {{ teacher.last_name }}"
-              aria-label="Message {{ teacher.first_name }} {{ teacher.last_name }}"
-            >
-              Message
-            </button>
-            <a class="button-link" href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}">Edit</a>
-            <form method="post" action="{{ url_for('web.admin_teacher_reset_password', teacher_id=teacher.id) }}" onsubmit="return confirm('Reset portal password for {{ teacher.first_name }} {{ teacher.last_name }}?');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="button-link secondary">Reset password</button>
-            </form>
+            <div class="action-menu" data-action-menu>
+              <button
+                type="button"
+                class="button-link action-menu__toggle"
+                data-action-menu-toggle
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                Actions
+              </button>
+              <div class="action-menu__panel" role="menu">
+                <button
+                  type="button"
+                  class="action-menu__item message-launch"
+                  data-action-menu-item
+                  data-teacher-id="{{ teacher.id }}"
+                  data-teacher-name="{{ teacher.first_name }} {{ teacher.last_name }}"
+                  aria-label="Message {{ teacher.first_name }} {{ teacher.last_name }}"
+                  role="menuitem"
+                >
+                  Message
+                </button>
+                <a
+                  class="action-menu__item"
+                  data-action-menu-item
+                  href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}"
+                  role="menuitem"
+                >
+                  Edit
+                </a>
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_teacher_reset_password', teacher_id=teacher.id) }}"
+                  onsubmit="return confirm('Reset portal password for {{ teacher.first_name }} {{ teacher.last_name }}?');"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="action-menu__item" data-action-menu-item role="menuitem">
+                    Reset password
+                  </button>
+                </form>
+                <button
+                  type="button"
+                  class="action-menu__item danger"
+                  data-action-menu-item
+                  data-delete-trigger
+                  data-delete-modal="#delete-teacher-modal"
+                  data-delete-action="{{ url_for('web.admin_teacher_delete', teacher_id=teacher.id) }}"
+                  data-delete-name="{{ teacher.first_name }} {{ teacher.last_name }}"
+                  data-delete-email="{{ teacher.email }}"
+                  role="menuitem"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -93,6 +134,30 @@
     </table>
   </div>
   {{ render_quick_message_modal(quick_message_form, quick_message_templates, quick_message_templates_data) }}
+  <div id="delete-teacher-modal" class="message-modal" data-delete-modal aria-hidden="true">
+    <div class="message-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="delete-teacher-modal-title" tabindex="-1">
+      <header class="message-modal__header">
+        <h3 id="delete-teacher-modal-title">Delete teacher</h3>
+        <p class="message-modal__recipient">
+          Delete <span data-delete-name>—</span> (<span data-delete-email>—</span>)
+        </p>
+        <button type="button" class="message-modal__close" data-delete-close aria-label="Close delete dialog">&times;</button>
+      </header>
+      <div class="message-modal__body">
+        <p class="fine-print">Type the teacher's email to confirm deletion. This action cannot be undone.</p>
+        <form method="post" class="form-grid message-modal__form modal-form" data-delete-form novalidate>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="form-field full-width">
+            <label for="delete-teacher-confirm-email">Confirm email</label>
+            <input id="delete-teacher-confirm-email" name="confirm_email" type="email" data-delete-input autocomplete="off" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button danger" data-delete-submit disabled>Delete</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}

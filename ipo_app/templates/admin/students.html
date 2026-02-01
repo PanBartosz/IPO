@@ -60,16 +60,79 @@
             <td>{% if student.is_absent %}<span class="status-tag warning">Absent</span>{% else %}—{% endif %}</td>
             <td>{{ student.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td class="table-actions">
-            <a class="button-link" href="{{ url_for('web.edit_student', student_id=student.id) }}">Edit</a>
-            <form method="post" action="{{ url_for('web.admin_student_reset_password', student_id=student.id) }}" onsubmit="return confirm('Reset portal password for {{ student.first_name }} {{ student.last_name }}?');">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="button-link secondary">Reset password</button>
-            </form>
+            <div class="action-menu" data-action-menu>
+              <button
+                type="button"
+                class="button-link action-menu__toggle"
+                data-action-menu-toggle
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                Actions
+              </button>
+              <div class="action-menu__panel" role="menu">
+                <a
+                  class="action-menu__item"
+                  data-action-menu-item
+                  href="{{ url_for('web.edit_student', student_id=student.id) }}"
+                  role="menuitem"
+                >
+                  Edit
+                </a>
+                <form
+                  method="post"
+                  action="{{ url_for('web.admin_student_reset_password', student_id=student.id) }}"
+                  onsubmit="return confirm('Reset portal password for {{ student.first_name }} {{ student.last_name }}?');"
+                >
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="action-menu__item" data-action-menu-item role="menuitem">
+                    Reset password
+                  </button>
+                </form>
+                <button
+                  type="button"
+                  class="action-menu__item danger"
+                  data-action-menu-item
+                  data-delete-trigger
+                  data-delete-modal="#delete-student-modal"
+                  data-delete-action="{{ url_for('web.admin_student_delete', student_id=student.id) }}"
+                  data-delete-name="{{ student.first_name }} {{ student.last_name }}"
+                  data-delete-email="{{ student.email }}"
+                  role="menuitem"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+  <div id="delete-student-modal" class="message-modal" data-delete-modal aria-hidden="true">
+    <div class="message-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="delete-student-modal-title" tabindex="-1">
+      <header class="message-modal__header">
+        <h3 id="delete-student-modal-title">Delete student</h3>
+        <p class="message-modal__recipient">
+          Delete <span data-delete-name>—</span> (<span data-delete-email>—</span>)
+        </p>
+        <button type="button" class="message-modal__close" data-delete-close aria-label="Close delete dialog">&times;</button>
+      </header>
+      <div class="message-modal__body">
+        <p class="fine-print">Type the student's email to confirm deletion. This action cannot be undone.</p>
+        <form method="post" class="form-grid message-modal__form modal-form" data-delete-form novalidate>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="form-field full-width">
+            <label for="delete-student-confirm-email">Confirm email</label>
+            <input id="delete-student-confirm-email" name="confirm_email" type="email" data-delete-input autocomplete="off" required>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button danger" data-delete-submit disabled>Delete</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 {% endblock %}
 

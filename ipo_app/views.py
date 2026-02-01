@@ -8531,6 +8531,47 @@ def admin_student_reset_password(student_id: int):
     return redirect(url_for("web.admin_students"))
 
 
+@web_bp.route("/admin/students/<int:student_id>/delete", methods=["POST"])
+def admin_student_delete(student_id: int):
+    if not _current_admin():
+        abort(403)
+    student = db.session.get(Student, student_id)
+    if not student:
+        abort(404)
+
+    expected_email = (student.email or "").strip().lower()
+    confirm_email = (request.form.get("confirm_email") or "").strip().lower()
+    if confirm_email != expected_email:
+        flash("Confirmation email does not match.", "error")
+        return redirect(url_for("web.admin_students"))
+
+    student_name = " ".join(part for part in [student.first_name, student.last_name] if part).strip()
+    student_email = student.email
+    student_country = student.country
+
+    db.session.delete(student)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Student could not be deleted because related records exist.", "error")
+        return redirect(url_for("web.admin_students"))
+
+    log_activity(
+        "student_deleted",
+        f"Student {student_name or student_email} deleted",
+        object_type="student",
+        object_id=student_id,
+        details={
+            "email": student_email,
+            "country": student_country,
+        },
+    )
+    db.session.commit()
+    flash("Student deleted.", "success")
+    return redirect(url_for("web.admin_students"))
+
+
 @web_bp.route("/admin/teachers/<int:teacher_id>/edit", methods=["GET", "POST"])
 def edit_teacher(teacher_id: int):
     teacher = db.session.get(Teacher, teacher_id)
@@ -8667,6 +8708,49 @@ def admin_teacher_reset_password(teacher_id: int):
     else:
         flash("Portal password reset, but no password was generated.", "error")
 
+    return redirect(url_for("web.admin_teachers"))
+
+
+@web_bp.route("/admin/teachers/<int:teacher_id>/delete", methods=["POST"])
+def admin_teacher_delete(teacher_id: int):
+    if not _current_admin():
+        abort(403)
+    teacher = db.session.get(Teacher, teacher_id)
+    if not teacher:
+        abort(404)
+
+    expected_email = (teacher.email or "").strip().lower()
+    confirm_email = (request.form.get("confirm_email") or "").strip().lower()
+    if confirm_email != expected_email:
+        flash("Confirmation email does not match.", "error")
+        return redirect(url_for("web.admin_teachers"))
+
+    teacher_name = " ".join(part for part in [teacher.first_name, teacher.last_name] if part).strip()
+    teacher_email = teacher.email
+    teacher_country = teacher.country
+    delegation_leader = bool(teacher.delegation_leader)
+
+    db.session.delete(teacher)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Teacher could not be deleted because related records exist.", "error")
+        return redirect(url_for("web.admin_teachers"))
+
+    log_activity(
+        "teacher_deleted",
+        f"Teacher {teacher_name or teacher_email} deleted",
+        object_type="teacher",
+        object_id=teacher_id,
+        details={
+            "email": teacher_email,
+            "country": teacher_country,
+            "delegation_leader": delegation_leader,
+        },
+    )
+    db.session.commit()
+    flash("Teacher deleted.", "success")
     return redirect(url_for("web.admin_teachers"))
 
 
