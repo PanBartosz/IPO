@@ -2094,6 +2094,11 @@ textarea {
   .site-footer__partner-label {
     flex-basis: 100%;
   }
+
+  .site-footer__partner-logo {
+    max-height: 40px;
+    max-width: min(240px, 100%);
+  }
 }
 
 
