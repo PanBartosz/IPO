@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -19,23 +20,34 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "teachers",
-        sa.Column(
-            "prior_ipo_assessor_level",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
-    )
-    op.execute(
-        """
-        UPDATE teachers
-        SET prior_ipo_assessor_level = 1
-        WHERE prior_ipo_assessor = TRUE
-        """
-    )
-    op.alter_column("teachers", "prior_ipo_assessor_level", server_default=None)
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("teachers")}
+
+    has_level_column = "prior_ipo_assessor_level" in columns
+    if not has_level_column:
+        op.add_column(
+            "teachers",
+            sa.Column(
+                "prior_ipo_assessor_level",
+                sa.Integer(),
+                nullable=False,
+                server_default="0",
+            ),
+        )
+        has_level_column = True
+
+    if has_level_column and "prior_ipo_assessor" in columns:
+        op.execute(
+            """
+            UPDATE teachers
+            SET prior_ipo_assessor_level = 1
+            WHERE prior_ipo_assessor = TRUE
+            """
+        )
+
+    if has_level_column:
+        op.alter_column("teachers", "prior_ipo_assessor_level", server_default=None)
 
 
 def downgrade() -> None:
