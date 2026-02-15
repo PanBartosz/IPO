@@ -2012,8 +2012,6 @@ def _packets_double_sided() -> bool:
 
 
 def _auto_email_enabled() -> bool:
-    if current_app.testing:
-        return False
     flag = (_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false").strip().lower() == "true"
     if not flag:
         return False
