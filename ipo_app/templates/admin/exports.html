@@ -23,6 +23,11 @@
         {% endif %}
       </div>
       <div class="export-item">
+        <h3>Participant cards</h3>
+        <p class="fine-print">Print participant login cards for the essay upload portal.</p>
+        <a class="button" href="{{ url_for('web.admin_student_cards_pdf') }}">Download participant cards PDF</a>
+      </div>
+      <div class="export-item">
         <h3>Teacher portal cards</h3>
         <p class="fine-print">Reset portal passwords and print individual login cards for teachers.</p>
         {% if teacher_portal_enabled %}

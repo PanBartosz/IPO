@@ -13,7 +13,6 @@
       <form method="get" hx-get="{{ url_for('web.admin_uploads') }}" hx-target="#uploads-content" hx-push-url="true">
         <button type="submit" class="button secondary">Refresh</button>
       </form>
-      <a class="button-link" href="{{ url_for('web.admin_student_cards_pdf') }}">Participant cards PDF</a>
     </div>
   </div>
   <table id="uploads-table" class="data-table display">
