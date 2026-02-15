@@ -12,6 +12,7 @@ services:
       DATABASE_URL: mysql+pymysql://ipo_app:ipo_password@db:3306/ipo_app?charset=utf8mb4
       ADMIN_USERS: admin:dev-password
       TEACHER_BOARD_PASSWORD: dev-board-password
+      EMAIL_DEV_FAKE_SEND: '1'
       PYTHONPATH: /app
     volumes:
     - .:/app

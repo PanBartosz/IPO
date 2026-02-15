@@ -44,6 +44,7 @@ class Config:
     TEACHER_BOARD_PASSWORD = os.getenv('TEACHER_BOARD_PASSWORD')
     SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
     SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL")
+    EMAIL_DEV_FAKE_SEND = _env_bool("EMAIL_DEV_FAKE_SEND", False)
 
 
 class DevelopmentConfig(Config):

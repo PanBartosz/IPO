@@ -2012,10 +2012,14 @@ def _packets_double_sided() -> bool:
 
 
 def _auto_email_enabled() -> bool:
-    if not current_app.config.get("SENDGRID_API_KEY") or not current_app.config.get("SENDGRID_FROM_EMAIL"):
+    if current_app.testing:
         return False
-    flag = _get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false"
-    return flag.lower() == "true"
+    flag = (_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false").strip().lower() == "true"
+    if not flag:
+        return False
+    if current_app.config.get("SENDGRID_API_KEY") and current_app.config.get("SENDGRID_FROM_EMAIL"):
+        return True
+    return bool(current_app.debug and current_app.config.get("EMAIL_DEV_FAKE_SEND"))
 
 
 def _teacher_portal_enabled() -> bool:
@@ -2119,6 +2123,13 @@ def _send_email(
     api_key = current_app.config.get("SENDGRID_API_KEY")
     from_email = current_app.config.get("SENDGRID_FROM_EMAIL")
     if not api_key or not from_email:
+        if current_app.debug and current_app.config.get("EMAIL_DEV_FAKE_SEND") and not current_app.testing:
+            current_app.logger.info(
+                "DEV email fake-send: to=%s subject=%s",
+                to_email,
+                subject,
+            )
+            return True, "dev-fake-send", None
         current_app.logger.debug("SendGrid not configured; skipping email to %s", to_email)
         return False, None, "sendgrid-not-configured"
     try:
@@ -3079,6 +3090,17 @@ def _build_teacher_schedules(groups: list[ReadingGroup]) -> list[dict]:
 @web_bp.route("/")
 def index():
     return render_template("index.html", invite_only=_registration_invite_required())
+
+
+@web_bp.route("/manuals/<slug>/", defaults={"filename": "index.html"})
+@web_bp.route("/manuals/<slug>/<path:filename>")
+def manuals(slug: str, filename: str):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug or ""):
+        abort(404)
+    manuals_dir = Path(current_app.static_folder) / "manuals" / slug
+    if not manuals_dir.is_dir():
+        abort(404)
+    return send_from_directory(manuals_dir, filename)
 
 
 @web_bp.route("/admin/login", methods=["GET", "POST"])

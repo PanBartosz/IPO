@@ -18,3 +18,12 @@ __pycache__/
 /.vscode/
 /.idea/
 *.swp
+
+# Local one-off outputs / scratch
+/output/
+/media/
+/tmp/
+/tmp_*.png
+/tmp_ptf_exports/
+/tmp_ptf_logo_grid.png
+/tmp_ptf_on_black.png
