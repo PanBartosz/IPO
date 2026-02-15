@@ -249,6 +249,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
   font-family: var(--font-heading);
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -261,7 +262,9 @@ a:hover {
 }
 
 .site-footer__partner-logo {
-  width: 120px;
+  max-height: 44px;
+  max-width: min(240px, 100%);
+  width: auto;
   height: auto;
   display: block;
   filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35));
@@ -2086,6 +2089,14 @@ textarea {
   .site-footer__partner {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .site-footer__partner-label {
+    flex-basis: 100%;
+  }
+
+  .site-footer__partner-logo {
+    max-height: 40px;
   }
 }
 
