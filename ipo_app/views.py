@@ -8609,6 +8609,7 @@ def edit_teacher(teacher_id: int):
         form.prior_ipo_assessor_level.data = teacher.prior_ipo_assessor_level or 0
         form.gdpr_acknowledged.data = bool(teacher.gdpr_acknowledged)
         form.photo_consent.data = "yes" if teacher.photo_consent else "no"
+        form.delegation_leader.data = bool(teacher.delegation_leader)
     form.submit.label.text = "Save changes"
 
     if form.validate_on_submit():

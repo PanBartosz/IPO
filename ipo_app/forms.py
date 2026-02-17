@@ -214,6 +214,7 @@ class TeacherRegistrationForm(FlaskForm):
         "I confirm I have read and accept the IPO Code of Ethics",
         validators=[InputRequired()],
     )
+    delegation_leader = BooleanField("Delegation leader")
     is_absent = BooleanField("Marked absent")
     submit = SubmitField("Submit registration")
 

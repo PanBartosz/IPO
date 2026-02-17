@@ -188,6 +188,12 @@
       {% if show_absence_toggle %}
         <div class="form-field full-width">
           <label class="checkbox">
+            {{ form.delegation_leader() }}
+            Delegation leader
+          </label>
+        </div>
+        <div class="form-field full-width">
+          <label class="checkbox">
             {{ form.is_absent() }}
             Mark as absent
           </label>
