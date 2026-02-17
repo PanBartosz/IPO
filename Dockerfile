@@ -35,4 +35,4 @@ RUN cp /app/entrypoint.sh /entrypoint.sh \
 EXPOSE 5000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "ipo_app:app"]

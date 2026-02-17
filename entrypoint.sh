@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
 
-flask db upgrade
+flask --app ipo_app:create_app db upgrade
 
 exec "$@"

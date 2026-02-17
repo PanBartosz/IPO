@@ -102,6 +102,7 @@ docker compose up --build
 # web: http://localhost:5000, db: localhost:3306, phpMyAdmin: http://localhost:8081
 ```
 `entrypoint.sh` runs `flask db upgrade` automatically. Bind mounts enable live code edits.
+The container runs Gunicorn (WSGI); `docker-compose.yml` enables code reload via `GUNICORN_RELOAD=1`.
 
 ### Manual (venv)
 ```bash
