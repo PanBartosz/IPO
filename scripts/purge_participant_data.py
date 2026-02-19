@@ -52,6 +52,8 @@ class PurgeTarget:
 BASE_PURGE_PLAN: tuple[PurgeTarget, ...] = (
     PurgeTarget("survey_responses", SurveyResponse),
     PurgeTarget("survey_assignments", SurveyAssignment),
+    PurgeTarget("survey_questions", SurveyQuestion),
+    PurgeTarget("surveys", Survey),
     PurgeTarget("essay_assignment_extra_readers", EssayAssignmentExtraReader),
     PurgeTarget("essay_scores", EssayScore),
     PurgeTarget("essay_assignments", EssayAssignment),
@@ -153,8 +155,6 @@ def _print_preserved_counts() -> None:
     print("Preserved tables (for confidence check):")
     print(f"  - app_settings: {_count_rows(AppSetting)}")
     print(f"  - teacher_message_templates: {_count_rows(TeacherMessageTemplate)}")
-    print(f"  - surveys: {_count_rows(Survey)}")
-    print(f"  - survey_questions: {_count_rows(SurveyQuestion)}")
 
 
 def parse_args() -> argparse.Namespace:

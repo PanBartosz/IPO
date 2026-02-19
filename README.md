@@ -173,7 +173,7 @@ Optional flags:
 - `--purge-activity-logs`: also delete `activity_logs` (kept by default).
 - `--delete-upload-files`: also remove referenced essay uploads from `UPLOAD_FOLDER`.
 
-The script keeps configuration/reference tables such as `app_settings`, `teacher_message_templates`, `surveys`, and `survey_questions`.
+The script keeps configuration/reference tables such as `app_settings` and `teacher_message_templates`.
 
 ## Testing
 Automated tests live under `tests/` and can be run with:
