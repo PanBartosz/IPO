@@ -139,6 +139,7 @@ scripts/seed_mock_data.py
 scripts/seed_mock_essays.py
 scripts/seed_stage1_scores.py
 scripts/seed_stage2_scores.py
+scripts/purge_participant_data.py
 Dockerfile, docker-compose.yml, requirements.txt
 share/                  # Reference IPO documents
 ```
@@ -154,6 +155,25 @@ Additional helpers speed up end-to-end grading tests:
 - `python scripts/seed_mock_essays.py` uploads placeholder PDFs (or copies a provided template) for selected students, with options to finalize or overwrite existing files.
 - `python scripts/seed_stage1_scores.py` generates Stage 1 scores for all assigned readers, with tunable Stage 2 promotion/extra-reader rates and optional rule checks that toggle Stage 2 flags.
 - `python scripts/seed_stage2_scores.py` fills in Stage 2 reader scores for Stage 2 candidates (or any assignment with Stage 2 readers) using configurable score ranges.
+
+## Purging participant data (keep settings)
+Use this when you need to clear students, teachers, invitations, and dependent operational records without dropping schema or runtime settings.
+
+Preview impact first:
+```bash
+docker compose exec web python scripts/purge_participant_data.py --dry-run
+```
+
+Execute purge:
+```bash
+docker compose exec web python scripts/purge_participant_data.py --yes
+```
+
+Optional flags:
+- `--purge-activity-logs`: also delete `activity_logs` (kept by default).
+- `--delete-upload-files`: also remove referenced essay uploads from `UPLOAD_FOLDER`.
+
+The script keeps configuration/reference tables such as `app_settings`, `teacher_message_templates`, `surveys`, and `survey_questions`.
 
 ## Testing
 Automated tests live under `tests/` and can be run with:
