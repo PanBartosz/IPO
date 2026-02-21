@@ -914,6 +914,84 @@ textarea {
   overflow-x: auto;
 }
 
+.static-page-view {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.static-page-content {
+  font-size: 1.03rem;
+  line-height: 1.7;
+}
+
+.static-page-content :first-child {
+  margin-top: 0;
+}
+
+.static-page-content :last-child {
+  margin-bottom: 0;
+}
+
+.static-page-content h1,
+.static-page-content h2,
+.static-page-content h3,
+.static-page-content h4 {
+  margin-top: 1.3rem;
+  margin-bottom: 0.45rem;
+}
+
+.static-page-content p,
+.static-page-content ul,
+.static-page-content ol,
+.static-page-content blockquote,
+.static-page-content table {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.static-page-content ul,
+.static-page-content ol {
+  padding-left: 1.25rem;
+}
+
+.static-page-content blockquote {
+  margin-left: 0;
+  padding: 0.65rem 0.9rem;
+  border-left: 3px solid rgba(130, 45, 128, 0.45);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.static-page-content table {
+  border-collapse: collapse;
+  width: min(100%, 860px);
+}
+
+.static-page-content th,
+.static-page-content td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+}
+
+.static-page-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.static-page-attachments h3 {
+  margin-top: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.static-page-attachments ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
 .page-actions {
   display: flex;
   justify-content: space-between;

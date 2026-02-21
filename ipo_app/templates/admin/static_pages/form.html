@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% if page %}
+  {% set page_title = "Edit Static Page · Admin · IPO" %}
+  {% set heading = "Edit static page" %}
+{% else %}
+  {% set page_title = "New Static Page · Admin · IPO" %}
+  {% set heading = "New static page" %}
+{% endif %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>{{ heading }}</h2>
+      <div class="table-actions">
+        {% if page %}
+          <a class="button-link secondary" href="{{ url_for('web.static_page_show', slug=page.slug) }}" target="_blank" rel="noopener">Open page</a>
+        {% endif %}
+        <a class="button-link secondary" href="{{ url_for('web.admin_static_pages') }}">Back to list</a>
+      </div>
+    </div>
+
+    <form method="post" class="form-grid" novalidate enctype="multipart/form-data">
+      {{ form.hidden_tag() }}
+      <div class="form-field">
+        {{ form.title.label }}
+        {{ form.title() }}
+        {% for error in form.title.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field">
+        {{ form.slug.label }}
+        {{ form.slug() }}
+        {% for error in form.slug.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">URL will be <code>/pages/&lt;slug&gt;</code>. Changing slug changes existing links.</span>
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.html_body.label }}
+        {{ form.html_body(id="static-page-editor") }}
+        {% for error in form.html_body.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.attachment.label }}
+        {{ form.attachment() }}
+        {% for error in form.attachment.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+        <span class="form-help">Optional. File will be linked at the bottom of the page.</span>
+      </div>
+
+      <div class="form-actions">
+        {{ form.submit(class_="button", value="Save static page") }}
+      </div>
+    </form>
+  </div>
+
+  {% if page %}
+    <div class="table-card table-card-wide">
+      <div class="table-header">
+        <h2>Attachments</h2>
+      </div>
+
+      {% if page.attachments %}
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>Added</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for attachment in page.attachments %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('web.static_page_attachment_download', slug=page.slug, attachment_id=attachment.id) }}" target="_blank" rel="noopener">
+                    {{ attachment.original_filename }}
+                  </a>
+                </td>
+                <td>
+                  {% if attachment.file_size %}
+                    {{ "%.1f"|format(attachment.file_size / 1024) }} KB
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>{{ attachment.created_at.strftime('%Y-%m-%d %H:%M') if attachment.created_at else '—' }}</td>
+                <td class="table-actions">
+                  <form method="post" action="{{ url_for('web.admin_static_page_attachment_delete', page_id=page.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this attachment?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="button-link danger">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="fine-print">No attachments yet.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{{ url_for('static', filename='vendor/tinymce/js/tinymce/tinymce.min.js') }}"></script>
+  <script>
+    tinymce.init({
+      selector: '#static-page-editor',
+      menubar: false,
+      statusbar: false,
+      height: 420,
+      plugins: 'lists link',
+      toolbar: 'undo redo | bold italic underline | bullist numlist | link | removeformat',
+      branding: false,
+      default_link_target: '_blank',
+      link_default_protocol: 'https'
+    });
+  </script>
+{% endblock %}

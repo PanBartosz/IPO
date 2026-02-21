@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} · IPO{% endblock %}
+
+{% block content %}
+  <article class="table-card static-page-view">
+    <header class="table-header">
+      <h2>{{ page.title }}</h2>
+    </header>
+
+    <div class="static-page-content">
+      {{ page.html_body | safe }}
+    </div>
+
+    {% if page.attachments %}
+      <section class="static-page-attachments">
+        <h3>Attachments</h3>
+        <ul>
+          {% for attachment in page.attachments %}
+            <li>
+              <a href="{{ url_for('web.static_page_attachment_download', slug=page.slug, attachment_id=attachment.id) }}" target="_blank" rel="noopener">
+                {{ attachment.original_filename }}
+              </a>
+              {% if attachment.file_size %}
+                <span class="fine-print">({{ "%.1f"|format(attachment.file_size / 1024) }} KB)</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+  </article>
+{% endblock %}

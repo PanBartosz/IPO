@@ -1,6 +1,7 @@
 import csv
 import io
 import math
+import mimetypes
 import os
 import re
 import secrets
@@ -76,6 +77,7 @@ from .forms import (
     CommunicationComposeForm,
     CommunicationSendForm,
     CommunicationRetryForm,
+    StaticPageForm,
     Stage3PacketForm,
     GradesExportForm,
     LANGUAGE_CHOICES,
@@ -118,6 +120,8 @@ from .models import (
     CommunicationRecipientRole,
     CommunicationRecipientStatus,
     EssayUpload,
+    StaticPage,
+    StaticPageAttachment,
 )
 
 web_bp = Blueprint("web", __name__)
@@ -134,6 +138,7 @@ ADMIN_MODULES = [
     ("Stage 2", "web.admin_stage2_overview"),
     ("Messages", "web.admin_messages"),
     ("Communication", "web.admin_communications"),
+    ("Static pages", "web.admin_static_pages"),
     ("Grades export", "web.admin_grades_export"),
     ("Surveys", "web.admin_surveys"),
     ("Logs", "web.admin_logs"),
@@ -365,6 +370,7 @@ DEFAULT_ACCOMMODATION_INFO_HTML = (
 
 UPLOAD_ALLOWED_EXTENSIONS = {"pdf"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+STATIC_PAGE_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def _essay_word_limit() -> int:
@@ -1009,6 +1015,67 @@ def _get_upload_folder() -> Path:
     folder = Path(current_app.config.get("UPLOAD_FOLDER", Path(current_app.instance_path) / "uploads"))
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def _normalize_static_page_slug(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _get_static_page_attachment_folder() -> Path:
+    folder = Path(
+        current_app.config.get(
+            "STATIC_PAGE_ATTACHMENT_FOLDER",
+            Path(current_app.config.get("UPLOAD_FOLDER", Path(current_app.instance_path) / "uploads")) / "static-pages",
+        )
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _static_page_attachment_path(stored_filename: str | None) -> Path | None:
+    if not stored_filename:
+        return None
+    return _get_static_page_attachment_folder() / stored_filename
+
+
+def _save_static_page_attachment(page: StaticPage, upload) -> StaticPageAttachment:
+    original_filename = upload.filename or ""
+    safe_filename = secure_filename(original_filename)
+    if not safe_filename:
+        raise ValueError("Attachment filename is invalid.")
+
+    upload.seek(0, 2)
+    file_size = upload.tell()
+    upload.seek(0)
+
+    suffix = Path(safe_filename).suffix
+    token = secrets.token_hex(6)
+    stored_filename = f"static-page-{page.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{token}{suffix}"
+    file_path = _get_static_page_attachment_folder() / stored_filename
+    upload.save(file_path)
+
+    attachment = StaticPageAttachment(
+        page_id=page.id,
+        original_filename=safe_filename,
+        stored_filename=stored_filename,
+        content_type=(upload.mimetype or None),
+        file_size=file_size,
+        uploaded_by=_current_admin(),
+    )
+    db.session.add(attachment)
+    db.session.flush()
+    return attachment
+
+
+def _delete_static_page_attachment_file(stored_filename: str | None) -> None:
+    file_path = _static_page_attachment_path(stored_filename)
+    if not file_path:
+        return
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except OSError:
+        current_app.logger.warning("Failed to remove static page attachment file: %s", file_path)
 
 
 
@@ -3101,6 +3168,53 @@ def manuals(slug: str, filename: str):
     return send_from_directory(manuals_dir, filename)
 
 
+@web_bp.route("/pages/<string:slug>")
+def static_page_show(slug: str):
+    normalized_slug = _normalize_static_page_slug(slug)
+    if normalized_slug != slug:
+        return redirect(url_for("web.static_page_show", slug=normalized_slug), code=301)
+
+    page = (
+        StaticPage.query.options(joinedload(StaticPage.attachments))
+        .filter_by(slug=normalized_slug)
+        .first()
+    )
+    if not page:
+        abort(404)
+    return render_template("static_pages/show.html", page=page)
+
+
+@web_bp.route("/pages/<string:slug>/attachments/<int:attachment_id>")
+def static_page_attachment_download(slug: str, attachment_id: int):
+    normalized_slug = _normalize_static_page_slug(slug)
+    page = (
+        StaticPage.query.options(joinedload(StaticPage.attachments))
+        .filter_by(slug=normalized_slug)
+        .first()
+    )
+    if not page:
+        abort(404)
+
+    attachment = next((item for item in page.attachments if item.id == attachment_id), None)
+    if not attachment:
+        abort(404)
+
+    file_path = _static_page_attachment_path(attachment.stored_filename)
+    if not file_path or not file_path.exists():
+        abort(404)
+
+    guessed_type, _ = mimetypes.guess_type(attachment.original_filename or "")
+    content_type = attachment.content_type or guessed_type or "application/octet-stream"
+    response = send_file(
+        file_path,
+        mimetype=content_type,
+        as_attachment=False,
+        download_name=attachment.original_filename,
+    )
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
 @web_bp.route("/admin/login", methods=["GET", "POST"])
 @limiter.limit(LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
 @limiter.limit(LOGIN_RATE_LIMIT_PER_USERNAME, key_func=_rate_limit_username, methods=["POST"])
@@ -5159,6 +5273,213 @@ def admin_message_delete(message_id: int):
     if _is_htmx_request():
         return admin_messages()
     return redirect(url_for("web.admin_messages"))
+
+
+@web_bp.route("/admin/static-pages")
+def admin_static_pages():
+    if not _current_admin():
+        abort(403)
+
+    pages = StaticPage.query.order_by(StaticPage.updated_at.desc(), StaticPage.id.desc()).all()
+    return render_template("admin/static_pages/index.html", pages=pages)
+
+
+@web_bp.route("/admin/static-pages/new", methods=["GET", "POST"])
+def admin_static_page_new():
+    if not _current_admin():
+        abort(403)
+
+    form = StaticPageForm()
+    if form.validate_on_submit():
+        slug = _normalize_static_page_slug(form.slug.data)
+        form.slug.data = slug
+        if not STATIC_PAGE_SLUG_RE.fullmatch(slug):
+            form.slug.errors.append("Use lowercase letters, numbers, and single hyphens only.")
+        else:
+            existing = StaticPage.query.filter_by(slug=slug).first()
+            if existing:
+                form.slug.errors.append("A page with this slug already exists.")
+            else:
+                page = StaticPage(
+                    title=form.title.data.strip(),
+                    slug=slug,
+                    html_body=form.html_body.data or "",
+                    created_by=_current_admin(),
+                    updated_by=_current_admin(),
+                )
+                db.session.add(page)
+                db.session.flush()
+
+                uploaded = form.attachment.data
+                if uploaded and (uploaded.filename or "").strip():
+                    try:
+                        attachment = _save_static_page_attachment(page, uploaded)
+                    except ValueError as exc:
+                        db.session.rollback()
+                        form.attachment.errors.append(str(exc))
+                    else:
+                        log_activity(
+                            "static_page_attachment_added",
+                            f"Attachment '{attachment.original_filename}' added to static page '{page.title}'",
+                            object_type="static_page",
+                            object_id=page.id,
+                            details={
+                                "slug": page.slug,
+                                "attachment_id": attachment.id,
+                                "filename": attachment.original_filename,
+                            },
+                        )
+
+                if not form.errors:
+                    log_activity(
+                        "static_page_created",
+                        f"Static page '{page.title}' created",
+                        object_type="static_page",
+                        object_id=page.id,
+                        details={"slug": page.slug},
+                    )
+                    db.session.commit()
+                    flash("Static page created.", "success")
+                    return redirect(url_for("web.admin_static_pages"))
+
+    return render_template(
+        "admin/static_pages/form.html",
+        form=form,
+        page=None,
+    )
+
+
+@web_bp.route("/admin/static-pages/<int:page_id>/edit", methods=["GET", "POST"])
+def admin_static_page_edit(page_id: int):
+    if not _current_admin():
+        abort(403)
+
+    page = db.session.get(StaticPage, page_id)
+    if not page:
+        abort(404)
+
+    form = StaticPageForm(obj=page)
+    if request.method == "GET":
+        form.slug.data = page.slug
+
+    if form.validate_on_submit():
+        slug = _normalize_static_page_slug(form.slug.data)
+        form.slug.data = slug
+        if not STATIC_PAGE_SLUG_RE.fullmatch(slug):
+            form.slug.errors.append("Use lowercase letters, numbers, and single hyphens only.")
+        else:
+            existing = StaticPage.query.filter(StaticPage.slug == slug, StaticPage.id != page.id).first()
+            if existing:
+                form.slug.errors.append("A page with this slug already exists.")
+            else:
+                page.title = form.title.data.strip()
+                page.slug = slug
+                page.html_body = form.html_body.data or ""
+                page.updated_by = _current_admin()
+
+                uploaded = form.attachment.data
+                if uploaded and (uploaded.filename or "").strip():
+                    try:
+                        attachment = _save_static_page_attachment(page, uploaded)
+                    except ValueError as exc:
+                        db.session.rollback()
+                        form.attachment.errors.append(str(exc))
+                    else:
+                        log_activity(
+                            "static_page_attachment_added",
+                            f"Attachment '{attachment.original_filename}' added to static page '{page.title}'",
+                            object_type="static_page",
+                            object_id=page.id,
+                            details={
+                                "slug": page.slug,
+                                "attachment_id": attachment.id,
+                                "filename": attachment.original_filename,
+                            },
+                        )
+
+                if not form.errors:
+                    db.session.flush()
+                    log_activity(
+                        "static_page_updated",
+                        f"Static page '{page.title}' updated",
+                        object_type="static_page",
+                        object_id=page.id,
+                        details={"slug": page.slug},
+                    )
+                    db.session.commit()
+                    flash("Static page updated.", "success")
+                    return redirect(url_for("web.admin_static_pages"))
+
+    return render_template(
+        "admin/static_pages/form.html",
+        form=form,
+        page=page,
+    )
+
+
+@web_bp.route("/admin/static-pages/<int:page_id>/delete", methods=["POST"])
+def admin_static_page_delete(page_id: int):
+    if not _current_admin():
+        abort(403)
+
+    page = db.session.get(StaticPage, page_id)
+    if not page:
+        abort(404)
+
+    file_names = [attachment.stored_filename for attachment in page.attachments]
+    page_title = page.title
+    page_slug = page.slug
+
+    db.session.delete(page)
+    db.session.flush()
+    log_activity(
+        "static_page_deleted",
+        f"Static page '{page_title}' deleted",
+        object_type="static_page",
+        object_id=page_id,
+        details={"slug": page_slug, "attachments_removed": len(file_names)},
+    )
+    db.session.commit()
+
+    for file_name in file_names:
+        _delete_static_page_attachment_file(file_name)
+
+    flash("Static page deleted.", "success")
+    return redirect(url_for("web.admin_static_pages"))
+
+
+@web_bp.route("/admin/static-pages/<int:page_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
+def admin_static_page_attachment_delete(page_id: int, attachment_id: int):
+    if not _current_admin():
+        abort(403)
+
+    page = db.session.get(StaticPage, page_id)
+    if not page:
+        abort(404)
+
+    attachment = db.session.get(StaticPageAttachment, attachment_id)
+    if not attachment or attachment.page_id != page.id:
+        abort(404)
+
+    file_name = attachment.stored_filename
+    original_name = attachment.original_filename
+    page_slug = page.slug
+
+    db.session.delete(attachment)
+    db.session.flush()
+    log_activity(
+        "static_page_attachment_deleted",
+        f"Attachment '{original_name}' removed from static page '{page.title}'",
+        object_type="static_page",
+        object_id=page.id,
+        details={"slug": page_slug, "attachment_id": attachment_id, "filename": original_name},
+    )
+    db.session.commit()
+
+    _delete_static_page_attachment_file(file_name)
+
+    flash("Attachment removed.", "success")
+    return redirect(url_for("web.admin_static_page_edit", page_id=page.id))
 
 
 @web_bp.route("/admin/communications")

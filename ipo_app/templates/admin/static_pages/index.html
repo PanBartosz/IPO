@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Static Pages · Admin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Static pages</h2>
+      <div class="table-actions">
+        <a class="button" href="{{ url_for('web.admin_static_page_new') }}">New static page</a>
+      </div>
+    </div>
+
+    {% if pages %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Slug</th>
+            <th>Updated</th>
+            <th>Attachments</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for page in pages %}
+            <tr>
+              <td>{{ page.title }}</td>
+              <td>
+                <code>/pages/{{ page.slug }}</code><br>
+                <a href="{{ url_for('web.static_page_show', slug=page.slug) }}" target="_blank" rel="noopener">Open page</a>
+              </td>
+              <td>{{ page.updated_at.strftime('%Y-%m-%d %H:%M') if page.updated_at else '—' }}</td>
+              <td>{{ page.attachments|length }}</td>
+              <td class="table-actions">
+                <a class="button-link" href="{{ url_for('web.admin_static_page_edit', page_id=page.id) }}">Edit</a>
+                <form method="post" action="{{ url_for('web.admin_static_page_delete', page_id=page.id) }}" onsubmit="return confirm('Delete this static page and all attachments?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="button-link danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No static pages yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}

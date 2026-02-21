@@ -21,6 +21,10 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
     ADMIN_USERS = os.getenv("ADMIN_USERS", "")
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(Path(__file__).resolve().parent.parent / "instance" / "uploads"))
+    STATIC_PAGE_ATTACHMENT_FOLDER = os.getenv(
+        "STATIC_PAGE_ATTACHMENT_FOLDER",
+        str(Path(UPLOAD_FOLDER) / "static-pages"),
+    )
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE", 10 * 1024 * 1024))
     WTF_CSRF_ENABLED = True
     WTF_CSRF_TIME_LIMIT = None

@@ -12,6 +12,7 @@ def test_admin_pages_render_when_logged_in(client):
     assert client.get("/admin/settings").status_code == 200
     assert client.get("/admin/exports").status_code == 200
     assert client.get("/admin/logs").status_code == 200
+    assert client.get("/admin/static-pages").status_code == 200
 
 
 def test_rate_limits_disabled_do_not_block_repeated_logins(client, csrf_token):
@@ -30,4 +31,3 @@ def test_rate_limits_disabled_do_not_block_repeated_logins(client, csrf_token):
             follow_redirects=False,
         )
         assert response.status_code != 429
-

@@ -122,6 +122,43 @@ class AppSetting(db.Model, TimestampMixin):
     value = db.Column(db.Text, nullable=True)
 
 
+class StaticPage(db.Model, TimestampMixin):
+    __tablename__ = "static_pages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    slug = db.Column(db.String(160), nullable=False, unique=True)
+    html_body = db.Column(db.Text, nullable=False)
+    created_by = db.Column(db.String(120), nullable=True)
+    updated_by = db.Column(db.String(120), nullable=True)
+
+    attachments = db.relationship(
+        "StaticPageAttachment",
+        back_populates="page",
+        cascade="all, delete-orphan",
+        order_by="StaticPageAttachment.created_at.asc()",
+    )
+
+
+class StaticPageAttachment(db.Model, TimestampMixin):
+    __tablename__ = "static_page_attachments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    page_id = db.Column(db.Integer, db.ForeignKey("static_pages.id", ondelete="CASCADE"), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    stored_filename = db.Column(db.String(255), nullable=False, unique=True)
+    content_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by = db.Column(db.String(120), nullable=True)
+
+    page = db.relationship("StaticPage", back_populates="attachments")
+
+    __table_args__ = (
+        db.Index("ix_static_page_attachment_page_id", "page_id"),
+        db.Index("ix_static_page_attachment_stored_filename", "stored_filename"),
+    )
+
+
 class SurveyStatus(enum.StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"

@@ -22,6 +22,7 @@ def create_app(config_object: str | None = None) -> Flask:
     _configure_security(app)
     _ensure_instance_folder(app)
     _ensure_upload_folder(app)
+    _ensure_static_page_attachment_folder(app)
     _register_extensions(app)
     _register_blueprints(app)
     _initialize_database(app)
@@ -81,6 +82,16 @@ def _ensure_instance_folder(app: Flask) -> None:
 def _ensure_upload_folder(app: Flask) -> None:
     upload_path = Path(app.config.get("UPLOAD_FOLDER", Path(app.instance_path) / "uploads"))
     upload_path.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_static_page_attachment_folder(app: Flask) -> None:
+    attachment_path = Path(
+        app.config.get(
+            "STATIC_PAGE_ATTACHMENT_FOLDER",
+            Path(app.config.get("UPLOAD_FOLDER", Path(app.instance_path) / "uploads")) / "static-pages",
+        )
+    )
+    attachment_path.mkdir(parents=True, exist_ok=True)
 
 
 def _register_extensions(app: Flask) -> None:

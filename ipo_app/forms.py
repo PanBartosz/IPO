@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from flask_wtf import FlaskForm
 from wtforms import (
     BooleanField,
@@ -595,6 +597,22 @@ class CommunicationSendForm(FlaskForm):
 
 class CommunicationRetryForm(FlaskForm):
     submit_retry = SubmitField("Retry failed recipients")
+
+
+class StaticPageForm(FlaskForm):
+    title = StringField("Title", validators=[DataRequired(), Length(max=200)])
+    slug = StringField("Slug", validators=[DataRequired(), Length(max=160)])
+    html_body = TextAreaField("Page content", validators=[DataRequired()])
+    attachment = FileField("Attach file", validators=[Optional()])
+    submit = SubmitField("Save page")
+
+    def validate_slug(self, field: StringField) -> None:
+        normalized = (field.data or "").strip().lower()
+        field.data = normalized
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", normalized):
+            raise ValidationError(
+                "Use lowercase letters, numbers, and single hyphens only (example: travel-info-2026)."
+            )
 
 
 class Stage3PacketForm(FlaskForm):

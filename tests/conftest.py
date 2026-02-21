@@ -32,6 +32,7 @@ def app(tmp_path: Path):
         TEACHER_BOARD_PASSWORD = "board-password"
 
         UPLOAD_FOLDER = str(tmp_path / "uploads")
+        STATIC_PAGE_ATTACHMENT_FOLDER = str(tmp_path / "static-page-attachments")
         BACKUP_FOLDER = str(tmp_path / "backups")
 
         SENDGRID_API_KEY = None
