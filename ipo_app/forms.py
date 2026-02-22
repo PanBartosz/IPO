@@ -213,7 +213,7 @@ class TeacherRegistrationForm(FlaskForm):
         validators=[InputRequired()],
     )
     accepted_ethics = BooleanField(
-        "I confirm I have read and accept the IPO Code of Ethics",
+        "I confirm I have read and accept the IPO Statute and Code of Ethics",
         validators=[InputRequired()],
     )
     delegation_leader = BooleanField("Delegation leader")
