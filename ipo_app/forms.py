@@ -75,8 +75,8 @@ TSHIRT_CHOICES = [
 
 PHOTO_CONSENT_CHOICES = [
     ("", "Select an option"),
-    ("yes", "I consent to photo publication"),
-    ("no", "I do not consent to photo publication"),
+    ("yes", "I consent to image publication"),
+    ("no", "I do not consent to image publication"),
 ]
 
 VETERAN_LEVEL_CHOICES = [
@@ -152,7 +152,7 @@ class StudentRegistrationForm(FlaskForm):
         choices=PHOTO_CONSENT_CHOICES,
     )
     accepted_ethics = BooleanField(
-        "I confirm I have read and accept the IPO Code of Ethics",
+        "I confirm I have read and accept the IPO Statute and Code of Ethics",
         validators=[InputRequired()],
     )
     is_absent = BooleanField("Marked absent")
