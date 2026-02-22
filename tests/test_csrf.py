@@ -21,6 +21,9 @@ def _get_setting_value(key: str) -> str | None:
         ("/admin/messages/quick", {}),
         ("/admin/surveys/new", {}),
         ("/admin/invitations/normal", {}),
+        ("/admin/invitations/batch/preview", {}),
+        ("/admin/invitations/batch/1/execute", {}),
+        ("/admin/invitations/batch/1/discard", {}),
     ],
 )
 def test_admin_post_without_csrf_is_rejected_across_modules(client, path, data):

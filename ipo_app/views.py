@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import json
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from html import unescape
@@ -35,7 +36,7 @@ from sqlalchemy import or_, cast, String, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.engine.url import make_url
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -61,6 +62,9 @@ from .forms import (
     DelegationLeaderInviteForm,
     AdminDelegationInvitationForm,
     AdminInvitationForm,
+    AdminInvitationBatchUploadForm,
+    AdminInvitationBatchExecuteForm,
+    AdminInvitationBatchDiscardForm,
     DashboardSettingsForm,
     TeacherMessageForm,
     TeacherMessageTemplateForm,
@@ -81,6 +85,7 @@ from .forms import (
     Stage3PacketForm,
     GradesExportForm,
     LANGUAGE_CHOICES,
+    INVITATION_BATCH_TYPE_CHOICES,
 )
 from .models import (
     ActivityLog,
@@ -111,6 +116,7 @@ from .models import (
     SurveyStatus,
     DelegationInvite,
     DelegationInviteRole,
+    InvitationBatchDraft,
     PasswordResetAudience,
     PasswordResetToken,
     CommunicationCampaign,
@@ -154,6 +160,40 @@ RESET_TOKEN_EXPIRY_HOURS = 24
 LOGIN_RATE_LIMIT_PER_USERNAME = "10 per minute"
 LOGIN_RATE_LIMIT_PER_IP = "120 per minute"
 TEACHER_BOARD_LOGIN_RATE_LIMIT_PER_IP = "10 per minute"
+
+INVITATION_BATCH_MAX_FILE_SIZE = 2 * 1024 * 1024
+INVITATION_BATCH_MAX_ROWS = 1000
+INVITATION_BATCH_MAX_CELL_LENGTH = 500
+
+INVITATION_BATCH_TYPE_VALUES = {value for value, _ in INVITATION_BATCH_TYPE_CHOICES}
+INVITATION_BATCH_REQUIRED_COLUMNS = {
+    "delegation_leader": ["first_name", "last_name", "email", "country"],
+    "delegation": ["first_name", "last_name", "email", "role", "delegation_leader_email"],
+    "normal": ["first_name", "last_name", "email", "role", "country"],
+}
+INVITATION_BATCH_TEMPLATE_SAMPLE_ROWS = {
+    "delegation_leader": {
+        "first_name": "Alex",
+        "last_name": "Leader",
+        "email": "alex.leader@example.org",
+        "country": "Poland",
+    },
+    "delegation": {
+        "first_name": "Taylor",
+        "last_name": "Teacher",
+        "email": "taylor.teacher@example.org",
+        "role": "teacher",
+        "delegation_leader_email": "alex.leader@example.org",
+    },
+    "normal": {
+        "first_name": "Jordan",
+        "last_name": "Student",
+        "email": "jordan.student@example.org",
+        "role": "student",
+        "country": "Poland",
+    },
+}
+INVITATION_BATCH_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 SETTING_EMAIL_AUTOMATION_ENABLED = "email_auto_enabled"
@@ -8233,20 +8273,476 @@ def _active_invite_for_email(email: str, role: DelegationInviteRole) -> Delegati
     )
 
 
+def _admin_invitation_conflict(
+    *,
+    email: str,
+    role: DelegationInviteRole,
+    delegation_leader: bool = False,
+) -> SimpleNamespace | None:
+    if delegation_leader:
+        if Teacher.query.filter(Teacher.email == email).first():
+            return SimpleNamespace(
+                message=(
+                    "This email address is already registered as a teacher. "
+                    "Use Teachers -> Edit to mark them as a delegation leader."
+                ),
+                category="error",
+            )
+    else:
+        if role == DelegationInviteRole.STUDENT and Student.query.filter(Student.email == email).first():
+            return SimpleNamespace(message="This email address is already registered as a student.", category="error")
+        if role == DelegationInviteRole.TEACHER and Teacher.query.filter(Teacher.email == email).first():
+            return SimpleNamespace(message="This email address is already registered as a teacher.", category="error")
+
+    existing_invite = _active_invite_for_email(email, role)
+    if existing_invite:
+        if delegation_leader and role == DelegationInviteRole.TEACHER:
+            return SimpleNamespace(
+                message="An active teacher invite already exists for this email address.",
+                category="warning",
+            )
+        return SimpleNamespace(
+            message="An active invite already exists for this email address.",
+            category="warning",
+        )
+    return None
+
+
+def _admin_create_invite_and_send(
+    *,
+    role: DelegationInviteRole,
+    delegation_leader: bool,
+    country: str,
+    first_name: str,
+    last_name: str,
+    email: str,
+    inviter: Teacher | None,
+    category: str,
+    actor: str | None,
+    log_message: str,
+) -> SimpleNamespace:
+    invite = DelegationInvite(
+        token=_generate_unique_invite_token(),
+        role=role,
+        delegation_leader=delegation_leader,
+        country=country,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        invited_by_id=inviter.id if inviter else None,
+    )
+    db.session.add(invite)
+    db.session.flush()
+
+    sent, error = _send_delegation_invite_email(invite, inviter)
+    now = datetime.utcnow()
+    if sent:
+        invite.email_sent_at = now
+        invite.email_error = None
+    elif error and error != "auto-email-disabled":
+        invite.email_error = error
+
+    details = {
+        "role": invite.role.value,
+        "email": invite.email,
+        "country": invite.country,
+        "category": category,
+        "delegation_leader": bool(delegation_leader),
+        "email_sent": sent,
+        "email_error": error,
+    }
+    if inviter:
+        details["invited_by_id"] = inviter.id
+
+    log_activity(
+        "invitation_created",
+        log_message,
+        actor=actor,
+        object_type="delegation_invite",
+        object_id=invite.id,
+        details=details,
+    )
+    return SimpleNamespace(invite=invite, sent=sent, error=error)
+
+
+def _normalize_invitation_batch_header(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower())
+    return normalized.strip("_")
+
+
+def _normalize_invitation_batch_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value)).strip()
+    return str(value).strip()
+
+
+def _parse_invitation_batch_role(value: str) -> DelegationInviteRole | None:
+    normalized = (value or "").strip().lower()
+    if normalized == DelegationInviteRole.STUDENT.value:
+        return DelegationInviteRole.STUDENT
+    if normalized == DelegationInviteRole.TEACHER.value:
+        return DelegationInviteRole.TEACHER
+    return None
+
+
+def _parse_invitation_batch_csv(file_bytes: bytes) -> tuple[list[str], list[dict], list[str], str | None]:
+    warnings: list[str] = []
+    text = None
+    encoding_used = None
+    for encoding in ("utf-8-sig", "utf-8", "iso-8859-1"):
+        try:
+            text = file_bytes.decode(encoding)
+            encoding_used = encoding
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return [], [], warnings, "Could not decode CSV file."
+
+    if encoding_used == "iso-8859-1":
+        warnings.append("CSV encoding fallback used (ISO-8859-1). Prefer UTF-8 for predictable results.")
+
+    reader = csv.reader(io.StringIO(text))
+    matrix = list(reader)
+    if not matrix:
+        return [], [], warnings, "The uploaded file is empty."
+
+    header_raw = [_normalize_invitation_batch_cell(value) for value in matrix[0]]
+    rows: list[dict] = []
+    for row_number, raw_values in enumerate(matrix[1:], start=2):
+        values = [_normalize_invitation_batch_cell(value) for value in raw_values]
+        if not any(values):
+            continue
+        rows.append({"row_number": row_number, "values": values})
+        if len(rows) > INVITATION_BATCH_MAX_ROWS:
+            return [], [], warnings, f"Too many rows. Maximum allowed is {INVITATION_BATCH_MAX_ROWS}."
+
+    return header_raw, rows, warnings, None
+
+
+def _parse_invitation_batch_xlsx(file_bytes: bytes) -> tuple[list[str], list[dict], list[str], str | None]:
+    warnings: list[str] = []
+    try:
+        workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    except Exception:
+        return [], [], warnings, "Could not read XLSX file."
+
+    try:
+        if not workbook.worksheets:
+            return [], [], warnings, "The uploaded workbook has no worksheets."
+        worksheet = workbook.worksheets[0]
+        matrix = []
+        for row in worksheet.iter_rows(values_only=True):
+            matrix.append([_normalize_invitation_batch_cell(value) for value in row])
+    finally:
+        workbook.close()
+
+    if not matrix:
+        return [], [], warnings, "The uploaded file is empty."
+
+    header_raw = matrix[0]
+    rows: list[dict] = []
+    for row_number, values in enumerate(matrix[1:], start=2):
+        if not any(values):
+            continue
+        rows.append({"row_number": row_number, "values": values})
+        if len(rows) > INVITATION_BATCH_MAX_ROWS:
+            return [], [], warnings, f"Too many rows. Maximum allowed is {INVITATION_BATCH_MAX_ROWS}."
+
+    return header_raw, rows, warnings, None
+
+
+def _parse_invitation_batch_file(file_bytes: bytes, filename: str) -> tuple[list[str], list[dict], list[str], str | None]:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".csv":
+        return _parse_invitation_batch_csv(file_bytes)
+    if suffix == ".xlsx":
+        return _parse_invitation_batch_xlsx(file_bytes)
+    return [], [], [], "Unsupported file type. Upload a .csv or .xlsx file."
+
+
+def _validate_invitation_batch_row(row_values: dict[str, str], batch_type: str) -> tuple[dict | None, str | None]:
+    required_columns = INVITATION_BATCH_REQUIRED_COLUMNS[batch_type]
+    normalized: dict[str, str] = {}
+
+    for key, value in row_values.items():
+        cleaned = (value or "").strip()
+        if len(cleaned) > INVITATION_BATCH_MAX_CELL_LENGTH:
+            return None, f"Value in '{key}' is too long (max {INVITATION_BATCH_MAX_CELL_LENGTH} characters)."
+        normalized[key] = cleaned
+
+    for column in required_columns:
+        if not normalized.get(column):
+            return None, f"Missing required value in column '{column}'."
+
+    first_name = normalized.get("first_name", "")
+    last_name = normalized.get("last_name", "")
+    if len(first_name) > 80:
+        return None, "First name is too long (max 80 characters)."
+    if len(last_name) > 80:
+        return None, "Last name is too long (max 80 characters)."
+
+    email = normalized.get("email", "").lower()
+    if not INVITATION_BATCH_EMAIL_PATTERN.match(email):
+        return None, "Invalid email address."
+    if len(email) > 255:
+        return None, "Email is too long (max 255 characters)."
+    normalized["email"] = email
+
+    if batch_type in {"normal", "delegation"}:
+        role = _parse_invitation_batch_role(normalized.get("role", ""))
+        if role is None:
+            return None, "Role must be either 'student' or 'teacher'."
+        normalized["role"] = role.value
+
+    if batch_type in {"normal", "delegation_leader"}:
+        country = normalized.get("country", "")
+        if len(country) > 100:
+            return None, "Country is too long (max 100 characters)."
+        normalized["country"] = country
+
+    if batch_type == "delegation":
+        leader_email = normalized.get("delegation_leader_email", "").lower()
+        if not INVITATION_BATCH_EMAIL_PATTERN.match(leader_email):
+            return None, "Invalid delegation leader email address."
+        if len(leader_email) > 255:
+            return None, "Delegation leader email is too long (max 255 characters)."
+        normalized["delegation_leader_email"] = leader_email
+
+    return normalized, None
+
+
+def _prepare_invitation_batch_request(normalized_row: dict[str, str], batch_type: str) -> tuple[dict | None, str | None]:
+    email = normalized_row["email"]
+    first_name = normalized_row["first_name"]
+    last_name = normalized_row["last_name"]
+
+    if batch_type == "delegation_leader":
+        role = DelegationInviteRole.TEACHER
+        conflict = _admin_invitation_conflict(email=email, role=role, delegation_leader=True)
+        if conflict:
+            return None, conflict.message
+        return {
+            "role": role.value,
+            "delegation_leader": True,
+            "country": normalized_row["country"],
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "inviter_id": None,
+            "category": "delegation",
+            "log_message": f"Invitation created for delegation leader {email}",
+        }, None
+
+    role = _parse_invitation_batch_role(normalized_row.get("role", ""))
+    if role is None:
+        return None, "Role must be either 'student' or 'teacher'."
+
+    if batch_type == "delegation":
+        inviter = Teacher.query.filter(
+            func.lower(Teacher.email) == normalized_row["delegation_leader_email"],
+            Teacher.delegation_leader.is_(True),
+        ).first()
+        if not inviter:
+            return None, "No delegation leader found for the provided delegation_leader_email."
+        conflict = _admin_invitation_conflict(email=email, role=role, delegation_leader=False)
+        if conflict:
+            return None, conflict.message
+        return {
+            "role": role.value,
+            "delegation_leader": False,
+            "country": inviter.country,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "inviter_id": inviter.id,
+            "category": "delegation",
+            "log_message": f"Delegation invitation created for {email}",
+        }, None
+
+    conflict = _admin_invitation_conflict(email=email, role=role, delegation_leader=False)
+    if conflict:
+        return None, conflict.message
+    return {
+        "role": role.value,
+        "delegation_leader": False,
+        "country": normalized_row["country"],
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "inviter_id": None,
+        "category": "normal",
+        "log_message": f"Normal invitation created for {email}",
+    }, None
+
+
+def _build_invitation_batch_preview(
+    *,
+    batch_type: str,
+    file_bytes: bytes,
+    source_filename: str,
+    created_by: str,
+) -> tuple[InvitationBatchDraft | None, str | None]:
+    headers, raw_rows, warnings, parse_error = _parse_invitation_batch_file(file_bytes, source_filename)
+    if parse_error:
+        return None, parse_error
+
+    if not headers:
+        return None, "The uploaded file does not contain a header row."
+
+    normalized_headers: list[str] = []
+    seen_headers: set[str] = set()
+    for index, header in enumerate(headers, start=1):
+        normalized = _normalize_invitation_batch_header(header)
+        if not normalized:
+            return None, f"Column header #{index} is empty."
+        if normalized in seen_headers:
+            return None, f"Duplicate column detected after normalization: '{normalized}'."
+        normalized_headers.append(normalized)
+        seen_headers.add(normalized)
+
+    missing_columns = [column for column in INVITATION_BATCH_REQUIRED_COLUMNS[batch_type] if column not in seen_headers]
+    if missing_columns:
+        return None, f"Missing required columns: {', '.join(missing_columns)}."
+
+    preview_rows: list[dict] = []
+    ready_rows = 0
+    skip_rows = 0
+    error_rows = 0
+    seen_recipients: set[tuple[str, str]] = set()
+
+    for raw_row in raw_rows:
+        row_number = int(raw_row["row_number"])
+        values = list(raw_row["values"])
+        if len(values) < len(normalized_headers):
+            values.extend([""] * (len(normalized_headers) - len(values)))
+        row_data = {header: values[idx] if idx < len(values) else "" for idx, header in enumerate(normalized_headers)}
+
+        normalized_row, row_error = _validate_invitation_batch_row(row_data, batch_type)
+        if row_error:
+            error_rows += 1
+            preview_rows.append(
+                {
+                    "row_number": row_number,
+                    "status": "error",
+                    "reason": row_error,
+                    "input": row_data,
+                    "request": None,
+                }
+            )
+            continue
+
+        role_value = normalized_row.get("role", DelegationInviteRole.TEACHER.value)
+        dedupe_key = (normalized_row["email"], role_value)
+        if dedupe_key in seen_recipients:
+            skip_rows += 1
+            preview_rows.append(
+                {
+                    "row_number": row_number,
+                    "status": "skip",
+                    "reason": "Duplicate email/role in this uploaded file.",
+                    "input": normalized_row,
+                    "request": None,
+                }
+            )
+            continue
+        seen_recipients.add(dedupe_key)
+
+        request_payload, skip_reason = _prepare_invitation_batch_request(normalized_row, batch_type)
+        if skip_reason:
+            skip_rows += 1
+            preview_rows.append(
+                {
+                    "row_number": row_number,
+                    "status": "skip",
+                    "reason": skip_reason,
+                    "input": normalized_row,
+                    "request": None,
+                }
+            )
+            continue
+
+        ready_rows += 1
+        preview_rows.append(
+            {
+                "row_number": row_number,
+                "status": "ready",
+                "reason": "Ready to create invite.",
+                "input": normalized_row,
+                "request": request_payload,
+            }
+        )
+
+    total_rows = len(preview_rows)
+    payload = {
+        "batch_type": batch_type,
+        "headers": normalized_headers,
+        "warnings": warnings,
+        "rows": preview_rows,
+        "summary": {
+            "total_rows": total_rows,
+            "ready_rows": ready_rows,
+            "skip_rows": skip_rows,
+            "error_rows": error_rows,
+            "would_send_emails": ready_rows if _auto_email_enabled() else 0,
+            "would_require_manual_share": 0 if _auto_email_enabled() else ready_rows,
+        },
+    }
+    draft = InvitationBatchDraft(
+        created_by=created_by,
+        batch_type=batch_type,
+        source_filename=source_filename,
+        file_sha256=hashlib.sha256(file_bytes).hexdigest(),
+        status="preview",
+        total_rows=total_rows,
+        ready_rows=ready_rows,
+        skip_rows=skip_rows,
+        error_rows=error_rows,
+        result_payload=payload,
+    )
+    return draft, None
+
+
+def _find_admin_invitation_batch_draft(draft_id: int, admin_user: str | None) -> InvitationBatchDraft | None:
+    if not admin_user:
+        return None
+    return InvitationBatchDraft.query.filter(
+        InvitationBatchDraft.id == draft_id,
+        InvitationBatchDraft.created_by == admin_user,
+    ).first()
+
+
 def _admin_invitations_context(
     *,
     leader_form: DelegationLeaderInviteForm | None = None,
     delegation_form: AdminDelegationInvitationForm | None = None,
     normal_form: AdminInvitationForm | None = None,
+    batch_upload_form: AdminInvitationBatchUploadForm | None = None,
+    batch_execute_form: AdminInvitationBatchExecuteForm | None = None,
+    batch_discard_form: AdminInvitationBatchDiscardForm | None = None,
+    batch_draft: InvitationBatchDraft | None = None,
 ) -> dict:
     auto_email_enabled = _auto_email_enabled()
     leader_form = leader_form or DelegationLeaderInviteForm(prefix="leader")
     delegation_form = delegation_form or AdminDelegationInvitationForm(prefix="delegation")
     normal_form = normal_form or AdminInvitationForm(prefix="normal")
+    batch_upload_form = batch_upload_form or AdminInvitationBatchUploadForm(prefix="batch-upload")
+    batch_execute_form = batch_execute_form or AdminInvitationBatchExecuteForm(prefix="batch-exec")
+    batch_discard_form = batch_discard_form or AdminInvitationBatchDiscardForm(prefix="batch-discard")
 
     leader_form.submit.label.text = "Send delegation leader invite"
     delegation_form.submit.label.text = "Send delegation invite"
     normal_form.submit.label.text = "Send invite"
+    batch_upload_form.submit_preview.label.text = "Validate and preview"
+    batch_execute_form.submit_execute.label.text = "Execute batch"
+    batch_discard_form.submit_discard.label.text = "Discard preview"
+
+    if batch_draft:
+        batch_execute_form.draft_id.data = str(batch_draft.id)
+        batch_discard_form.draft_id.data = str(batch_draft.id)
+    batch_payload = batch_draft.result_payload if batch_draft else None
 
     delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
     delegation_leaders_available = bool(delegation_form.delegation_leader_id.choices)
@@ -8347,6 +8843,12 @@ def _admin_invitations_context(
         "delegation_leader_form": leader_form,
         "delegation_form": delegation_form,
         "normal_form": normal_form,
+        "batch_upload_form": batch_upload_form,
+        "batch_execute_form": batch_execute_form,
+        "batch_discard_form": batch_discard_form,
+        "batch_draft": batch_draft,
+        "batch_payload": batch_payload,
+        "batch_type_labels": {value: label for value, label in INVITATION_BATCH_TYPE_CHOICES},
         "delegation_entries": delegation_entries,
         "normal_entries": normal_entries,
         "delegation_summary": delegation_summary,
@@ -8361,12 +8863,20 @@ def _render_admin_invitations(
     leader_form: DelegationLeaderInviteForm | None = None,
     delegation_form: AdminDelegationInvitationForm | None = None,
     normal_form: AdminInvitationForm | None = None,
+    batch_upload_form: AdminInvitationBatchUploadForm | None = None,
+    batch_execute_form: AdminInvitationBatchExecuteForm | None = None,
+    batch_discard_form: AdminInvitationBatchDiscardForm | None = None,
+    batch_draft: InvitationBatchDraft | None = None,
 ):
     is_htmx = _is_htmx_request()
     context = _admin_invitations_context(
         leader_form=leader_form,
         delegation_form=delegation_form,
         normal_form=normal_form,
+        batch_upload_form=batch_upload_form,
+        batch_execute_form=batch_execute_form,
+        batch_discard_form=batch_discard_form,
+        batch_draft=batch_draft,
     )
     context["is_htmx"] = is_htmx
     template_name = "admin/partials/invitations_content.html" if is_htmx else "admin/invitations.html"
@@ -8379,7 +8889,13 @@ def _render_admin_invitations(
 def admin_invitations():
     if not _current_admin():
         abort(403)
-    return _render_admin_invitations()
+    draft = None
+    draft_id_raw = (request.args.get("batch_draft") or "").strip()
+    if draft_id_raw.isdigit():
+        draft = _find_admin_invitation_batch_draft(int(draft_id_raw), _current_admin())
+        if not draft:
+            flash("Batch preview not found.", "warning")
+    return _render_admin_invitations(batch_draft=draft)
 
 @web_bp.route("/admin/invitations/delegation-leader", methods=["POST"])
 def admin_invitation_create_delegation_leader():
@@ -8401,64 +8917,32 @@ def admin_invitation_create_delegation_leader():
 
     email = leader_form.email.data.lower().strip()
     country = leader_form.country.data.strip()
-
-    existing_teacher = Teacher.query.filter(Teacher.email == email).first()
-    if existing_teacher:
-        flash(
-            "This email address is already registered as a teacher. Use Teachers → Edit to mark them as a delegation leader.",
-            "error",
-        )
+    conflict = _admin_invitation_conflict(
+        email=email,
+        role=DelegationInviteRole.TEACHER,
+        delegation_leader=True,
+    )
+    if conflict:
+        flash(conflict.message, conflict.category)
         return _render_admin_invitations(
             leader_form=leader_form,
             delegation_form=delegation_form,
             normal_form=normal_form,
         )
 
-    existing_invite = _active_invite_for_email(email, DelegationInviteRole.TEACHER)
-    if existing_invite:
-        flash("An active teacher invite already exists for this email address.", "warning")
-        return _render_admin_invitations(
-            leader_form=leader_form,
-            delegation_form=delegation_form,
-            normal_form=normal_form,
-        )
-
-    invite = DelegationInvite(
-        token=_generate_unique_invite_token(),
+    result = _admin_create_invite_and_send(
         role=DelegationInviteRole.TEACHER,
         delegation_leader=True,
         country=country,
         first_name=leader_form.first_name.data.strip(),
         last_name=leader_form.last_name.data.strip(),
         email=email,
-    )
-    db.session.add(invite)
-    db.session.flush()
-
-    sent, error = _send_delegation_invite_email(invite, None)
-    now = datetime.utcnow()
-    if sent:
-        invite.email_sent_at = now
-        invite.email_error = None
-    elif error and error != "auto-email-disabled":
-        invite.email_error = error
-
-    log_activity(
-        "invitation_created",
-        f"Invitation created for delegation leader {invite.email}",
+        inviter=None,
+        category="delegation",
         actor=_current_admin(),
-        object_type="delegation_invite",
-        object_id=invite.id,
-        details={
-            "role": invite.role.value,
-            "email": invite.email,
-            "country": invite.country,
-            "category": "delegation",
-            "delegation_leader": True,
-            "email_sent": sent,
-            "email_error": error,
-        },
+        log_message=f"Invitation created for delegation leader {email}",
     )
+    sent, error = result.sent, result.error
     db.session.commit()
 
     if sent:
@@ -8515,54 +8999,24 @@ def admin_invitation_create_delegation():
         else DelegationInviteRole.TEACHER
     )
 
-    if role == DelegationInviteRole.STUDENT and Student.query.filter(Student.email == email).first():
-        flash("This email address is already registered as a student.", "error")
-        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
-    if role == DelegationInviteRole.TEACHER and Teacher.query.filter(Teacher.email == email).first():
-        flash("This email address is already registered as a teacher.", "error")
+    conflict = _admin_invitation_conflict(email=email, role=role, delegation_leader=False)
+    if conflict:
+        flash(conflict.message, conflict.category)
         return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
 
-    existing_invite = _active_invite_for_email(email, role)
-    if existing_invite:
-        flash("An active invite already exists for this email address.", "warning")
-        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
-
-    invite = DelegationInvite(
-        token=_generate_unique_invite_token(),
+    result = _admin_create_invite_and_send(
         role=role,
+        delegation_leader=False,
         country=inviter.country,
         first_name=delegation_form.first_name.data.strip(),
         last_name=delegation_form.last_name.data.strip(),
         email=email,
-        invited_by_id=inviter.id,
-    )
-    db.session.add(invite)
-    db.session.flush()
-
-    sent, error = _send_delegation_invite_email(invite, inviter)
-    now = datetime.utcnow()
-    if sent:
-        invite.email_sent_at = now
-        invite.email_error = None
-    elif error and error != "auto-email-disabled":
-        invite.email_error = error
-
-    log_activity(
-        "invitation_created",
-        f"Delegation invitation created for {invite.email}",
+        inviter=inviter,
+        category="delegation",
         actor=_current_admin(),
-        object_type="delegation_invite",
-        object_id=invite.id,
-        details={
-            "role": invite.role.value,
-            "email": invite.email,
-            "country": invite.country,
-            "category": "delegation",
-            "invited_by_id": inviter.id,
-            "email_sent": sent,
-            "email_error": error,
-        },
+        log_message=f"Delegation invitation created for {email}",
     )
+    sent, error = result.sent, result.error
     db.session.commit()
 
     if sent:
@@ -8603,52 +9057,24 @@ def admin_invitation_create_normal():
         else DelegationInviteRole.TEACHER
     )
 
-    if role == DelegationInviteRole.STUDENT and Student.query.filter(Student.email == email).first():
-        flash("This email address is already registered as a student.", "error")
-        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
-    if role == DelegationInviteRole.TEACHER and Teacher.query.filter(Teacher.email == email).first():
-        flash("This email address is already registered as a teacher.", "error")
+    conflict = _admin_invitation_conflict(email=email, role=role, delegation_leader=False)
+    if conflict:
+        flash(conflict.message, conflict.category)
         return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
 
-    existing_invite = _active_invite_for_email(email, role)
-    if existing_invite:
-        flash("An active invite already exists for this email address.", "warning")
-        return _render_admin_invitations(leader_form=leader_form, delegation_form=delegation_form, normal_form=normal_form)
-
-    invite = DelegationInvite(
-        token=_generate_unique_invite_token(),
+    result = _admin_create_invite_and_send(
         role=role,
+        delegation_leader=False,
         country=country,
         first_name=normal_form.first_name.data.strip(),
         last_name=normal_form.last_name.data.strip(),
         email=email,
-    )
-    db.session.add(invite)
-    db.session.flush()
-
-    sent, error = _send_delegation_invite_email(invite, None)
-    now = datetime.utcnow()
-    if sent:
-        invite.email_sent_at = now
-        invite.email_error = None
-    elif error and error != "auto-email-disabled":
-        invite.email_error = error
-
-    log_activity(
-        "invitation_created",
-        f"Normal invitation created for {invite.email}",
+        inviter=None,
+        category="normal",
         actor=_current_admin(),
-        object_type="delegation_invite",
-        object_id=invite.id,
-        details={
-            "role": invite.role.value,
-            "email": invite.email,
-            "country": invite.country,
-            "category": "normal",
-            "email_sent": sent,
-            "email_error": error,
-        },
+        log_message=f"Normal invitation created for {email}",
     )
+    sent, error = result.sent, result.error
     db.session.commit()
 
     if sent:
@@ -8660,6 +9086,450 @@ def admin_invitation_create_normal():
 
     if _is_htmx_request():
         return _render_admin_invitations()
+    return redirect(url_for("web.admin_invitations"))
+
+
+def _init_admin_invitation_forms() -> SimpleNamespace:
+    leader_form = DelegationLeaderInviteForm(prefix="leader")
+    delegation_form = AdminDelegationInvitationForm(prefix="delegation")
+    normal_form = AdminInvitationForm(prefix="normal")
+    batch_upload_form = AdminInvitationBatchUploadForm(prefix="batch-upload")
+    batch_execute_form = AdminInvitationBatchExecuteForm(prefix="batch-exec")
+    batch_discard_form = AdminInvitationBatchDiscardForm(prefix="batch-discard")
+    delegation_form.delegation_leader_id.choices = _delegation_leader_choices()
+    return SimpleNamespace(
+        leader_form=leader_form,
+        delegation_form=delegation_form,
+        normal_form=normal_form,
+        batch_upload_form=batch_upload_form,
+        batch_execute_form=batch_execute_form,
+        batch_discard_form=batch_discard_form,
+    )
+
+
+@web_bp.route("/admin/invitations/batch/template/<string:batch_type>.<string:fmt>")
+def admin_invitation_batch_template(batch_type: str, fmt: str):
+    if not _current_admin():
+        abort(403)
+    if batch_type not in INVITATION_BATCH_TYPE_VALUES:
+        abort(404)
+    fmt = (fmt or "").strip().lower()
+    if fmt not in {"csv", "xlsx"}:
+        abort(404)
+
+    headers = INVITATION_BATCH_REQUIRED_COLUMNS[batch_type]
+    sample_row = INVITATION_BATCH_TEMPLATE_SAMPLE_ROWS.get(batch_type, {})
+
+    if fmt == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=headers)
+        writer.writeheader()
+        writer.writerow({header: sample_row.get(header, "") for header in headers})
+        csv_bytes = output.getvalue().encode("utf-8")
+        return send_file(
+            BytesIO(csv_bytes),
+            mimetype="text/csv; charset=utf-8",
+            as_attachment=True,
+            download_name=f"invitation-batch-{batch_type}-template.csv",
+        )
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Invites"
+    worksheet.append(headers)
+    worksheet.append([sample_row.get(header, "") for header in headers])
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        download_name=f"invitation-batch-{batch_type}-template.xlsx",
+    )
+
+
+@web_bp.route("/admin/invitations/batch/preview", methods=["POST"])
+def admin_invitation_batch_preview():
+    if not _current_admin():
+        abort(403)
+    forms = _init_admin_invitation_forms()
+
+    if not forms.batch_upload_form.validate_on_submit():
+        flash("Please correct the batch upload form errors.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+
+    batch_type = forms.batch_upload_form.batch_type.data
+    if batch_type not in INVITATION_BATCH_TYPE_VALUES:
+        flash("Unknown batch type selected.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+
+    uploaded = forms.batch_upload_form.invite_file.data
+    filename = secure_filename((uploaded.filename or "").strip())
+    if not filename:
+        flash("Uploaded file name is invalid.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+
+    file_bytes = uploaded.read()
+    if not file_bytes:
+        flash("Uploaded file is empty.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+    if len(file_bytes) > INVITATION_BATCH_MAX_FILE_SIZE:
+        flash(f"File is too large. Maximum allowed size is {INVITATION_BATCH_MAX_FILE_SIZE // (1024 * 1024)} MB.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+
+    draft, error = _build_invitation_batch_preview(
+        batch_type=batch_type,
+        file_bytes=file_bytes,
+        source_filename=filename,
+        created_by=_current_admin() or "",
+    )
+    if error or not draft:
+        flash(error or "Could not build batch preview.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+        )
+
+    db.session.add(draft)
+    db.session.flush()
+    log_activity(
+        "invitation_batch_previewed",
+        f"Invitation batch previewed ({batch_type})",
+        actor=_current_admin(),
+        object_type="invitation_batch_draft",
+        object_id=draft.id,
+        details={
+            "batch_type": batch_type,
+            "source_filename": filename,
+            "total_rows": draft.total_rows,
+            "ready_rows": draft.ready_rows,
+            "skip_rows": draft.skip_rows,
+            "error_rows": draft.error_rows,
+        },
+    )
+    db.session.commit()
+    flash(
+        f"Preview created: {draft.ready_rows} ready, {draft.skip_rows} skipped, {draft.error_rows} errors.",
+        "success",
+    )
+
+    payload = draft.result_payload or {}
+    for warning in payload.get("warnings", []):
+        flash(warning, "warning")
+
+    forms.batch_execute_form.draft_id.data = str(draft.id)
+    forms.batch_discard_form.draft_id.data = str(draft.id)
+    if _is_htmx_request():
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+    return redirect(url_for("web.admin_invitations", batch_draft=draft.id))
+
+
+@web_bp.route("/admin/invitations/batch/<int:draft_id>/execute", methods=["POST"])
+def admin_invitation_batch_execute(draft_id: int):
+    if not _current_admin():
+        abort(403)
+    forms = _init_admin_invitation_forms()
+    execute_form = forms.batch_execute_form
+
+    draft = _find_admin_invitation_batch_draft(draft_id, _current_admin())
+    if not draft:
+        abort(404)
+
+    if not execute_form.validate_on_submit():
+        flash("Confirm batch execution to continue.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+
+    if str(execute_form.draft_id.data or "") != str(draft_id):
+        flash("Batch draft mismatch.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+
+    if draft.status != "preview":
+        flash("This batch preview has already been processed.", "warning")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+
+    payload = dict(draft.result_payload or {})
+    rows = list(payload.get("rows", []))
+    ready_rows = [row for row in rows if row.get("status") == "ready" and row.get("request")]
+    if not ready_rows:
+        flash("No rows are ready for execution.", "warning")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+
+    draft.status = "executing"
+    db.session.flush()
+
+    created_count = 0
+    email_sent_count = 0
+    email_failed_count = 0
+    execute_skip_count = 0
+    execute_error_count = 0
+    updated_rows: list[dict] = []
+
+    for row in rows:
+        row_out = dict(row)
+        request_payload = row_out.get("request") or {}
+        if row_out.get("status") != "ready" or not request_payload:
+            updated_rows.append(row_out)
+            continue
+
+        role = _parse_invitation_batch_role(str(request_payload.get("role") or ""))
+        if role is None:
+            row_out["status"] = "error"
+            row_out["reason"] = "Invalid role in prepared request."
+            execute_error_count += 1
+            updated_rows.append(row_out)
+            continue
+
+        delegation_leader = bool(request_payload.get("delegation_leader"))
+        inviter = None
+        inviter_id = request_payload.get("inviter_id")
+        if inviter_id is not None:
+            inviter = db.session.get(Teacher, int(inviter_id))
+            if not inviter or not inviter.delegation_leader:
+                row_out["status"] = "skip"
+                row_out["reason"] = "Delegation leader no longer exists or is no longer marked as leader."
+                execute_skip_count += 1
+                updated_rows.append(row_out)
+                continue
+
+        conflict = _admin_invitation_conflict(
+            email=str(request_payload.get("email") or ""),
+            role=role,
+            delegation_leader=delegation_leader,
+        )
+        if conflict:
+            row_out["status"] = "skip"
+            row_out["reason"] = conflict.message
+            execute_skip_count += 1
+            updated_rows.append(row_out)
+            continue
+
+        country_value = str(request_payload.get("country") or "").strip()
+        if inviter:
+            country_value = inviter.country
+
+        try:
+            with db.session.begin_nested():
+                result = _admin_create_invite_and_send(
+                    role=role,
+                    delegation_leader=delegation_leader,
+                    country=country_value,
+                    first_name=str(request_payload.get("first_name") or "").strip(),
+                    last_name=str(request_payload.get("last_name") or "").strip(),
+                    email=str(request_payload.get("email") or "").strip(),
+                    inviter=inviter,
+                    category=str(request_payload.get("category") or "normal"),
+                    actor=_current_admin(),
+                    log_message=str(
+                        request_payload.get("log_message")
+                        or f"Batch invitation created for {str(request_payload.get('email') or '').strip()}"
+                    ),
+                )
+            created_count += 1
+            row_out["status"] = "created"
+            row_out["reason"] = "Invite created."
+            row_out["invite_id"] = result.invite.id
+            if result.sent:
+                email_sent_count += 1
+            elif result.error and result.error != "auto-email-disabled":
+                email_failed_count += 1
+                row_out["email_error"] = result.error
+        except IntegrityError:
+            row_out["status"] = "error"
+            row_out["reason"] = "Database conflict while creating invite."
+            execute_error_count += 1
+        updated_rows.append(row_out)
+
+    payload["rows"] = updated_rows
+    payload["execution"] = {
+        "executed_at": datetime.utcnow().isoformat(),
+        "created_rows": created_count,
+        "email_sent": email_sent_count,
+        "email_failed": email_failed_count,
+        "skip_rows": execute_skip_count,
+        "error_rows": execute_error_count,
+    }
+
+    draft.status = "executed"
+    draft.executed_at = datetime.utcnow()
+    draft.result_payload = payload
+    draft.total_rows = len(updated_rows)
+    draft.ready_rows = sum(1 for row in updated_rows if row.get("status") == "ready")
+    draft.skip_rows = sum(1 for row in updated_rows if row.get("status") == "skip")
+    draft.error_rows = sum(1 for row in updated_rows if row.get("status") == "error")
+
+    log_activity(
+        "invitation_batch_executed",
+        f"Invitation batch executed ({draft.batch_type})",
+        actor=_current_admin(),
+        object_type="invitation_batch_draft",
+        object_id=draft.id,
+        details={
+            "batch_type": draft.batch_type,
+            "source_filename": draft.source_filename,
+            "created_rows": created_count,
+            "email_sent": email_sent_count,
+            "email_failed": email_failed_count,
+            "skip_rows": execute_skip_count,
+            "error_rows": execute_error_count,
+        },
+    )
+    db.session.commit()
+    flash(
+        f"Batch executed. Created {created_count} invites, sent {email_sent_count} emails, failed {email_failed_count} emails.",
+        "success",
+    )
+
+    forms.batch_execute_form.draft_id.data = str(draft.id)
+    forms.batch_discard_form.draft_id.data = str(draft.id)
+    if _is_htmx_request():
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=draft,
+        )
+    return redirect(url_for("web.admin_invitations", batch_draft=draft.id))
+
+
+@web_bp.route("/admin/invitations/batch/<int:draft_id>/discard", methods=["POST"])
+def admin_invitation_batch_discard(draft_id: int):
+    if not _current_admin():
+        abort(403)
+    forms = _init_admin_invitation_forms()
+    discard_form = forms.batch_discard_form
+
+    draft = _find_admin_invitation_batch_draft(draft_id, _current_admin())
+    if not draft:
+        abort(404)
+
+    if not discard_form.validate_on_submit():
+        flash("Could not discard batch preview.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=discard_form,
+            batch_draft=draft,
+        )
+    if str(discard_form.draft_id.data or "") != str(draft_id):
+        flash("Batch draft mismatch.", "error")
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=discard_form,
+            batch_draft=draft,
+        )
+
+    draft.status = "discarded"
+    log_activity(
+        "invitation_batch_discarded",
+        f"Invitation batch discarded ({draft.batch_type})",
+        actor=_current_admin(),
+        object_type="invitation_batch_draft",
+        object_id=draft.id,
+        details={"batch_type": draft.batch_type, "source_filename": draft.source_filename},
+    )
+    db.session.commit()
+    flash("Batch preview discarded.", "success")
+
+    if _is_htmx_request():
+        return _render_admin_invitations(
+            leader_form=forms.leader_form,
+            delegation_form=forms.delegation_form,
+            normal_form=forms.normal_form,
+            batch_upload_form=forms.batch_upload_form,
+            batch_execute_form=forms.batch_execute_form,
+            batch_discard_form=forms.batch_discard_form,
+            batch_draft=None,
+        )
     return redirect(url_for("web.admin_invitations"))
 
 

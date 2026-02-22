@@ -43,7 +43,9 @@
     <h3>Create invites</h3>
   </div>
   {% set invite_tab = "leader" %}
-  {% if delegation_form.errors %}
+  {% if batch_upload_form.errors or batch_execute_form.errors or batch_discard_form.errors or batch_draft %}
+    {% set invite_tab = "batch" %}
+  {% elif delegation_form.errors %}
     {% set invite_tab = "delegation" %}
   {% elif normal_form.errors %}
     {% set invite_tab = "normal" %}
@@ -84,6 +86,17 @@
         tabindex="{{ '0' if invite_tab == 'normal' else '-1' }}"
       >
         Normal
+      </button>
+      <button
+        type="button"
+        class="invite-tabs__tab"
+        data-invite-tab="batch"
+        role="tab"
+        aria-controls="invite-panel-batch"
+        aria-selected="{{ 'true' if invite_tab == 'batch' else 'false' }}"
+        tabindex="{{ '0' if invite_tab == 'batch' else '-1' }}"
+      >
+        Batch upload
       </button>
     </div>
 
@@ -266,6 +279,193 @@
           {{ normal_form.submit(class_="button") }}
         </div>
       </form>
+    </div>
+
+    <div
+      id="invite-panel-batch"
+      class="invite-tabs__panel"
+      data-invite-panel="batch"
+      role="tabpanel"
+      tabindex="0"
+      {% if invite_tab != 'batch' %}hidden{% endif %}
+    >
+      <h4>Batch upload</h4>
+      <p class="fine-print">Upload CSV/XLSX files for delegation leader, delegation, or normal invitations. Preview is a dry run and does not send emails.</p>
+
+      <div class="table-card" style="margin-bottom: 1rem;">
+        <h5>Templates</h5>
+        <p class="fine-print">Use these templates to avoid header/column errors.</p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Batch type</th>
+              <th>Template files</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for batch_type, batch_label in batch_type_labels.items() %}
+              <tr>
+                <td>{{ batch_label }}</td>
+                <td>
+                  <a class="button-link" href="{{ url_for('web.admin_invitation_batch_template', batch_type=batch_type, fmt='csv') }}">CSV</a>
+                  <a class="button-link secondary" href="{{ url_for('web.admin_invitation_batch_template', batch_type=batch_type, fmt='xlsx') }}">XLSX</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <form
+        method="post"
+        action="{{ url_for('web.admin_invitation_batch_preview') }}"
+        class="form-grid"
+        novalidate
+        enctype="multipart/form-data"
+        hx-post="{{ url_for('web.admin_invitation_batch_preview') }}"
+        hx-encoding="multipart/form-data"
+        hx-target="#admin-invitations-content"
+      >
+        {{ batch_upload_form.hidden_tag() }}
+        <div class="form-field full-width">
+          {{ batch_upload_form.batch_type.label }}
+          {{ batch_upload_form.batch_type() }}
+          {% for error in batch_upload_form.batch_type.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="form-field full-width">
+          {{ batch_upload_form.invite_file.label }}
+          {{ batch_upload_form.invite_file() }}
+          {% for error in batch_upload_form.invite_file.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="form-actions">
+          {{ batch_upload_form.submit_preview(class_="button") }}
+        </div>
+      </form>
+
+      {% if batch_draft and batch_payload %}
+        {% set batch_summary = batch_payload.get('summary', {}) %}
+        {% set batch_execution = batch_payload.get('execution', {}) %}
+        <div class="table-card" style="margin-top: 1rem;">
+          <div class="table-header">
+            <h5>Batch preview #{{ batch_draft.id }}</h5>
+            <span class="status-tag {{ 'success' if batch_draft.status == 'executed' else 'warning' if batch_draft.status == 'discarded' else '' }}">
+              {{ batch_draft.status|title }}
+            </span>
+          </div>
+          <p class="fine-print">
+            <strong>File:</strong> {{ batch_draft.source_filename }} ·
+            <strong>Type:</strong> {{ batch_type_labels.get(batch_draft.batch_type, batch_draft.batch_type) }} ·
+            <strong>Rows:</strong> {{ batch_summary.get('total_rows', 0) }}
+          </p>
+          <ul>
+            <li><strong>Ready:</strong> {{ batch_summary.get('ready_rows', 0) }}</li>
+            <li><strong>Skipped:</strong> {{ batch_summary.get('skip_rows', 0) }}</li>
+            <li><strong>Errors:</strong> {{ batch_summary.get('error_rows', 0) }}</li>
+            <li><strong>Would send emails:</strong> {{ batch_summary.get('would_send_emails', 0) }}</li>
+            <li><strong>Manual sharing needed:</strong> {{ batch_summary.get('would_require_manual_share', 0) }}</li>
+          </ul>
+
+          {% if batch_payload.get('warnings') %}
+            <div class="portal-alert warning">
+              {% for warning in batch_payload.get('warnings', []) %}
+                <div>{{ warning }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% if batch_draft.status == 'preview' %}
+            <div class="table-actions" style="margin-bottom: 1rem;">
+              <form
+                method="post"
+                action="{{ url_for('web.admin_invitation_batch_execute', draft_id=batch_draft.id) }}"
+                class="form-grid"
+                novalidate
+                hx-post="{{ url_for('web.admin_invitation_batch_execute', draft_id=batch_draft.id) }}"
+                hx-target="#admin-invitations-content"
+              >
+                {{ batch_execute_form.hidden_tag() }}
+                <div class="form-field full-width">
+                  <label class="checkbox">
+                    {{ batch_execute_form.confirm() }}
+                    {{ batch_execute_form.confirm.label.text }}
+                  </label>
+                  {% for error in batch_execute_form.confirm.errors %}
+                    <div class="field-error">{{ error }}</div>
+                  {% endfor %}
+                </div>
+                <div class="form-actions">
+                  {% if batch_summary.get('ready_rows', 0) > 0 %}
+                    {{ batch_execute_form.submit_execute(class_='button') }}
+                  {% else %}
+                    {{ batch_execute_form.submit_execute(class_='button', disabled=true) }}
+                  {% endif %}
+                </div>
+              </form>
+              <form
+                method="post"
+                action="{{ url_for('web.admin_invitation_batch_discard', draft_id=batch_draft.id) }}"
+                hx-post="{{ url_for('web.admin_invitation_batch_discard', draft_id=batch_draft.id) }}"
+                hx-target="#admin-invitations-content"
+              >
+                {{ batch_discard_form.hidden_tag() }}
+                {{ batch_discard_form.submit_discard(class_='button-link secondary') }}
+              </form>
+            </div>
+          {% elif batch_draft.status == 'executed' %}
+            <div class="portal-alert success">
+              Executed: created {{ batch_execution.get('created_rows', 0) }} invites, sent {{ batch_execution.get('email_sent', 0) }} emails, failed {{ batch_execution.get('email_failed', 0) }} emails.
+            </div>
+          {% endif %}
+
+          {% if batch_payload.get('rows') %}
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Recipient</th>
+                  <th>Role</th>
+                  <th>Country</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in batch_payload.get('rows', []) %}
+                  {% set row_input = row.get('input', {}) %}
+                  {% set row_request = row.get('request') or {} %}
+                  {% set row_role = row_input.get('role', 'teacher' if batch_draft.batch_type == 'delegation_leader' else '-') %}
+                  {% set row_country = row_request.get('country') or row_input.get('country') or '-' %}
+                  {% set row_status = row.get('status', '-') %}
+                  {% set row_status_class = 'success' if row_status in ['ready', 'created'] else 'warning' if row_status == 'skip' else '' %}
+                  <tr>
+                    <td>{{ row.get('row_number', '-') }}</td>
+                    <td>
+                      <strong>{{ row_input.get('first_name', '') }} {{ row_input.get('last_name', '') }}</strong>
+                      <div class="fine-print">{{ row_input.get('email', '-') }}</div>
+                    </td>
+                    <td>{{ row_role|title }}</td>
+                    <td>{{ row_country }}</td>
+                    <td><span class="status-tag {{ row_status_class }}">{{ row_status|title }}</span></td>
+                    <td>
+                      {{ row.get('reason', '-') }}
+                      {% if row.get('invite_id') %}
+                        <div class="fine-print">Invite #{{ row.get('invite_id') }}</div>
+                      {% endif %}
+                      {% if row.get('email_error') %}
+                        <div class="fine-print">{{ row.get('email_error') }}</div>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
+        </div>
+      {% endif %}
     </div>
   </div>
 </section>

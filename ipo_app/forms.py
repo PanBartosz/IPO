@@ -250,6 +250,12 @@ INVITE_ROLE_CHOICES = [
     ("teacher", "Teacher"),
 ]
 
+INVITATION_BATCH_TYPE_CHOICES = [
+    ("delegation_leader", "Delegation leader invites"),
+    ("delegation", "Delegation invites"),
+    ("normal", "Normal invites"),
+]
+
 
 class AdminDelegationInvitationForm(FlaskForm):
     delegation_leader_id = SelectField("Delegation leader", validators=[DataRequired()], coerce=int)
@@ -267,6 +273,33 @@ class AdminInvitationForm(FlaskForm):
     email = EmailField("Email", validators=[DataRequired(), Email(check_deliverability=False), Length(max=255)])
     country = StringField("Country", validators=[DataRequired(), Length(max=100)])
     submit = SubmitField("Send invite")
+
+
+class AdminInvitationBatchUploadForm(FlaskForm):
+    batch_type = SelectField(
+        "Batch type",
+        validators=[DataRequired()],
+        choices=INVITATION_BATCH_TYPE_CHOICES,
+    )
+    invite_file = FileField(
+        "CSV/XLSX file",
+        validators=[FileRequired(message="Please select a CSV or XLSX file."), FileAllowed(["csv", "xlsx"], "CSV/XLSX only")],
+    )
+    submit_preview = SubmitField("Validate and preview")
+
+
+class AdminInvitationBatchExecuteForm(FlaskForm):
+    draft_id = HiddenField(validators=[DataRequired()])
+    confirm = BooleanField(
+        "I confirm I want to create invites from this preview.",
+        validators=[DataRequired()],
+    )
+    submit_execute = SubmitField("Execute batch")
+
+
+class AdminInvitationBatchDiscardForm(FlaskForm):
+    draft_id = HiddenField(validators=[DataRequired()])
+    submit_discard = SubmitField("Discard preview")
 
 
 class AdminLoginForm(FlaskForm):

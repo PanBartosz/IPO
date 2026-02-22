@@ -313,6 +313,29 @@ class DelegationInvite(db.Model, TimestampMixin):
     )
 
 
+class InvitationBatchDraft(db.Model, TimestampMixin):
+    __tablename__ = "invitation_batch_drafts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    created_by = db.Column(db.String(120), nullable=False)
+    batch_type = db.Column(db.String(32), nullable=False)
+    source_filename = db.Column(db.String(255), nullable=False)
+    file_sha256 = db.Column(db.String(64), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="preview")
+    total_rows = db.Column(db.Integer, nullable=False, default=0)
+    ready_rows = db.Column(db.Integer, nullable=False, default=0)
+    skip_rows = db.Column(db.Integer, nullable=False, default=0)
+    error_rows = db.Column(db.Integer, nullable=False, default=0)
+    executed_at = db.Column(db.DateTime, nullable=True)
+    result_payload = db.Column(db.JSON, nullable=True)
+
+    __table_args__ = (
+        db.Index("ix_invitation_batch_draft_created_by", "created_by"),
+        db.Index("ix_invitation_batch_draft_status", "status"),
+        db.Index("ix_invitation_batch_draft_created_at", "created_at"),
+    )
+
+
 class CommunicationStatus(enum.StrEnum):
     DRAFT = "draft"
     QUEUED = "queued"
