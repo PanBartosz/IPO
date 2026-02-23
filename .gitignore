@@ -27,3 +27,5 @@ __pycache__/
 /tmp_ptf_exports/
 /tmp_ptf_logo_grid.png
 /tmp_ptf_on_black.png
+/.playwright-cli
+/docs/IPO identyfikacja.pdf
