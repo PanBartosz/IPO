@@ -818,7 +818,7 @@ def _deliver_campaign(
 
 
 def _teacher_can_grade(student: Student, teacher: Teacher, language: str | None) -> bool:
-    if not teacher or teacher.is_absent:
+    if not teacher or teacher.is_absent or not teacher.declared_assessor_competence:
         return False
     if student and teacher.country == student.country:
         return False
@@ -827,6 +827,13 @@ def _teacher_can_grade(student: Student, teacher: Teacher, language: str | None)
         return True
     teacher_langs = _teacher_languages(teacher)
     return normalized_language in teacher_langs
+
+
+def _assessment_eligible_teachers_query():
+    return Teacher.query.filter(
+        Teacher.is_absent.is_(False),
+        Teacher.declared_assessor_competence.is_(True),
+    )
 
 
 def _empty_load_entry() -> SimpleNamespace:
@@ -2507,7 +2514,7 @@ def _create_essay_overlay_page(
 
 def _planner_teacher_choices(stage: Stage, language: str | None = None) -> list[tuple[int, str]]:
     teachers = (
-        Teacher.query.filter_by(is_absent=False)
+        _assessment_eligible_teachers_query()
         .order_by(Teacher.last_name.asc(), Teacher.first_name.asc())
         .all()
     )
@@ -2583,11 +2590,7 @@ def _auto_generate_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | d
         if language:
             student_counts[language] += 1
 
-    teachers = (
-        Teacher.query.filter_by(is_absent=False)
-        .order_by(Teacher.last_name.asc(), Teacher.first_name.asc())
-        .all()
-    )
+    teachers = _assessment_eligible_teachers_query().order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
 
     teacher_lookup: dict[int, Teacher] = {}
     eligible_teachers: list[Teacher] = []
@@ -3992,6 +3995,7 @@ def register_teacher():
     form.submit.label.text = "Submit registration"
     if not form.is_submitted():
         form.is_absent.data = False
+        form.non_assessor.data = False
     if invite and (not form.is_submitted() or invite_active):
         form.email.data = invite.email
         form.country.data = invite.country
@@ -4019,79 +4023,88 @@ def register_teacher():
             invite_delegation_leader=False,
         )
     if form.validate_on_submit():
-        now = datetime.utcnow()
-        email = invite.email.lower().strip() if invite_active else form.email.data.lower().strip()
-        country = invite.country.strip() if invite_active else form.country.data.strip()
-        delegation_leader = bool(invite.delegation_leader) if invite_active else False
-        teacher = Teacher(
-            first_name=form.first_name.data.strip(),
-            last_name=form.last_name.data.strip(),
-            email=email,
-            country=country,
-            school=form.school.data.strip(),
-            sex_document=form.sex_document.data,
-            accommodation_room_sharing=form.accommodation_room_sharing.data,
-            languages=", ".join(form.languages.data),
-            meal_preference=form.meal_preference.data,
-            tshirt_size=form.tshirt_size.data,
-            special_needs=(form.special_needs.data.strip() or None)
-            if form.special_needs.data
-            else None,
-            delegation_leader=delegation_leader,
-            prior_ipo_assessor_level=form.prior_ipo_assessor_level.data,
-            prior_ipo_assessor=bool(form.prior_ipo_assessor_level.data),
-            language_entries=[TeacherLanguage(language=lang) for lang in form.languages.data],
-            gdpr_acknowledged=bool(form.gdpr_acknowledged.data),
-            gdpr_acknowledged_at=now if form.gdpr_acknowledged.data else None,
-            photo_consent=form.photo_consent.data == "yes",
-            photo_consent_at=now,
-            declared_assessor_competence=bool(form.declared_assessor_competence.data),
-            declared_assessor_competence_at=now if form.declared_assessor_competence.data else None,
-            accepted_ethics=bool(form.accepted_ethics.data),
-            accepted_ethics_at=now if form.accepted_ethics.data else None,
-            is_absent=bool(form.is_absent.data),
-        )
-        db.session.add(teacher)
-        try:
-            _ensure_teacher_portal_credentials(teacher)
-            db.session.flush()
-            if invite_active:
-                invite.first_name = teacher.first_name
-                invite.last_name = teacher.last_name
-                invite.email = teacher.email
-                invite.accepted_at = now
-                invite.teacher_id = teacher.id
-                log_activity(
-                    "delegation_invite_accepted",
-                    f"Delegation invite accepted for {invite.email}",
-                    actor=teacher.portal_username or teacher.email,
-                    object_type="delegation_invite",
-                    object_id=invite.id,
-                    details={"role": invite.role.value, "country": invite.country},
-                )
-            log_activity(
-                "teacher_registered",
-                f"Teacher {teacher.first_name} {teacher.last_name} registered",
-                object_type="teacher",
-                object_id=teacher.id,
-                details={
-                    "email": teacher.email,
-                    "country": teacher.country,
-                    "languages": form.languages.data,
-                    "portal_username": teacher.portal_username,
-                    "invite_id": invite.id if invite_active else None,
-                },
+        non_assessor = bool(form.non_assessor.data)
+        if not non_assessor and not form.declared_assessor_competence.data:
+            form.declared_assessor_competence.errors.append(
+                "This confirmation is required unless you register as a non-assessing member."
             )
-            db.session.commit()
-            _send_teacher_confirmation_email(teacher)
-            if invite_active:
-                flash("Registration completed. Please check your email for portal credentials.", "success")
-                return redirect(url_for("web.index"))
-            flash("Teacher registered successfully.", "success")
-            return redirect(url_for("web.register_teacher"))
-        except IntegrityError:
-            db.session.rollback()
-            flash("This email address is already registered.", "error")
+        else:
+            now = datetime.utcnow()
+            email = invite.email.lower().strip() if invite_active else form.email.data.lower().strip()
+            country = invite.country.strip() if invite_active else form.country.data.strip()
+            delegation_leader = bool(invite.delegation_leader) if invite_active else False
+            prior_level = 0 if non_assessor else (form.prior_ipo_assessor_level.data or 0)
+            declared_assessor_competence = False if non_assessor else bool(form.declared_assessor_competence.data)
+            teacher = Teacher(
+                first_name=form.first_name.data.strip(),
+                last_name=form.last_name.data.strip(),
+                email=email,
+                country=country,
+                school=form.school.data.strip(),
+                sex_document=form.sex_document.data,
+                accommodation_room_sharing=form.accommodation_room_sharing.data,
+                languages=", ".join(form.languages.data),
+                meal_preference=form.meal_preference.data,
+                tshirt_size=form.tshirt_size.data,
+                special_needs=(form.special_needs.data.strip() or None)
+                if form.special_needs.data
+                else None,
+                delegation_leader=delegation_leader,
+                prior_ipo_assessor_level=prior_level,
+                prior_ipo_assessor=bool(prior_level),
+                language_entries=[TeacherLanguage(language=lang) for lang in form.languages.data],
+                gdpr_acknowledged=bool(form.gdpr_acknowledged.data),
+                gdpr_acknowledged_at=now if form.gdpr_acknowledged.data else None,
+                photo_consent=form.photo_consent.data == "yes",
+                photo_consent_at=now,
+                declared_assessor_competence=declared_assessor_competence,
+                declared_assessor_competence_at=now if declared_assessor_competence else None,
+                accepted_ethics=bool(form.accepted_ethics.data),
+                accepted_ethics_at=now if form.accepted_ethics.data else None,
+                is_absent=bool(form.is_absent.data),
+            )
+            db.session.add(teacher)
+            try:
+                _ensure_teacher_portal_credentials(teacher)
+                db.session.flush()
+                if invite_active:
+                    invite.first_name = teacher.first_name
+                    invite.last_name = teacher.last_name
+                    invite.email = teacher.email
+                    invite.accepted_at = now
+                    invite.teacher_id = teacher.id
+                    log_activity(
+                        "delegation_invite_accepted",
+                        f"Delegation invite accepted for {invite.email}",
+                        actor=teacher.portal_username or teacher.email,
+                        object_type="delegation_invite",
+                        object_id=invite.id,
+                        details={"role": invite.role.value, "country": invite.country},
+                    )
+                log_activity(
+                    "teacher_registered",
+                    f"Teacher {teacher.first_name} {teacher.last_name} registered",
+                    object_type="teacher",
+                    object_id=teacher.id,
+                    details={
+                        "email": teacher.email,
+                        "country": teacher.country,
+                        "languages": form.languages.data,
+                        "portal_username": teacher.portal_username,
+                        "invite_id": invite.id if invite_active else None,
+                        "non_assessor": non_assessor,
+                    },
+                )
+                db.session.commit()
+                _send_teacher_confirmation_email(teacher)
+                if invite_active:
+                    flash("Registration completed. Please check your email for portal credentials.", "success")
+                    return redirect(url_for("web.index"))
+                flash("Teacher registered successfully.", "success")
+                return redirect(url_for("web.register_teacher"))
+            except IntegrityError:
+                db.session.rollback()
+                flash("This email address is already registered.", "error")
 
     return render_template(
         "register_teacher.html",
@@ -9801,6 +9814,7 @@ def edit_teacher(teacher_id: int):
         form.gdpr_acknowledged.data = bool(teacher.gdpr_acknowledged)
         form.photo_consent.data = "yes" if teacher.photo_consent else "no"
         form.delegation_leader.data = bool(teacher.delegation_leader)
+        form.non_assessor.data = not bool(teacher.declared_assessor_competence)
     form.submit.label.text = "Save changes"
 
     if form.validate_on_submit():
@@ -9827,8 +9841,10 @@ def edit_teacher(teacher_id: int):
         teacher.tshirt_size = form.tshirt_size.data
         teacher.special_needs = (form.special_needs.data.strip() or None) if form.special_needs.data else None
         teacher.delegation_leader = bool(form.delegation_leader.data)
-        teacher.prior_ipo_assessor_level = form.prior_ipo_assessor_level.data
-        teacher.prior_ipo_assessor = bool(form.prior_ipo_assessor_level.data)
+        non_assessor = bool(form.non_assessor.data)
+        prior_level = 0 if non_assessor else (form.prior_ipo_assessor_level.data or 0)
+        teacher.prior_ipo_assessor_level = prior_level
+        teacher.prior_ipo_assessor = bool(prior_level)
         if form.gdpr_acknowledged.data:
             teacher.gdpr_acknowledged = True
             teacher.gdpr_acknowledged_at = teacher.gdpr_acknowledged_at or datetime.utcnow()
@@ -9839,7 +9855,10 @@ def edit_teacher(teacher_id: int):
         if teacher.photo_consent != new_photo_consent:
             teacher.photo_consent = new_photo_consent
             teacher.photo_consent_at = datetime.utcnow()
-        if form.declared_assessor_competence.data:
+        if non_assessor:
+            teacher.declared_assessor_competence = False
+            teacher.declared_assessor_competence_at = None
+        elif form.declared_assessor_competence.data:
             teacher.declared_assessor_competence = True
             teacher.declared_assessor_competence_at = teacher.declared_assessor_competence_at or datetime.utcnow()
         else:
@@ -10129,7 +10148,7 @@ def admin_score_student(student_id: int):
             for assessor in _stage_assessors(assignment, Stage.STAGE_2, include_group=False)
         }
         exclude_ids = assigned_teacher_ids.union(stage2_teacher_ids)
-        available_query = Teacher.query.filter_by(is_absent=False)
+        available_query = _assessment_eligible_teachers_query()
         if exclude_ids:
             available_query = available_query.filter(~Teacher.id.in_(exclude_ids))
         available_teachers = [
@@ -10481,11 +10500,7 @@ def admin_planner_batch(batch_id: int):
         ]
         eligible_students_map[group.id] = candidates[:100]
 
-    teachers = (
-        Teacher.query.filter_by(is_absent=False)
-        .order_by(Teacher.last_name.asc(), Teacher.first_name.asc())
-        .all()
-    )
+    teachers = _assessment_eligible_teachers_query().order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
     teacher_languages_map: dict[int, set[str]] = {}
     for teacher in teachers:
         _ensure_language_entries(teacher)
@@ -11628,7 +11643,7 @@ def admin_stage2_score_student(student_id: int):
 
         assigned_teacher_ids = {entry.teacher_id for entry in entries}
         stage1_teacher_ids = {entry.teacher_id for entry in stage1_entries}
-        available_query = Teacher.query.filter_by(is_absent=False)
+        available_query = _assessment_eligible_teachers_query()
         if assigned_teacher_ids or stage1_teacher_ids:
             available_query = available_query.filter(
                 ~Teacher.id.in_(assigned_teacher_ids.union(stage1_teacher_ids))

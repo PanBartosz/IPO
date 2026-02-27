@@ -208,9 +208,13 @@ class TeacherRegistrationForm(FlaskForm):
         validators=[DataRequired()],
         choices=PHOTO_CONSENT_CHOICES,
     )
+    non_assessor = BooleanField(
+        "I am registering as a non-assessing member (I will not assess essays).",
+        default=False,
+    )
     declared_assessor_competence = BooleanField(
         "I confirm I am qualified and competent to assess philosophical essays",
-        validators=[InputRequired()],
+        validators=[Optional()],
     )
     accepted_ethics = BooleanField(
         "I confirm I have read and accept the IPO Statute and Code of Ethics",

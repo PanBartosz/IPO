@@ -120,7 +120,7 @@
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
-      <div class="form-field full-width">
+      <div class="form-field full-width" data-assessor-only>
         {{ form.prior_ipo_assessor_level.label }}
         {{ form.prior_ipo_assessor_level() }}
         {% for error in form.prior_ipo_assessor_level.errors %}
@@ -133,6 +133,13 @@
         {% for error in form.special_needs.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.non_assessor() }}
+          {{ form.non_assessor.label.text }}
+        </label>
+        <span class="form-help">Use this option for organization members who should be registered but will not assess essays.</span>
       </div>
       <div class="form-field full-width">
         <h3>Consents</h3>
@@ -161,7 +168,7 @@
           {% endfor %}
         </div>
       </div>
-      <div class="form-field full-width">
+      <div class="form-field full-width" data-assessor-only>
         <div class="consent-block">
           <div class="richtext-block">{{ assessor_competence_html | safe }}</div>
           <label class="checkbox consent-block__action">
@@ -204,4 +211,46 @@
       </div>
     </form>
   {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      function syncAssessorMode() {
+        const nonAssessor = document.getElementById("non_assessor");
+        if (!nonAssessor) {
+          return;
+        }
+
+        const assessorOnlyBlocks = Array.from(document.querySelectorAll("[data-assessor-only]"));
+        const competenceCheckbox = document.getElementById("declared_assessor_competence");
+        const priorLevelSelect = document.getElementById("prior_ipo_assessor_level");
+        const nonAssessorEnabled = nonAssessor.checked;
+
+        assessorOnlyBlocks.forEach(function (block) {
+          block.hidden = nonAssessorEnabled;
+          block.setAttribute("aria-hidden", nonAssessorEnabled ? "true" : "false");
+        });
+
+        if (nonAssessorEnabled) {
+          if (competenceCheckbox) {
+            competenceCheckbox.checked = false;
+          }
+          if (priorLevelSelect) {
+            priorLevelSelect.value = "0";
+          }
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        const nonAssessor = document.getElementById("non_assessor");
+        if (!nonAssessor) {
+          return;
+        }
+        nonAssessor.addEventListener("change", syncAssessorMode);
+        syncAssessorMode();
+      });
+    })();
+  </script>
 {% endblock %}

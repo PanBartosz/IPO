@@ -140,6 +140,81 @@ def test_teacher_open_registration_creates_teacher_and_redirects(client, csrf_to
         assert teacher.portal_password_hash
 
 
+def test_teacher_open_registration_requires_assessor_confirmation_for_assessing_members(client, csrf_token):
+    register_page = client.get("/register/teacher")
+    token = csrf_token(register_page)
+
+    response = client.post(
+        "/register/teacher",
+        data={
+            "csrf_token": token,
+            "first_name": "Assessing",
+            "last_name": "Teacher",
+            "email": "assessing.teacher@example.com",
+            "country": "Testland",
+            "school": "Test School",
+            "sex_document": "male",
+            "accommodation_room_sharing": "any_sex",
+            "languages": ["English"],
+            "meal_preference": "No preference",
+            "tshirt_size": "M",
+            "prior_ipo_assessor_level": "0",
+            "gdpr_acknowledged": "y",
+            "photo_consent": "yes",
+            "accepted_ethics": "y",
+            "submit": "Submit registration",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "required unless you register as a non-assessing member" in html
+
+    with client.application.app_context():
+        assert Teacher.query.filter_by(email="assessing.teacher@example.com").count() == 0
+
+
+def test_teacher_open_registration_allows_non_assessor_and_forces_assessor_flags_off(client, csrf_token):
+    register_page = client.get("/register/teacher")
+    token = csrf_token(register_page)
+
+    response = client.post(
+        "/register/teacher",
+        data={
+            "csrf_token": token,
+            "first_name": "Org",
+            "last_name": "Member",
+            "email": "org.member@example.com",
+            "country": "Testland",
+            "school": "Test School",
+            "sex_document": "female",
+            "accommodation_room_sharing": "same_sex",
+            "languages": ["English"],
+            "meal_preference": "No preference",
+            "tshirt_size": "M",
+            "prior_ipo_assessor_level": "3",
+            "gdpr_acknowledged": "y",
+            "photo_consent": "yes",
+            "non_assessor": "y",
+            "accepted_ethics": "y",
+            "submit": "Submit registration",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/register/teacher"
+
+    with client.application.app_context():
+        teacher = Teacher.query.filter_by(email="org.member@example.com").first()
+        assert teacher is not None
+        assert teacher.declared_assessor_competence is False
+        assert teacher.declared_assessor_competence_at is None
+        assert teacher.prior_ipo_assessor_level == 0
+        assert teacher.prior_ipo_assessor is False
+
+
 def test_teacher_open_registration_rejects_duplicate_email(client, csrf_token):
     first_page = client.get("/register/teacher")
     first_token = csrf_token(first_page)

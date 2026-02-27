@@ -1,5 +1,35 @@
 from ipo_app.extensions import db
-from ipo_app.models import ActivityLog, AssignmentBatch, PlannerStatus, ReadingGroup, Stage
+from datetime import date
+
+import ipo_app.views as views
+from ipo_app.models import (
+    ActivityLog,
+    AssignmentBatch,
+    PlannerStatus,
+    ReadingGroup,
+    Stage,
+    Student,
+    Teacher,
+    TeacherLanguage,
+)
+
+
+def _create_teacher(*, first_name: str, last_name: str, email: str, assessor: bool) -> int:
+    teacher = Teacher(
+        country="Testland",
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        school="Test School",
+        languages="English",
+        meal_preference="No preference",
+        tshirt_size="M",
+        declared_assessor_competence=assessor,
+    )
+    teacher.language_entries.append(TeacherLanguage(language="English"))
+    db.session.add(teacher)
+    db.session.commit()
+    return teacher.id
 
 
 def test_admin_planner_create_batch_creates_row_and_log(client, csrf_token):
@@ -80,3 +110,81 @@ def test_admin_planner_add_group_creates_row_and_log(client, csrf_token):
         ).first()
         assert log is not None
 
+
+def test_planner_teacher_choices_and_batch_view_exclude_non_assessors(client):
+    with client.application.app_context():
+        _create_teacher(
+            first_name="Eligible",
+            last_name="Assessor",
+            email="eligible.assessor@example.com",
+            assessor=True,
+        )
+        _create_teacher(
+            first_name="Hidden",
+            last_name="NonAssessor",
+            email="hidden.nonassessor@example.com",
+            assessor=False,
+        )
+        batch = AssignmentBatch(name="Eligibility Batch", stage=Stage.STAGE_1, status=PlannerStatus.DRAFT)
+        db.session.add(batch)
+        db.session.flush()
+        db.session.add(
+            ReadingGroup(
+                name="Eligibility Group",
+                language="English",
+                target_essay_load=4,
+                stage=Stage.STAGE_1,
+                batch_id=batch.id,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+
+        choices = views._planner_teacher_choices(Stage.STAGE_1)
+        labels = [label for _teacher_id, label in choices]
+        assert any("Eligible Assessor" in label for label in labels)
+        assert not any("Hidden NonAssessor" in label for label in labels)
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/planner/batches/{batch_id}")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Eligible Assessor" in html
+    assert "Hidden NonAssessor" not in html
+
+
+def test_teacher_can_grade_rejects_non_assessor_even_with_language_and_country_match_rules(client):
+    with client.application.app_context():
+        student = Student(
+            country="Country A",
+            first_name="Student",
+            last_name="One",
+            email="student.one@example.com",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+        )
+        teacher = Teacher(
+            country="Country B",
+            first_name="Teacher",
+            last_name="One",
+            email="teacher.one@example.com",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            declared_assessor_competence=False,
+        )
+        teacher.language_entries.append(TeacherLanguage(language="English"))
+        db.session.add_all([student, teacher])
+        db.session.commit()
+
+        assert views._teacher_can_grade(student, teacher, "English") is False
+
+        teacher.declared_assessor_competence = True
+        db.session.commit()
+        assert views._teacher_can_grade(student, teacher, "English") is True

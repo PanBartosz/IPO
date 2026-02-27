@@ -170,3 +170,63 @@ def test_teacher_delegation_leader_invite_registers_teacher_as_delegation_leader
         assert teacher.portal_username
         assert teacher.portal_password_hash
 
+
+def test_teacher_invite_registration_allows_non_assessor_mode(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("registration_invite_only", "true")
+        invite = DelegationInvite(
+            token="teacher-non-assessor-token",
+            role=DelegationInviteRole.TEACHER,
+            delegation_leader=False,
+            country="Testland",
+            first_name="Non",
+            last_name="Assessor",
+            email="non.assessor@example.com",
+        )
+        db.session.add(invite)
+        db.session.commit()
+        invite_id = invite.id
+
+    register_page = client.get("/register/teacher?invite=teacher-non-assessor-token")
+    token = csrf_token(register_page)
+
+    response = client.post(
+        "/register/teacher",
+        data={
+            "csrf_token": token,
+            "invite": "teacher-non-assessor-token",
+            "first_name": "Non",
+            "last_name": "Assessor",
+            "email": "non.assessor@example.com",
+            "country": "Testland",
+            "school": "Test School",
+            "sex_document": "female",
+            "accommodation_room_sharing": "same_sex",
+            "languages": ["English"],
+            "meal_preference": "No preference",
+            "tshirt_size": "M",
+            "prior_ipo_assessor_level": "3",
+            "gdpr_acknowledged": "y",
+            "photo_consent": "yes",
+            "non_assessor": "y",
+            "accepted_ethics": "y",
+            "submit": "Submit registration",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/"
+
+    with client.application.app_context():
+        refreshed = db.session.get(DelegationInvite, invite_id)
+        assert refreshed is not None
+        assert refreshed.accepted_at is not None
+        assert refreshed.teacher_id is not None
+
+        teacher = db.session.get(Teacher, refreshed.teacher_id)
+        assert teacher is not None
+        assert teacher.declared_assessor_competence is False
+        assert teacher.declared_assessor_competence_at is None
+        assert teacher.prior_ipo_assessor_level == 0
+        assert teacher.prior_ipo_assessor is False

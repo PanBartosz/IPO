@@ -32,6 +32,7 @@
           <th>Meal preference</th>
           <th>T-shirt size</th>
           <th>Delegation leader</th>
+          <th>Assessor</th>
           <th>Special needs</th>
           <th>Absent</th>
           <th>Created at</th>
@@ -68,6 +69,7 @@
             <td>{{ teacher.meal_preference }}</td>
             <td>{{ teacher.tshirt_size }}</td>
             <td>{{ "Yes" if teacher.delegation_leader else "No" }}</td>
+            <td>{{ "Yes" if teacher.declared_assessor_competence else "No" }}</td>
             <td>{{ teacher.special_needs or '—' }}</td>
             <td>{% if teacher.is_absent %}<span class="status-tag warning">Absent</span>{% else %}—{% endif %}</td>
             <td>{{ teacher.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
