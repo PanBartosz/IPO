@@ -219,6 +219,7 @@ SETTING_EMAIL_SURVEY_REMINDER_BODY = "email_survey_reminder_body"
 SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
 SETTING_REGISTRATION_INVITE_ONLY = "registration_invite_only"
 SETTING_LOGIN_FOLDED_ALIAS_ENABLED = "login_folded_alias_enabled"
+SETTING_LOGIN_EMAIL_ENABLED = "login_email_enabled"
 SETTING_EMAIL_STUDENT_INVITE_SUBJECT = "email_student_invite_subject"
 SETTING_EMAIL_STUDENT_INVITE_BODY = "email_student_invite_body"
 SETTING_EMAIL_TEACHER_INVITE_SUBJECT = "email_teacher_invite_subject"
@@ -509,12 +510,17 @@ def _rate_limit_ip() -> str:
 
 
 def _rate_limit_username() -> str:
-    username = (request.form.get("username") or "").strip().lower()
-    if username and _login_folded_alias_enabled():
-        folded = _fold_login_username(username)
+    identifier = (request.form.get("username") or "").strip()
+    normalized_identifier = identifier.lower()
+    if identifier and _login_email_enabled() and _login_identifier_looks_like_email(identifier):
+        normalized_email = _normalize_login_email(identifier)
+        if normalized_email:
+            return normalized_email
+    if identifier and _login_folded_alias_enabled():
+        folded = _fold_login_username(identifier)
         if folded:
             return folded
-    return username or _rate_limit_ip()
+    return normalized_identifier or _rate_limit_ip()
 
 
 def _ensure_language_entries(teacher: Teacher) -> None:
@@ -998,6 +1004,15 @@ def _fold_login_username(value: str | None) -> str:
     return stripped.casefold()
 
 
+def _normalize_login_email(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _login_identifier_looks_like_email(value: str | None) -> bool:
+    normalized = _normalize_login_email(value)
+    return "@" in normalized if normalized else False
+
+
 def _folded_username_conflicts(records: Iterable[Any], username_attr: str) -> list[dict[str, Any]]:
     folded_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
@@ -1062,8 +1077,14 @@ def _login_alias_diagnostics() -> dict[str, Any]:
     }
 
 
-def _resolve_login_alias_match(model: Any, username_attr: str, submitted_username: str) -> tuple[Any | None, dict[str, Any]]:
+def _resolve_login_alias_match(
+    model: Any,
+    username_attr: str,
+    email_attr: str,
+    submitted_username: str,
+) -> tuple[Any | None, dict[str, Any]]:
     username_column = getattr(model, username_attr)
+    email_column = getattr(model, email_attr)
 
     query = model.query.filter(username_column == submitted_username)
     if hasattr(model, "is_absent"):
@@ -1076,10 +1097,26 @@ def _resolve_login_alias_match(model: Any, username_attr: str, submitted_usernam
             "canonical_username": getattr(exact_match, username_attr),
         }
 
+    normalized_email = _normalize_login_email(submitted_username)
+    if _login_email_enabled() and normalized_email:
+        email_query = model.query.filter(email_column == normalized_email)
+        if hasattr(model, "is_absent"):
+            email_query = email_query.filter(model.is_absent.is_(False))
+        email_match = email_query.first()
+        if email_match:
+            return email_match, {
+                "match_type": "email",
+                "submitted_username": submitted_username,
+                "submitted_email": normalized_email,
+                "canonical_username": getattr(email_match, username_attr),
+                "canonical_email": getattr(email_match, email_attr),
+            }
+
     if not _login_folded_alias_enabled():
         return None, {
             "match_type": "none",
             "submitted_username": submitted_username,
+            "submitted_email": normalized_email,
             "folded_username": "",
             "match_count": 0,
         }
@@ -1089,6 +1126,7 @@ def _resolve_login_alias_match(model: Any, username_attr: str, submitted_usernam
         return None, {
             "match_type": "none",
             "submitted_username": submitted_username,
+            "submitted_email": normalized_email,
             "folded_username": folded_username,
             "match_count": 0,
         }
@@ -1105,6 +1143,7 @@ def _resolve_login_alias_match(model: Any, username_attr: str, submitted_usernam
         return folded_matches[0], {
             "match_type": "folded",
             "submitted_username": submitted_username,
+            "submitted_email": normalized_email,
             "folded_username": folded_username,
             "canonical_username": getattr(folded_matches[0], username_attr),
             "match_count": 1,
@@ -1113,6 +1152,7 @@ def _resolve_login_alias_match(model: Any, username_attr: str, submitted_usernam
     return None, {
         "match_type": "ambiguous" if folded_matches else "none",
         "submitted_username": submitted_username,
+        "submitted_email": normalized_email,
         "folded_username": folded_username,
         "match_count": len(folded_matches),
     }
@@ -2303,6 +2343,10 @@ def _login_folded_alias_enabled() -> bool:
     return _parse_bool(_get_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "false"))
 
 
+def _login_email_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_LOGIN_EMAIL_ENABLED, "false"))
+
+
 def _registration_invite_required() -> bool:
     flag = _get_setting(SETTING_REGISTRATION_INVITE_ONLY, "false") or "false"
     return flag.lower() == "true"
@@ -3471,7 +3515,7 @@ def student_login():
     form = StudentLoginForm()
     if form.submit.name in request.form and form.validate_on_submit():
         username = form.username.data.strip()
-        student, match_details = _resolve_login_alias_match(Student, "upload_username", username)
+        student, match_details = _resolve_login_alias_match(Student, "upload_username", "email", username)
         if not student or not student.upload_password_hash:
             flash("Invalid credentials.", "error")
             if match_details["match_type"] == "ambiguous":
@@ -3492,6 +3536,7 @@ def student_login():
                 f"Failed login for {username}",
                 details={
                     "username": student.upload_username,
+                    "email": student.email,
                     "submitted_username": username,
                     "login_match_type": match_details["match_type"],
                 },
@@ -3506,6 +3551,7 @@ def student_login():
                 object_id=student.id,
                 details={
                     "username": student.upload_username,
+                    "email": student.email,
                     "submitted_username": username,
                     "login_match_type": match_details["match_type"],
                 },
@@ -3517,6 +3563,7 @@ def student_login():
     return render_template(
         "student/login.html",
         form=form,
+        login_email_enabled=_login_email_enabled(),
         upload_module_enabled=_is_upload_module_enabled(),
         upload_locked=_is_upload_locked(),
     )
@@ -4975,6 +5022,7 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
     form.essay_upload_enabled.data = _is_upload_module_enabled()
     form.teacher_portal_enabled.data = _teacher_portal_enabled()
     form.registration_invite_only.data = _registration_invite_required()
+    form.login_email_enabled.data = _login_email_enabled()
     form.login_folded_alias_enabled.data = _login_folded_alias_enabled()
     form.email_auto_enabled.data = _parse_bool(_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false"))
     form.email_student_subject.data = _get_setting(SETTING_EMAIL_STUDENT_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_SUBJECT]
@@ -5050,6 +5098,7 @@ def admin_settings():
             _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
             _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
             _set_setting(SETTING_REGISTRATION_INVITE_ONLY, "true" if form.registration_invite_only.data else "false")
+            _set_setting(SETTING_LOGIN_EMAIL_ENABLED, "true" if form.login_email_enabled.data else "false")
             _set_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true" if form.login_folded_alias_enabled.data else "false")
             _set_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "true" if form.email_auto_enabled.data else "false")
             _set_setting(SETTING_EMAIL_STUDENT_SUBJECT, form.email_student_subject.data.strip() or None)
@@ -7327,7 +7376,7 @@ def login():
     if form.validate_on_submit():
         username = form.username.data.strip()
         password = form.password.data.strip()
-        teacher, match_details = _resolve_login_alias_match(Teacher, "portal_username", username)
+        teacher, match_details = _resolve_login_alias_match(Teacher, "portal_username", "email", username)
         if not teacher or not teacher.portal_password_hash:
             flash("Invalid credentials.", "error")
             action = "teacher_portal_login_ambiguous" if match_details["match_type"] == "ambiguous" else "teacher_portal_login_failed"
@@ -7342,6 +7391,7 @@ def login():
                 actor="teacher_portal",
                 details={
                     "username": username,
+                    "email": match_details.get("submitted_email"),
                     "submitted_username": username,
                     "folded_username": match_details.get("folded_username"),
                     "match_count": match_details.get("match_count", 0),
@@ -7357,6 +7407,7 @@ def login():
                 actor="teacher_portal",
                 details={
                     "username": teacher.portal_username,
+                    "email": teacher.email,
                     "submitted_username": username,
                     "login_match_type": match_details["match_type"],
                     "remote_addr": request.remote_addr,
@@ -7375,6 +7426,7 @@ def login():
                 object_id=teacher.id,
                 details={
                     "username": teacher.portal_username,
+                    "email": teacher.email,
                     "submitted_username": username,
                     "login_match_type": match_details["match_type"],
                     "remote_addr": request.remote_addr,
@@ -7387,6 +7439,7 @@ def login():
     return render_template(
         "teacher_portal/login.html",
         form=form,
+        login_email_enabled=_login_email_enabled(),
         next_value=_portal_next_url(next_candidate),
     )
 

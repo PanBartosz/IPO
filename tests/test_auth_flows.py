@@ -321,6 +321,142 @@ def test_student_login_rejects_folded_alias_when_disabled(client, csrf_token):
         assert "student_upload_id" not in session
 
 
+def test_student_login_allows_email_when_enabled(client, csrf_token):
+    with client.application.app_context():
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        student = Student(
+            country="Testland",
+            first_name="Student",
+            last_name="Email",
+            email="student.email@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            upload_username="student-email",
+            upload_password_hash=generate_password_hash("student-pass"),
+        )
+        db.session.add(student)
+        db.session.commit()
+
+    login_page = client.get("/participant/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/participant/login",
+        data={
+            "csrf_token": token,
+            "username": "Student.Email@Example.Test",
+            "password": "student-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/participant/portal")
+
+    with client.application.app_context():
+        log = ActivityLog.query.filter_by(action="student_upload_login").order_by(ActivityLog.id.desc()).first()
+        assert log is not None
+        assert log.details["username"] == "student-email"
+        assert log.details["email"] == "student.email@example.test"
+        assert log.details["submitted_username"] == "Student.Email@Example.Test"
+        assert log.details["login_match_type"] == "email"
+
+
+def test_student_login_rejects_email_when_disabled(client, csrf_token):
+    with client.application.app_context():
+        student = Student(
+            country="Testland",
+            first_name="Student",
+            last_name="EmailDisabled",
+            email="student.email.disabled@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            upload_username="student-email-disabled",
+            upload_password_hash=generate_password_hash("student-pass"),
+        )
+        db.session.add(student)
+        db.session.commit()
+
+    login_page = client.get("/participant/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/participant/login",
+        data={
+            "csrf_token": token,
+            "username": "student.email.disabled@example.test",
+            "password": "student-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    with client.session_transaction() as session:
+        assert "student_upload_id" not in session
+
+
+def test_student_login_exact_username_takes_precedence_over_email(client, csrf_token):
+    with client.application.app_context():
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        username_owner = Student(
+            country="Testland",
+            first_name="Student",
+            last_name="UsernameOwner",
+            email="student.username.owner@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            upload_username="shared@example.test",
+            upload_password_hash=generate_password_hash("username-pass"),
+        )
+        email_owner = Student(
+            country="Testland",
+            first_name="Student",
+            last_name="EmailOwner",
+            email="shared@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 2),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            upload_username="student-email-owner",
+            upload_password_hash=generate_password_hash("email-pass"),
+        )
+        db.session.add_all([username_owner, email_owner])
+        db.session.commit()
+
+    login_page = client.get("/participant/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/participant/login",
+        data={
+            "csrf_token": token,
+            "username": "shared@example.test",
+            "password": "username-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/participant/portal")
+    with client.session_transaction() as session:
+        with client.application.app_context():
+            username_owner = Student.query.filter_by(email="student.username.owner@example.test").first()
+            assert session["student_upload_id"] == username_owner.id
+
+
 def test_student_login_rejects_ambiguous_folded_alias(client, csrf_token):
     with client.application.app_context():
         _set_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true")
@@ -627,6 +763,141 @@ def test_teacher_portal_login_rejects_folded_alias_when_disabled(client, csrf_to
         assert "teacher_portal_id" not in session
 
 
+def test_teacher_portal_login_allows_email_when_enabled(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        teacher = Teacher(
+            country="Testland",
+            first_name="Teacher",
+            last_name="Email",
+            email="teacher.email@example.test",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            portal_username="teacher-email",
+            portal_password_hash=generate_password_hash("teacher-pass"),
+        )
+        db.session.add(teacher)
+        db.session.commit()
+
+    login_page = client.get("/teacher/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/teacher/login",
+        data={
+            "csrf_token": token,
+            "username": "Teacher.Email@Example.Test",
+            "password": "teacher-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/teacher")
+
+    with client.application.app_context():
+        log = ActivityLog.query.filter_by(action="teacher_portal_login").order_by(ActivityLog.id.desc()).first()
+        assert log is not None
+        assert log.details["username"] == "teacher-email"
+        assert log.details["email"] == "teacher.email@example.test"
+        assert log.details["submitted_username"] == "Teacher.Email@Example.Test"
+        assert log.details["login_match_type"] == "email"
+
+
+def test_teacher_portal_login_rejects_email_when_disabled(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        teacher = Teacher(
+            country="Testland",
+            first_name="Teacher",
+            last_name="EmailDisabled",
+            email="teacher.email.disabled@example.test",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            portal_username="teacher-email-disabled",
+            portal_password_hash=generate_password_hash("teacher-pass"),
+        )
+        db.session.add(teacher)
+        db.session.commit()
+
+    login_page = client.get("/teacher/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/teacher/login",
+        data={
+            "csrf_token": token,
+            "username": "teacher.email.disabled@example.test",
+            "password": "teacher-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    with client.session_transaction() as session:
+        assert "teacher_portal_id" not in session
+
+
+def test_teacher_portal_login_exact_username_takes_precedence_over_email(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        username_owner = Teacher(
+            country="Testland",
+            first_name="Teacher",
+            last_name="UsernameOwner",
+            email="teacher.username.owner@example.test",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            portal_username="shared@example.test",
+            portal_password_hash=generate_password_hash("username-pass"),
+        )
+        email_owner = Teacher(
+            country="Testland",
+            first_name="Teacher",
+            last_name="EmailOwner",
+            email="shared@example.test",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            portal_username="teacher-email-owner",
+            portal_password_hash=generate_password_hash("email-pass"),
+        )
+        db.session.add_all([username_owner, email_owner])
+        db.session.commit()
+
+    login_page = client.get("/teacher/login")
+    token = csrf_token(login_page)
+
+    response = client.post(
+        "/teacher/login",
+        data={
+            "csrf_token": token,
+            "username": "shared@example.test",
+            "password": "username-pass",
+            "submit": "Sign in",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/teacher")
+    with client.session_transaction() as session:
+        with client.application.app_context():
+            username_owner = Teacher.query.filter_by(email="teacher.username.owner@example.test").first()
+            assert session["teacher_portal_id"] == username_owner.id
+
+
 def test_teacher_portal_login_rejects_ambiguous_folded_alias(client, csrf_token):
     with client.application.app_context():
         _set_setting("teacher_portal_enabled", "true")
@@ -696,6 +967,11 @@ def test_rate_limit_username_uses_folded_alias_when_enabled(client):
         _set_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "false")
         with client.application.test_request_context("/participant/login", method="POST", data={"username": "Żółć1"}):
             assert views._rate_limit_username() == "żółć1"
+
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        _set_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true")
+        with client.application.test_request_context("/participant/login", method="POST", data={"username": "Student.Email@Example.Test"}):
+            assert views._rate_limit_username() == "student.email@example.test"
 
 
 def test_teacher_board_login_with_configured_password(client, csrf_token):

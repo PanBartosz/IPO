@@ -81,6 +81,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             essay_upload_enabled="y",
             teacher_portal_enabled="y",
             registration_invite_only="y",
+            login_email_enabled="y",
             login_folded_alias_enabled="y",
             email_auto_enabled="y",
             email_student_subject="  Student subject  ",
@@ -110,6 +111,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_UPLOAD_MODULE_ENABLED).value == "true"
         assert _setting_row(views.SETTING_TEACHER_PORTAL_ENABLED).value == "true"
         assert _setting_row(views.SETTING_REGISTRATION_INVITE_ONLY).value == "true"
+        assert _setting_row(views.SETTING_LOGIN_EMAIL_ENABLED).value == "true"
         assert _setting_row(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED).value == "true"
         assert _setting_row(views.SETTING_EMAIL_AUTOMATION_ENABLED).value == "true"
         assert _setting_row(views.SETTING_EMAIL_STUDENT_SUBJECT).value == "Student subject"

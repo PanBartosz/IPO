@@ -149,6 +149,16 @@
       </div>
       <div class="form-field full-width">
         <label class="checkbox">
+          {{ form.login_email_enabled() }}
+          {{ form.login_email_enabled.label.text }}
+        </label>
+        <span class="form-help">When enabled, the login field accepts either the portal username or the stored registration email address. Username still takes precedence if the same text matches both.</span>
+        {% for error in form.login_email_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
           {{ form.login_folded_alias_enabled() }}
           {{ form.login_folded_alias_enabled.label.text }}
         </label>

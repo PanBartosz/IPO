@@ -8,7 +8,13 @@
       <img src="{{ url_for('static', filename='img/ipo-official-logo.png') }}" alt="International Philosophy Olympiad official logo" class="login-brand__logo">
     </div>
     <h2>Upload login</h2>
-    <p class="fine-print">Please use the personal username and password from your participant card.</p>
+    <p class="fine-print">
+      {% if login_email_enabled %}
+        Please use your personal username or registration email together with the password from your participant card.
+      {% else %}
+        Please use the personal username and password from your participant card.
+      {% endif %}
+    </p>
     {% if not upload_module_enabled %}
       <div class="portal-alert warning" style="margin-bottom: 1rem;">
         Essay uploads are currently disabled. The organizers will enable this portal during the competition window.
@@ -21,7 +27,7 @@
     <form method="post" class="form-grid" novalidate>
       {{ form.hidden_tag() }}
       <div class="form-field full-width">
-        {{ form.username.label }}
+        <label for="{{ form.username.id }}">{% if login_email_enabled %}Username or email{% else %}{{ form.username.label.text }}{% endif %}</label>
         {{ form.username(autocomplete="username") }}
         {% for error in form.username.errors %}
           <div class="field-error">{{ error }}</div>
