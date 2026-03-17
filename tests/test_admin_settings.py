@@ -81,6 +81,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             essay_upload_enabled="y",
             teacher_portal_enabled="y",
             registration_invite_only="y",
+            login_folded_alias_enabled="y",
             email_auto_enabled="y",
             email_student_subject="  Student subject  ",
             email_student_body="  Student body  ",
@@ -109,6 +110,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_UPLOAD_MODULE_ENABLED).value == "true"
         assert _setting_row(views.SETTING_TEACHER_PORTAL_ENABLED).value == "true"
         assert _setting_row(views.SETTING_REGISTRATION_INVITE_ONLY).value == "true"
+        assert _setting_row(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED).value == "true"
         assert _setting_row(views.SETTING_EMAIL_AUTOMATION_ENABLED).value == "true"
         assert _setting_row(views.SETTING_EMAIL_STUDENT_SUBJECT).value == "Student subject"
         assert _setting_row(views.SETTING_EMAIL_STUDENT_BODY).value == "Student body"
@@ -134,6 +136,147 @@ def test_settings_helpers_fall_back_to_safe_defaults_for_invalid_values(client):
         views._set_setting(views.SETTING_ESSAY_WORD_LIMIT, "0")
         db.session.commit()
         assert views._essay_word_limit() == 1
+
+
+def test_fold_login_username_handles_non_decomposing_latin_letters():
+    assert views._fold_login_username("Żółć-Æsir-Œuvre-ß-Øresund-Đurić-Iı") == "zolc-aesir-oeuvre-ss-oresund-duric-ii"
+
+
+def test_login_alias_diagnostics_report_student_and_teacher_conflicts(client):
+    from ipo_app.models import Student, Teacher
+
+    with client.application.app_context():
+        db.session.add(
+            Student(
+                country="Testland",
+                first_name="Student",
+                last_name="One",
+                email="student.one@example.test",
+                school="School",
+                date_of_birth=datetime(2000, 1, 1).date(),
+                essay_language="English",
+                keyboard_preference="QWERTY",
+                meal_preference="No preference",
+                upload_username="żuk1",
+            )
+        )
+        db.session.add(
+            Student(
+                country="Testland",
+                first_name="Student",
+                last_name="Two",
+                email="student.two@example.test",
+                school="School",
+                date_of_birth=datetime(2000, 1, 2).date(),
+                essay_language="English",
+                keyboard_preference="QWERTY",
+                meal_preference="No preference",
+                upload_username="źuk1",
+            )
+        )
+        db.session.add(
+            Teacher(
+                country="Testland",
+                first_name="Teacher",
+                last_name="One",
+                email="teacher.one@example.test",
+                school="School",
+                languages="English",
+                meal_preference="No preference",
+                tshirt_size="M",
+                portal_username="łukasz1",
+            )
+        )
+        db.session.add(
+            Teacher(
+                country="Testland",
+                first_name="Teacher",
+                last_name="Two",
+                email="teacher.two@example.test",
+                school="School",
+                languages="English",
+                meal_preference="No preference",
+                tshirt_size="M",
+                portal_username="lukasz1",
+            )
+        )
+        db.session.commit()
+
+        diagnostics = views._login_alias_diagnostics()
+
+        assert diagnostics["all_safe"] is False
+        assert diagnostics["students"]["safe"] is False
+        assert diagnostics["students"]["conflicts"][0]["folded_username"] == "zuk1"
+        assert [entry["username"] for entry in diagnostics["students"]["conflicts"][0]["entries"]] == ["źuk1", "żuk1"]
+        assert diagnostics["teachers"]["safe"] is False
+        assert diagnostics["teachers"]["conflicts"][0]["folded_username"] == "lukasz1"
+        assert [entry["username"] for entry in diagnostics["teachers"]["conflicts"][0]["entries"]] == ["lukasz1", "łukasz1"]
+
+
+def test_admin_settings_rejects_enabling_folded_login_when_student_conflicts_exist(client, csrf_token):
+    from ipo_app.models import Student
+
+    _login_admin_session(client)
+
+    with client.application.app_context():
+        db.session.add(
+            Student(
+                country="Testland",
+                first_name="Student",
+                last_name="One",
+                email="student.conflict.one@example.test",
+                school="School",
+                date_of_birth=datetime(2000, 2, 1).date(),
+                essay_language="English",
+                keyboard_preference="QWERTY",
+                meal_preference="No preference",
+                upload_username="żuk1",
+            )
+        )
+        db.session.add(
+            Student(
+                country="Testland",
+                first_name="Student",
+                last_name="Two",
+                email="student.conflict.two@example.test",
+                school="School",
+                date_of_birth=datetime(2000, 2, 2).date(),
+                essay_language="English",
+                keyboard_preference="QWERTY",
+                meal_preference="No preference",
+                upload_username="źuk1",
+            )
+        )
+        db.session.commit()
+
+    token = csrf_token(client.get("/admin/settings"))
+    response = client.post(
+        "/admin/settings",
+        data=_settings_payload(token, login_folded_alias_enabled="y"),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Cannot enable folded login aliases until all folded student and teacher usernames are unique." in html
+    assert "zuk1" in html
+    assert "żuk1" in html
+    assert "źuk1" in html
+
+    with client.application.app_context():
+        assert views._get_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED) is None
+
+
+def test_admin_settings_shows_safe_folded_login_diagnostics(client):
+    _login_admin_session(client)
+
+    response = client.get("/admin/settings")
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Folded Username Uniqueness Check" in html
+    assert "Students:</strong> 0 usernames checked. No folded conflicts found." in html
+    assert "Teachers:</strong> 0 usernames checked. No folded conflicts found." in html
 
 
 def test_event_access_overrides_control_downloads_and_notice_text(client):

@@ -15,6 +15,7 @@
           <a href="#settings-deadlines">Deadlines & SLA</a>
           <a href="#settings-uploads">Uploads & Limits</a>
           <a href="#settings-modules">Modules & Automation</a>
+          <a href="#settings-login-aliases">Login Aliases</a>
           <a href="#settings-consents">Consent Texts</a>
           <a href="#settings-emails">Email Templates</a>
         </nav>
@@ -142,6 +143,62 @@
         {% for error in form.email_auto_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-login-aliases" class="settings-section-title">Login Aliases</h3>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.login_folded_alias_enabled() }}
+          {{ form.login_folded_alias_enabled.label.text }}
+        </label>
+        <span class="form-help">Login first tries the exact username. If that fails and this option is enabled, the app also tries a folded alias without diacritics, for example <code>żółć1</code> as <code>zolc1</code>.</span>
+        {% for error in form.login_folded_alias_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h4 class="settings-subsection-title">Folded Username Uniqueness Check</h4>
+        <span class="form-help">The check lowercases usernames and removes diacritics and related Latin variants. Folded login should only be enabled when both lists are conflict-free.</span>
+        {% if login_alias_diagnostics.enabled_but_unsafe %}
+          <p class="field-error">Folded login aliases are currently enabled, but username conflicts exist. Exact logins still work, while ambiguous folded aliases are rejected.</p>
+        {% endif %}
+      </div>
+      <div class="form-field full-width">
+        {% set student_diag = login_alias_diagnostics.students %}
+        {% if student_diag.safe %}
+          <p><strong>{{ student_diag.label }}:</strong> {{ student_diag.checked_count }} usernames checked. No folded conflicts found.</p>
+        {% else %}
+          <p class="field-error"><strong>{{ student_diag.label }}:</strong> {{ student_diag.conflict_count }} folded conflict{% if student_diag.conflict_count != 1 %}s{% endif %} found across {{ student_diag.checked_count }} usernames.</p>
+          <ul>
+            {% for conflict in student_diag.conflicts %}
+              <li>
+                <code>{{ conflict.folded_username }}</code>:
+                {% for entry in conflict.entries %}
+                  <code>{{ entry.username }}</code> ({{ entry.display_name or ('#' ~ entry.id) }}{% if entry.is_absent %}, absent{% endif %}){% if not loop.last %}; {% endif %}
+                {% endfor %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+      <div class="form-field full-width">
+        {% set teacher_diag = login_alias_diagnostics.teachers %}
+        {% if teacher_diag.safe %}
+          <p><strong>{{ teacher_diag.label }}:</strong> {{ teacher_diag.checked_count }} usernames checked. No folded conflicts found.</p>
+        {% else %}
+          <p class="field-error"><strong>{{ teacher_diag.label }}:</strong> {{ teacher_diag.conflict_count }} folded conflict{% if teacher_diag.conflict_count != 1 %}s{% endif %} found across {{ teacher_diag.checked_count }} usernames.</p>
+          <ul>
+            {% for conflict in teacher_diag.conflicts %}
+              <li>
+                <code>{{ conflict.folded_username }}</code>:
+                {% for entry in conflict.entries %}
+                  <code>{{ entry.username }}</code> ({{ entry.display_name or ('#' ~ entry.id) }}{% if entry.is_absent %}, absent{% endif %}){% if not loop.last %}; {% endif %}
+                {% endfor %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
       </div>
       <div class="form-field full-width">
         <h3 id="settings-consents" class="settings-section-title">Consent Texts</h3>

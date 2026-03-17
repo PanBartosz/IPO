@@ -427,6 +427,7 @@ class DashboardSettingsForm(FlaskForm):
     essay_upload_enabled = BooleanField("Enable essay upload module")
     teacher_portal_enabled = BooleanField("Enable teacher portal (individual login & online grading)")
     registration_invite_only = BooleanField("Require invite link for registrations")
+    login_folded_alias_enabled = BooleanField("Allow participant and teacher login without diacritics")
     email_auto_enabled = BooleanField("Enable automatic emails")
     email_student_subject = StringField("Student confirmation subject", validators=[Optional(), Length(max=200)])
     email_student_body = TextAreaField("Student confirmation body", validators=[Optional()], render_kw={"rows": 6})

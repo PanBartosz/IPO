@@ -7,6 +7,7 @@ import re
 import secrets
 import json
 import hashlib
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
 from html import unescape
@@ -217,6 +218,7 @@ SETTING_EMAIL_SURVEY_REMINDER_SUBJECT = "email_survey_reminder_subject"
 SETTING_EMAIL_SURVEY_REMINDER_BODY = "email_survey_reminder_body"
 SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
 SETTING_REGISTRATION_INVITE_ONLY = "registration_invite_only"
+SETTING_LOGIN_FOLDED_ALIAS_ENABLED = "login_folded_alias_enabled"
 SETTING_EMAIL_STUDENT_INVITE_SUBJECT = "email_student_invite_subject"
 SETTING_EMAIL_STUDENT_INVITE_BODY = "email_student_invite_body"
 SETTING_EMAIL_TEACHER_INVITE_SUBJECT = "email_teacher_invite_subject"
@@ -508,6 +510,10 @@ def _rate_limit_ip() -> str:
 
 def _rate_limit_username() -> str:
     username = (request.form.get("username") or "").strip().lower()
+    if username and _login_folded_alias_enabled():
+        folded = _fold_login_username(username)
+        if folded:
+            return folded
     return username or _rate_limit_ip()
 
 
@@ -956,6 +962,160 @@ def _ensure_teacher_portal_credentials(teacher: Teacher, *, reset_password: bool
 
 def _slugify(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+_LOGIN_FOLD_REPLACEMENTS = {
+    "ß": "ss",
+    "ẞ": "ss",
+    "Æ": "ae",
+    "æ": "ae",
+    "Œ": "oe",
+    "œ": "oe",
+    "Ø": "o",
+    "ø": "o",
+    "Đ": "d",
+    "đ": "d",
+    "Ð": "d",
+    "ð": "d",
+    "Þ": "th",
+    "þ": "th",
+    "Ł": "l",
+    "ł": "l",
+    "Ħ": "h",
+    "ħ": "h",
+    "ı": "i",
+}
+
+
+def _fold_login_username(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+
+    replaced = "".join(_LOGIN_FOLD_REPLACEMENTS.get(ch, ch) for ch in raw)
+    normalized = unicodedata.normalize("NFKD", replaced)
+    stripped = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return stripped.casefold()
+
+
+def _folded_username_conflicts(records: Iterable[Any], username_attr: str) -> list[dict[str, Any]]:
+    folded_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        username = getattr(record, username_attr, None)
+        if not username:
+            continue
+        folded_groups[_fold_login_username(username)].append(
+            {
+                "id": record.id,
+                "username": username,
+                "display_name": " ".join(
+                    part for part in [getattr(record, "first_name", None), getattr(record, "last_name", None)] if part
+                ),
+                "is_absent": bool(getattr(record, "is_absent", False)),
+            }
+        )
+
+    conflicts: list[dict[str, Any]] = []
+    for folded_username, entries in sorted(folded_groups.items()):
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda item: (item["username"].casefold(), item["id"]))
+        conflicts.append(
+            {
+                "folded_username": folded_username,
+                "entries": entries,
+                "entry_count": len(entries),
+            }
+        )
+    return conflicts
+
+
+def _login_alias_diagnostics() -> dict[str, Any]:
+    student_records = Student.query.filter(Student.upload_username.isnot(None)).order_by(Student.id.asc()).all()
+    teacher_records = Teacher.query.filter(Teacher.portal_username.isnot(None)).order_by(Teacher.id.asc()).all()
+
+    student_conflicts = _folded_username_conflicts(student_records, "upload_username")
+    teacher_conflicts = _folded_username_conflicts(teacher_records, "portal_username")
+
+    student_report = {
+        "label": "Students",
+        "checked_count": len(student_records),
+        "safe": not student_conflicts,
+        "conflict_count": len(student_conflicts),
+        "conflicts": student_conflicts,
+    }
+    teacher_report = {
+        "label": "Teachers",
+        "checked_count": len(teacher_records),
+        "safe": not teacher_conflicts,
+        "conflict_count": len(teacher_conflicts),
+        "conflicts": teacher_conflicts,
+    }
+    enabled = _login_folded_alias_enabled()
+    all_safe = student_report["safe"] and teacher_report["safe"]
+    return {
+        "enabled": enabled,
+        "all_safe": all_safe,
+        "enabled_but_unsafe": enabled and not all_safe,
+        "students": student_report,
+        "teachers": teacher_report,
+    }
+
+
+def _resolve_login_alias_match(model: Any, username_attr: str, submitted_username: str) -> tuple[Any | None, dict[str, Any]]:
+    username_column = getattr(model, username_attr)
+
+    query = model.query.filter(username_column == submitted_username)
+    if hasattr(model, "is_absent"):
+        query = query.filter(model.is_absent.is_(False))
+    exact_match = query.first()
+    if exact_match:
+        return exact_match, {
+            "match_type": "exact",
+            "submitted_username": submitted_username,
+            "canonical_username": getattr(exact_match, username_attr),
+        }
+
+    if not _login_folded_alias_enabled():
+        return None, {
+            "match_type": "none",
+            "submitted_username": submitted_username,
+            "folded_username": "",
+            "match_count": 0,
+        }
+
+    folded_username = _fold_login_username(submitted_username)
+    if not folded_username:
+        return None, {
+            "match_type": "none",
+            "submitted_username": submitted_username,
+            "folded_username": folded_username,
+            "match_count": 0,
+        }
+
+    folded_matches = []
+    candidate_query = model.query.filter(username_column.isnot(None))
+    if hasattr(model, "is_absent"):
+        candidate_query = candidate_query.filter(model.is_absent.is_(False))
+    for candidate in candidate_query.all():
+        if _fold_login_username(getattr(candidate, username_attr)) == folded_username:
+            folded_matches.append(candidate)
+
+    if len(folded_matches) == 1:
+        return folded_matches[0], {
+            "match_type": "folded",
+            "submitted_username": submitted_username,
+            "folded_username": folded_username,
+            "canonical_username": getattr(folded_matches[0], username_attr),
+            "match_count": 1,
+        }
+
+    return None, {
+        "match_type": "ambiguous" if folded_matches else "none",
+        "submitted_username": submitted_username,
+        "folded_username": folded_username,
+        "match_count": len(folded_matches),
+    }
 
 
 def _generate_reset_token_value() -> str:
@@ -2139,6 +2299,10 @@ def _teacher_portal_enabled() -> bool:
     return flag.lower() == "true"
 
 
+def _login_folded_alias_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "false"))
+
+
 def _registration_invite_required() -> bool:
     flag = _get_setting(SETTING_REGISTRATION_INVITE_ONLY, "false") or "false"
     return flag.lower() == "true"
@@ -3307,15 +3471,30 @@ def student_login():
     form = StudentLoginForm()
     if form.submit.name in request.form and form.validate_on_submit():
         username = form.username.data.strip()
-        student = Student.query.filter_by(upload_username=username, is_absent=False).first()
+        student, match_details = _resolve_login_alias_match(Student, "upload_username", username)
         if not student or not student.upload_password_hash:
             flash("Invalid credentials.", "error")
+            if match_details["match_type"] == "ambiguous":
+                log_activity(
+                    "student_upload_login_ambiguous",
+                    f"Ambiguous folded login for {username}",
+                    details={
+                        "submitted_username": username,
+                        "folded_username": match_details.get("folded_username"),
+                        "match_count": match_details.get("match_count", 0),
+                    },
+                )
+                db.session.commit()
         elif not check_password_hash(student.upload_password_hash, form.password.data.strip()):
             flash("Invalid credentials.", "error")
             log_activity(
                 "student_upload_login_failed",
                 f"Failed login for {username}",
-                details={"username": username},
+                details={
+                    "username": student.upload_username,
+                    "submitted_username": username,
+                    "login_match_type": match_details["match_type"],
+                },
             )
             db.session.commit()
         else:
@@ -3325,7 +3504,11 @@ def student_login():
                 f"Student {student.first_name} {student.last_name} signed in",
                 object_type="student",
                 object_id=student.id,
-                details={"username": student.upload_username},
+                details={
+                    "username": student.upload_username,
+                    "submitted_username": username,
+                    "login_match_type": match_details["match_type"],
+                },
             )
             db.session.commit()
             next_param = _portal_next_url(request.args.get("next"))
@@ -4739,155 +4922,163 @@ def _humanize_timedelta(delta: timedelta) -> str:
     return prefix + ' '.join(parts)
 
 
+def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str, Any]) -> None:
+    upload_raw = _get_setting(SETTING_UPLOAD_DEADLINE, config.get("DASHBOARD_UPLOAD_DEADLINE"))
+    stage2_raw = _get_setting(SETTING_STAGE2_DEADLINE, config.get("DASHBOARD_STAGE2_DEADLINE"))
+    event_end_raw = _get_setting(SETTING_EVENT_END, config.get("DASHBOARD_EVENT_END"))
+    event_override_raw = _get_setting(SETTING_EVENT_END_OVERRIDE, "auto")
+    stage1_sla_raw = _get_setting(SETTING_STAGE1_SLA, str(config.get("DASHBOARD_STAGE1_SCORE_SLA_HOURS", 24)))
+    stage2_sla_raw = _get_setting(SETTING_STAGE2_SLA, str(config.get("DASHBOARD_STAGE2_SCORE_SLA_HOURS", 24)))
+
+    if upload_raw:
+        dt = _parse_deadline(upload_raw)
+        if dt:
+            form.upload_deadline.data = dt
+    if stage2_raw:
+        dt = _parse_deadline(stage2_raw)
+        if dt:
+            form.stage2_deadline.data = dt
+    if event_end_raw:
+        dt = _parse_deadline(event_end_raw)
+        if dt:
+            form.event_end.data = dt
+    override_value = (event_override_raw or "auto").strip().lower()
+    if override_value not in {"auto", "force_end", "force_open"}:
+        override_value = "auto"
+    form.event_end_override.data = override_value
+    if stage1_sla_raw:
+        try:
+            form.stage1_sla.data = int(float(stage1_sla_raw))
+        except ValueError:
+            form.stage1_sla.data = None
+    if stage2_sla_raw:
+        try:
+            form.stage2_sla.data = int(float(stage2_sla_raw))
+        except ValueError:
+            form.stage2_sla.data = None
+
+    packet_mode = _get_setting(SETTING_PACKET_PRINT_MODE, "single")
+    form.packet_print_mode.data = packet_mode if packet_mode in {"single", "double"} else "single"
+
+    essay_word_limit_raw = _get_setting(SETTING_ESSAY_WORD_LIMIT)
+    try:
+        form.essay_word_limit.data = int(essay_word_limit_raw) if essay_word_limit_raw else DEFAULT_ESSAY_WORD_LIMIT
+    except (TypeError, ValueError):
+        form.essay_word_limit.data = DEFAULT_ESSAY_WORD_LIMIT
+    form.essay_word_limit_mode.data = _essay_word_limit_mode()
+    form.ethics_consent_html.data = _ethics_consent_html()
+    form.gdpr_notice_html.data = _gdpr_notice_html()
+    form.photo_consent_html.data = _photo_consent_html()
+    form.assessor_competence_html.data = _assessor_competence_html()
+    form.accommodation_info_html.data = _accommodation_info_html()
+
+    form.essay_upload_enabled.data = _is_upload_module_enabled()
+    form.teacher_portal_enabled.data = _teacher_portal_enabled()
+    form.registration_invite_only.data = _registration_invite_required()
+    form.login_folded_alias_enabled.data = _login_folded_alias_enabled()
+    form.email_auto_enabled.data = _parse_bool(_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false"))
+    form.email_student_subject.data = _get_setting(SETTING_EMAIL_STUDENT_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_SUBJECT]
+    form.email_student_body.data = _get_setting(SETTING_EMAIL_STUDENT_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_BODY]
+    form.email_teacher_subject.data = _get_setting(SETTING_EMAIL_TEACHER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_SUBJECT]
+    form.email_teacher_body.data = _get_setting(SETTING_EMAIL_TEACHER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_BODY]
+    form.email_student_invite_subject.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_INVITE_SUBJECT]
+    form.email_student_invite_body.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_INVITE_BODY]
+    form.email_teacher_invite_subject.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_INVITE_SUBJECT]
+    form.email_teacher_invite_body.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_INVITE_BODY]
+    form.email_message_subject.data = _get_setting(SETTING_EMAIL_MESSAGE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_MESSAGE_SUBJECT]
+    form.email_message_body.data = _get_setting(SETTING_EMAIL_MESSAGE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_MESSAGE_BODY]
+    form.email_survey_publish_subject.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT]
+    form.email_survey_publish_body.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_PUBLISH_BODY]
+    form.email_survey_reminder_subject.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_REMINDER_SUBJECT]
+    form.email_survey_reminder_body.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_REMINDER_BODY]
+    form.email_student_reset_link_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT]
+    form.email_student_reset_link_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_LINK_BODY]
+    form.email_student_reset_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_SUBJECT]
+    form.email_student_reset_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_BODY]
+    form.email_teacher_reset_link_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT]
+    form.email_teacher_reset_link_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_LINK_BODY]
+    form.email_teacher_reset_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_SUBJECT]
+    form.email_teacher_reset_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_BODY]
+
+
 @web_bp.route("/admin/settings", methods=["GET", "POST"])
 def admin_settings():
     form = DashboardSettingsForm()
     config = current_app.config
+    if request.method == "GET":
+        _populate_admin_settings_form(form, config)
 
-    if form.validate_on_submit():
-        upload_value = form.upload_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.upload_deadline.data else None
-        stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
-        event_end_value = form.event_end.data.strftime("%Y-%m-%dT%H:%M") if form.event_end.data else None
-        event_override_value = form.event_end_override.data if form.event_end_override.data != "auto" else None
-        stage1_sla_value = str(form.stage1_sla.data) if form.stage1_sla.data else None
-        stage2_sla_value = str(form.stage2_sla.data) if form.stage2_sla.data else None
+    diagnostics = _login_alias_diagnostics()
+    submitted_with_enabled_alias = form.is_submitted() and bool(form.login_folded_alias_enabled.data)
+    enabling_alias_from_off_to_on = submitted_with_enabled_alias and not diagnostics["enabled"]
 
-        _set_setting(SETTING_UPLOAD_DEADLINE, upload_value)
-        _set_setting(SETTING_STAGE2_DEADLINE, stage2_value)
-        _set_setting(SETTING_EVENT_END, event_end_value)
-        _set_setting(SETTING_EVENT_END_OVERRIDE, event_override_value)
-        _set_setting(SETTING_STAGE1_SLA, stage1_sla_value)
-        _set_setting(SETTING_STAGE2_SLA, stage2_sla_value)
-        _set_setting(SETTING_PACKET_PRINT_MODE, form.packet_print_mode.data)
-        _set_setting(
-            SETTING_ESSAY_WORD_LIMIT,
-            str(form.essay_word_limit.data).strip() if form.essay_word_limit.data else None,
-        )
-        _set_setting(SETTING_ESSAY_WORD_LIMIT_MODE, form.essay_word_limit_mode.data)
-        ethics_html = (form.ethics_consent_html.data or "").strip() or None
-        gdpr_html = (form.gdpr_notice_html.data or "").strip() or None
-        photo_html = (form.photo_consent_html.data or "").strip() or None
-        competence_html = (form.assessor_competence_html.data or "").strip() or None
-        accommodation_html = (form.accommodation_info_html.data or "").strip() or None
-        _set_setting(SETTING_ETHICS_CONSENT_HTML, ethics_html)
-        _set_setting(SETTING_GDPR_NOTICE_HTML, gdpr_html)
-        _set_setting(SETTING_PHOTO_CONSENT_HTML, photo_html)
-        _set_setting(SETTING_TEACHER_COMPETENCE_HTML, competence_html)
-        _set_setting(SETTING_ACCOMMODATION_INFO_HTML, accommodation_html)
-        _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
-        _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
-        _set_setting(SETTING_REGISTRATION_INVITE_ONLY, "true" if form.registration_invite_only.data else "false")
-        _set_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "true" if form.email_auto_enabled.data else "false")
-        _set_setting(SETTING_EMAIL_STUDENT_SUBJECT, form.email_student_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_BODY, form.email_student_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_SUBJECT, form.email_teacher_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_BODY, form.email_teacher_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT, form.email_student_invite_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_INVITE_BODY, form.email_student_invite_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT, form.email_teacher_invite_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_INVITE_BODY, form.email_teacher_invite_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_MESSAGE_SUBJECT, form.email_message_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_MESSAGE_BODY, form.email_message_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT, form.email_survey_publish_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY, form.email_survey_publish_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT, form.email_survey_reminder_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY, form.email_survey_reminder_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT, form.email_student_reset_link_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY, form.email_student_reset_link_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT, form.email_student_reset_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_STUDENT_RESET_BODY, form.email_student_reset_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT, form.email_teacher_reset_link_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY, form.email_teacher_reset_link_body.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT, form.email_teacher_reset_subject.data.strip() or None)
-        _set_setting(SETTING_EMAIL_TEACHER_RESET_BODY, form.email_teacher_reset_body.data.strip() or None)
-        db.session.commit()
-        flash("Dashboard settings updated.", "success")
-        return redirect(url_for("web.admin_settings"))
-
-    else:
-        upload_raw = _get_setting(SETTING_UPLOAD_DEADLINE, config.get("DASHBOARD_UPLOAD_DEADLINE"))
-        stage2_raw = _get_setting(SETTING_STAGE2_DEADLINE, config.get("DASHBOARD_STAGE2_DEADLINE"))
-        event_end_raw = _get_setting(SETTING_EVENT_END, config.get("DASHBOARD_EVENT_END"))
-        event_override_raw = _get_setting(SETTING_EVENT_END_OVERRIDE, "auto")
-        stage1_sla_raw = _get_setting(SETTING_STAGE1_SLA, str(config.get("DASHBOARD_STAGE1_SCORE_SLA_HOURS", 24)))
-        stage2_sla_raw = _get_setting(SETTING_STAGE2_SLA, str(config.get("DASHBOARD_STAGE2_SCORE_SLA_HOURS", 24)))
-
-        if upload_raw:
-            dt = _parse_deadline(upload_raw)
-            if dt:
-                form.upload_deadline.data = dt
-        if stage2_raw:
-            dt = _parse_deadline(stage2_raw)
-            if dt:
-                form.stage2_deadline.data = dt
-        if event_end_raw:
-            dt = _parse_deadline(event_end_raw)
-            if dt:
-                form.event_end.data = dt
-        override_value = (event_override_raw or "auto").strip().lower()
-        if override_value not in {"auto", "force_end", "force_open"}:
-            override_value = "auto"
-        form.event_end_override.data = override_value
-        if stage1_sla_raw:
-            try:
-                form.stage1_sla.data = int(float(stage1_sla_raw))
-            except ValueError:
-                form.stage1_sla.data = None
-        if stage2_sla_raw:
-            try:
-                form.stage2_sla.data = int(float(stage2_sla_raw))
-            except ValueError:
-                form.stage2_sla.data = None
-
-        packet_mode = _get_setting(SETTING_PACKET_PRINT_MODE, "single")
-        if packet_mode in {"single", "double"}:
-            form.packet_print_mode.data = packet_mode
+    if form.is_submitted() and form.validate():
+        if enabling_alias_from_off_to_on and not diagnostics["all_safe"]:
+            form.login_folded_alias_enabled.errors.append(
+                "Cannot enable folded login aliases until all folded student and teacher usernames are unique."
+            )
         else:
-            form.packet_print_mode.data = "single"
+            upload_value = form.upload_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.upload_deadline.data else None
+            stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
+            event_end_value = form.event_end.data.strftime("%Y-%m-%dT%H:%M") if form.event_end.data else None
+            event_override_value = form.event_end_override.data if form.event_end_override.data != "auto" else None
+            stage1_sla_value = str(form.stage1_sla.data) if form.stage1_sla.data else None
+            stage2_sla_value = str(form.stage2_sla.data) if form.stage2_sla.data else None
 
-        essay_word_limit_raw = _get_setting(SETTING_ESSAY_WORD_LIMIT)
-        try:
-            form.essay_word_limit.data = int(essay_word_limit_raw) if essay_word_limit_raw else DEFAULT_ESSAY_WORD_LIMIT
-        except (TypeError, ValueError):
-            form.essay_word_limit.data = DEFAULT_ESSAY_WORD_LIMIT
-        form.essay_word_limit_mode.data = _essay_word_limit_mode()
-        form.ethics_consent_html.data = _ethics_consent_html()
-        form.gdpr_notice_html.data = _gdpr_notice_html()
-        form.photo_consent_html.data = _photo_consent_html()
-        form.assessor_competence_html.data = _assessor_competence_html()
-        form.accommodation_info_html.data = _accommodation_info_html()
+            _set_setting(SETTING_UPLOAD_DEADLINE, upload_value)
+            _set_setting(SETTING_STAGE2_DEADLINE, stage2_value)
+            _set_setting(SETTING_EVENT_END, event_end_value)
+            _set_setting(SETTING_EVENT_END_OVERRIDE, event_override_value)
+            _set_setting(SETTING_STAGE1_SLA, stage1_sla_value)
+            _set_setting(SETTING_STAGE2_SLA, stage2_sla_value)
+            _set_setting(SETTING_PACKET_PRINT_MODE, form.packet_print_mode.data)
+            _set_setting(
+                SETTING_ESSAY_WORD_LIMIT,
+                str(form.essay_word_limit.data).strip() if form.essay_word_limit.data else None,
+            )
+            _set_setting(SETTING_ESSAY_WORD_LIMIT_MODE, form.essay_word_limit_mode.data)
+            ethics_html = (form.ethics_consent_html.data or "").strip() or None
+            gdpr_html = (form.gdpr_notice_html.data or "").strip() or None
+            photo_html = (form.photo_consent_html.data or "").strip() or None
+            competence_html = (form.assessor_competence_html.data or "").strip() or None
+            accommodation_html = (form.accommodation_info_html.data or "").strip() or None
+            _set_setting(SETTING_ETHICS_CONSENT_HTML, ethics_html)
+            _set_setting(SETTING_GDPR_NOTICE_HTML, gdpr_html)
+            _set_setting(SETTING_PHOTO_CONSENT_HTML, photo_html)
+            _set_setting(SETTING_TEACHER_COMPETENCE_HTML, competence_html)
+            _set_setting(SETTING_ACCOMMODATION_INFO_HTML, accommodation_html)
+            _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
+            _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
+            _set_setting(SETTING_REGISTRATION_INVITE_ONLY, "true" if form.registration_invite_only.data else "false")
+            _set_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true" if form.login_folded_alias_enabled.data else "false")
+            _set_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "true" if form.email_auto_enabled.data else "false")
+            _set_setting(SETTING_EMAIL_STUDENT_SUBJECT, form.email_student_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_BODY, form.email_student_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_SUBJECT, form.email_teacher_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_BODY, form.email_teacher_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT, form.email_student_invite_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_INVITE_BODY, form.email_student_invite_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT, form.email_teacher_invite_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_INVITE_BODY, form.email_teacher_invite_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_MESSAGE_SUBJECT, form.email_message_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_MESSAGE_BODY, form.email_message_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT, form.email_survey_publish_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY, form.email_survey_publish_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT, form.email_survey_reminder_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY, form.email_survey_reminder_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT, form.email_student_reset_link_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY, form.email_student_reset_link_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT, form.email_student_reset_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_STUDENT_RESET_BODY, form.email_student_reset_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT, form.email_teacher_reset_link_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY, form.email_teacher_reset_link_body.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT, form.email_teacher_reset_subject.data.strip() or None)
+            _set_setting(SETTING_EMAIL_TEACHER_RESET_BODY, form.email_teacher_reset_body.data.strip() or None)
+            db.session.commit()
+            flash("Dashboard settings updated.", "success")
+            return redirect(url_for("web.admin_settings"))
 
-        form.essay_upload_enabled.data = _is_upload_module_enabled()
-        teacher_portal_flag = (_get_setting(SETTING_TEACHER_PORTAL_ENABLED, "false") or "false").lower() == "true"
-        form.teacher_portal_enabled.data = teacher_portal_flag
-        invite_only_flag = (_get_setting(SETTING_REGISTRATION_INVITE_ONLY, "false") or "false").lower() == "true"
-        form.registration_invite_only.data = invite_only_flag
-        email_enabled_flag = (_get_setting(SETTING_EMAIL_AUTOMATION_ENABLED, "false") or "false").lower() == "true"
-        form.email_auto_enabled.data = email_enabled_flag
-        form.email_student_subject.data = _get_setting(SETTING_EMAIL_STUDENT_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_SUBJECT]
-        form.email_student_body.data = _get_setting(SETTING_EMAIL_STUDENT_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_BODY]
-        form.email_teacher_subject.data = _get_setting(SETTING_EMAIL_TEACHER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_SUBJECT]
-        form.email_teacher_body.data = _get_setting(SETTING_EMAIL_TEACHER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_BODY]
-        form.email_student_invite_subject.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_INVITE_SUBJECT]
-        form.email_student_invite_body.data = _get_setting(SETTING_EMAIL_STUDENT_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_INVITE_BODY]
-        form.email_teacher_invite_subject.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_INVITE_SUBJECT]
-        form.email_teacher_invite_body.data = _get_setting(SETTING_EMAIL_TEACHER_INVITE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_INVITE_BODY]
-        form.email_message_subject.data = _get_setting(SETTING_EMAIL_MESSAGE_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_MESSAGE_SUBJECT]
-        form.email_message_body.data = _get_setting(SETTING_EMAIL_MESSAGE_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_MESSAGE_BODY]
-        form.email_survey_publish_subject.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT]
-        form.email_survey_publish_body.data = _get_setting(SETTING_EMAIL_SURVEY_PUBLISH_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_PUBLISH_BODY]
-        form.email_survey_reminder_subject.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_SURVEY_REMINDER_SUBJECT]
-        form.email_survey_reminder_body.data = _get_setting(SETTING_EMAIL_SURVEY_REMINDER_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_SURVEY_REMINDER_BODY]
-        form.email_student_reset_link_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_LINK_SUBJECT]
-        form.email_student_reset_link_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_LINK_BODY]
-        form.email_student_reset_subject.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_STUDENT_RESET_SUBJECT]
-        form.email_student_reset_body.data = _get_setting(SETTING_EMAIL_STUDENT_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_STUDENT_RESET_BODY]
-        form.email_teacher_reset_link_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_LINK_SUBJECT]
-        form.email_teacher_reset_link_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_LINK_BODY]
-        form.email_teacher_reset_subject.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT) or DEFAULT_EMAIL_SUBJECTS[SETTING_EMAIL_TEACHER_RESET_SUBJECT]
-        form.email_teacher_reset_body.data = _get_setting(SETTING_EMAIL_TEACHER_RESET_BODY) or DEFAULT_EMAIL_BODIES[SETTING_EMAIL_TEACHER_RESET_BODY]
-
-    return render_template("admin/settings.html", form=form, config=config)
+    return render_template("admin/settings.html", form=form, config=config, login_alias_diagnostics=diagnostics)
 
 
 @web_bp.route("/admin/exports")
@@ -7136,20 +7327,26 @@ def login():
     if form.validate_on_submit():
         username = form.username.data.strip()
         password = form.password.data.strip()
-        teacher = (
-            Teacher.query.filter(
-                Teacher.portal_username == username,
-                Teacher.is_absent.is_(False),
-            )
-            .first()
-        )
+        teacher, match_details = _resolve_login_alias_match(Teacher, "portal_username", username)
         if not teacher or not teacher.portal_password_hash:
             flash("Invalid credentials.", "error")
+            action = "teacher_portal_login_ambiguous" if match_details["match_type"] == "ambiguous" else "teacher_portal_login_failed"
+            description = (
+                f"Teacher portal login ambiguous for {username}"
+                if match_details["match_type"] == "ambiguous"
+                else f"Teacher portal login failed for {username}"
+            )
             log_activity(
-                "teacher_portal_login_failed",
-                f"Teacher portal login failed for {username}",
+                action,
+                description,
                 actor="teacher_portal",
-                details={"username": username, "remote_addr": request.remote_addr},
+                details={
+                    "username": username,
+                    "submitted_username": username,
+                    "folded_username": match_details.get("folded_username"),
+                    "match_count": match_details.get("match_count", 0),
+                    "remote_addr": request.remote_addr,
+                },
             )
             db.session.commit()
         elif not check_password_hash(teacher.portal_password_hash, password):
@@ -7158,7 +7355,12 @@ def login():
                 "teacher_portal_login_failed",
                 f"Teacher portal login failed for {username}",
                 actor="teacher_portal",
-                details={"username": username, "remote_addr": request.remote_addr},
+                details={
+                    "username": teacher.portal_username,
+                    "submitted_username": username,
+                    "login_match_type": match_details["match_type"],
+                    "remote_addr": request.remote_addr,
+                },
             )
             db.session.commit()
         else:
@@ -7171,6 +7373,12 @@ def login():
                 actor=teacher.portal_username or teacher.email,
                 object_type="teacher",
                 object_id=teacher.id,
+                details={
+                    "username": teacher.portal_username,
+                    "submitted_username": username,
+                    "login_match_type": match_details["match_type"],
+                    "remote_addr": request.remote_addr,
+                },
             )
             db.session.commit()
             target = _portal_next_url(request.form.get("next") or next_candidate)
