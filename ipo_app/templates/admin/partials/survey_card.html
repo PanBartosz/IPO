@@ -61,6 +61,7 @@
       </form>
       <a class="button small" href="{{ url_for('web.admin_publish_survey', survey_id=survey.id) }}">Publish</a>
     {% elif survey.status == SurveyStatus.PUBLISHED %}
+      <a class="button secondary small" href="{{ url_for('web.admin_update_survey_recipients', survey_id=survey.id) }}">Update recipients</a>
       {% if summary.responses == 0 %}
         <form
           method="post"

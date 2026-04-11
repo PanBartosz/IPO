@@ -5,6 +5,9 @@
   </div>
   <div class="page-actions__group">
     <a class="button small" href="{{ export_url }}">Download XLSX</a>
+    {% if survey.status == SurveyStatus.PUBLISHED %}
+      <a class="button secondary small" href="{{ url_for('web.admin_update_survey_recipients', survey_id=survey.id) }}">Update recipients</a>
+    {% endif %}
   </div>
   <div class="page-actions__group">
     {% if summary.outstanding > 0 %}

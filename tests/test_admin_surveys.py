@@ -17,6 +17,7 @@ from ipo_app.models import (
     SurveyQuestionType,
     SurveyResponse,
     SurveyStatus,
+    Teacher,
 )
 
 
@@ -44,6 +45,22 @@ def _create_student(*, email: str, country: str = "Testland") -> int:
     db.session.add(student)
     db.session.commit()
     return student.id
+
+
+def _create_teacher(*, email: str, country: str = "Testland") -> int:
+    teacher = Teacher(
+        country=country,
+        first_name="Teacher",
+        last_name=email.split("@")[0],
+        email=email,
+        school="Test School",
+        languages="English",
+        meal_preference="No preference",
+        tshirt_size="M",
+    )
+    db.session.add(teacher)
+    db.session.commit()
+    return teacher.id
 
 
 def _create_draft_student_survey(*, title: str = "Student survey") -> tuple[int, int]:
@@ -163,6 +180,204 @@ def test_admin_survey_publish_with_email_enabled_sends_notifications(client, csr
             .first()
         )
         assert log is not None
+
+
+def test_admin_update_survey_recipients_adds_late_student_without_duplicates(client, csrf_token):
+    with client.application.app_context():
+        existing_student_id = _create_student(email="survey.existing@example.com")
+        late_student_id = _create_student(email="survey.late@example.com")
+        survey_id, _question_id = _create_draft_student_survey(title="Late student survey")
+        survey = db.session.get(Survey, survey_id)
+        survey.status = SurveyStatus.PUBLISHED
+        survey.open_at = datetime.utcnow()
+        db.session.add(
+            SurveyAssignment(
+                survey_id=survey_id,
+                student_id=existing_student_id,
+                status=SurveyAssignmentStatus.PENDING,
+            )
+        )
+        db.session.commit()
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    update_page = client.get(f"/admin/surveys/{survey_id}/recipients/update")
+    assert update_page.status_code == 200
+    html = update_page.get_data(as_text=True)
+    assert "1 missing" in html
+    assert "survey.late@example.com" in html
+    token = csrf_token(update_page)
+
+    response = client.post(
+        f"/admin/surveys/{survey_id}/recipients/update",
+        data={
+            "csrf_token": token,
+            "submit": "Add missing recipients",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == f"/admin/surveys/{survey_id}/responses"
+
+    with client.application.app_context():
+        assignments = SurveyAssignment.query.filter_by(survey_id=survey_id).all()
+        assert len(assignments) == 2
+        assert {assignment.student_id for assignment in assignments} == {existing_student_id, late_student_id}
+        assert {assignment.teacher_id for assignment in assignments} == {None}
+
+        log = (
+            ActivityLog.query
+            .filter_by(action="survey_recipients_updated", object_type="survey", object_id=str(survey_id))
+            .first()
+        )
+        assert log is not None
+        assert log.details["new_assignments"] == 1
+        assert log.details["students"] == 1
+        assert log.details["teachers"] == 0
+
+    with client.session_transaction() as session:
+        session.clear()
+        session["student_upload_id"] = late_student_id
+
+    surveys_page = client.get("/participant/surveys")
+    assert surveys_page.status_code == 200
+    assert "Late student survey" in surveys_page.get_data(as_text=True)
+
+
+def test_admin_update_survey_recipients_adds_missing_mixed_audience(client, csrf_token):
+    with client.application.app_context():
+        existing_student_id = _create_student(email="mixed.student.existing@example.com")
+        late_student_id = _create_student(email="mixed.student.late@example.com")
+        existing_teacher_id = _create_teacher(email="mixed.teacher.existing@example.com")
+        late_teacher_id = _create_teacher(email="mixed.teacher.late@example.com")
+        survey_id, _question_id = _create_draft_student_survey(title="Mixed audience survey")
+        survey = db.session.get(Survey, survey_id)
+        survey.audience = SurveyAudience.MIXED
+        survey.status = SurveyStatus.PUBLISHED
+        survey.open_at = datetime.utcnow()
+        db.session.add_all(
+            [
+                SurveyAssignment(
+                    survey_id=survey_id,
+                    student_id=existing_student_id,
+                    status=SurveyAssignmentStatus.PENDING,
+                ),
+                SurveyAssignment(
+                    survey_id=survey_id,
+                    teacher_id=existing_teacher_id,
+                    status=SurveyAssignmentStatus.PENDING,
+                ),
+            ]
+        )
+        db.session.commit()
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    update_page = client.get(f"/admin/surveys/{survey_id}/recipients/update")
+    token = csrf_token(update_page)
+    response = client.post(
+        f"/admin/surveys/{survey_id}/recipients/update",
+        data={
+            "csrf_token": token,
+            "submit": "Add missing recipients",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+
+    with client.application.app_context():
+        assignments = SurveyAssignment.query.filter_by(survey_id=survey_id).all()
+        assert len(assignments) == 4
+        assert {assignment.student_id for assignment in assignments if assignment.student_id} == {
+            existing_student_id,
+            late_student_id,
+        }
+        assert {assignment.teacher_id for assignment in assignments if assignment.teacher_id} == {
+            existing_teacher_id,
+            late_teacher_id,
+        }
+
+
+def test_admin_update_survey_recipients_notifies_only_new_assignments(client, csrf_token, monkeypatch):
+    sent_to: list[str] = []
+
+    def _fake_send_email(to_email: str, subject: str, html_content: str, plain_text_content=None):
+        sent_to.append(to_email)
+        return True, "msg-id", None
+
+    monkeypatch.setattr(views, "_send_email", _fake_send_email)
+    client.application.config["SENDGRID_API_KEY"] = "dummy"
+    client.application.config["SENDGRID_FROM_EMAIL"] = "noreply@example.com"
+
+    with client.application.app_context():
+        _set_setting("email_auto_enabled", "true")
+        existing_student_id = _create_student(email="notify.existing@example.com")
+        late_student_id = _create_student(email="notify.late@example.com")
+        survey_id, _question_id = _create_draft_student_survey(title="Notify late student")
+        survey = db.session.get(Survey, survey_id)
+        survey.status = SurveyStatus.PUBLISHED
+        survey.open_at = datetime.utcnow()
+        db.session.add(
+            SurveyAssignment(
+                survey_id=survey_id,
+                student_id=existing_student_id,
+                status=SurveyAssignmentStatus.PENDING,
+            )
+        )
+        db.session.commit()
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    update_page = client.get(f"/admin/surveys/{survey_id}/recipients/update")
+    token = csrf_token(update_page)
+
+    response = client.post(
+        f"/admin/surveys/{survey_id}/recipients/update",
+        data={
+            "csrf_token": token,
+            "notify_recipients": "y",
+            "submit": "Add missing recipients",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert sent_to == ["notify.late@example.com"]
+
+    with client.application.app_context():
+        assignments = SurveyAssignment.query.filter_by(survey_id=survey_id).all()
+        assert len(assignments) == 2
+        assert {assignment.student_id for assignment in assignments} == {existing_student_id, late_student_id}
+
+        log = (
+            ActivityLog.query
+            .filter_by(
+                action="survey_recipient_update_notification_sent",
+                object_type="survey",
+                object_id=str(survey_id),
+            )
+            .first()
+        )
+        assert log is not None
+        assert log.details["recipients"] == 1
+
+
+def test_admin_update_survey_recipients_rejects_draft_survey(client):
+    with client.application.app_context():
+        survey_id, _question_id = _create_draft_student_survey(title="Draft recipient update")
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/surveys/{survey_id}/recipients/update", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/admin/surveys"
 
 
 def test_admin_survey_responses_export_xlsx_contains_question_columns_and_answers(client):

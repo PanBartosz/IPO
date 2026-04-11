@@ -76,6 +76,7 @@ from .forms import (
     SurveyForm,
     SurveyQuestionForm,
     SurveyPublishForm,
+    SurveyRecipientUpdateForm,
     SurveyResponseForm,
     PasswordResetRequestForm,
     PasswordResetConfirmForm,
@@ -6782,6 +6783,97 @@ def admin_publish_survey(survey_id: int):
     )
 
 
+@web_bp.route("/admin/surveys/<int:survey_id>/recipients/update", methods=["GET", "POST"])
+def admin_update_survey_recipients(survey_id: int):
+    if not _current_admin():
+        abort(403)
+    survey = db.session.get(Survey, survey_id)
+    if not survey:
+        abort(404)
+
+    form = SurveyRecipientUpdateForm()
+    if not form.is_submitted():
+        form.notify_recipients.data = True
+
+    if survey.status != SurveyStatus.PUBLISHED:
+        flash("Only published surveys can have recipients updated.", "error")
+        return redirect(url_for("web.admin_surveys"))
+
+    plan = _survey_recipient_update_plan(survey)
+    back_url = url_for("web.admin_survey_responses", survey_id=survey.id)
+
+    if form.validate_on_submit():
+        if plan.missing_total == 0:
+            flash("No missing recipients were found for this survey audience.", "info")
+            return redirect(back_url)
+
+        new_assignments = _create_survey_assignments(
+            survey,
+            teacher_ids=plan.missing_teacher_ids,
+            student_ids=plan.missing_student_ids,
+        )
+        if not new_assignments:
+            flash("No missing recipients were found for this survey audience.", "info")
+            return redirect(back_url)
+        db.session.flush()
+
+        student_count = sum(1 for assignment in new_assignments if assignment.student_id)
+        teacher_count = sum(1 for assignment in new_assignments if assignment.teacher_id)
+        log_activity(
+            "survey_recipients_updated",
+            f"Survey '{survey.title}' recipients updated",
+            object_type="survey",
+            object_id=survey.id,
+            details={
+                "new_assignments": len(new_assignments),
+                "students": student_count,
+                "teachers": teacher_count,
+                "notify_recipients": bool(form.notify_recipients.data),
+            },
+        )
+        db.session.commit()
+
+        notify_sent = None
+        if form.notify_recipients.data:
+            notify_sent = _send_survey_emails(
+                new_assignments,
+                SETTING_EMAIL_SURVEY_PUBLISH_SUBJECT,
+                SETTING_EMAIL_SURVEY_PUBLISH_BODY,
+            )
+            if notify_sent > 0:
+                log_activity(
+                    "survey_recipient_update_notification_sent",
+                    f"Survey '{survey.title}' notifications sent to newly added recipients",
+                    object_type="survey",
+                    object_id=survey.id,
+                    details={"recipients": notify_sent},
+                )
+                db.session.commit()
+
+        message = (
+            f"Added {len(new_assignments)} missing recipient(s): "
+            f"{student_count} student(s), {teacher_count} teacher(s)."
+        )
+        if notify_sent is not None:
+            if notify_sent == -1:
+                message += " Email notifications are disabled."
+            elif notify_sent == 0:
+                message += " No notification emails were sent."
+            else:
+                message += f" Notifications sent to {notify_sent} recipient(s)."
+        flash(message, "success")
+        return redirect(back_url)
+
+    return render_template(
+        "admin/surveys/update_recipients.html",
+        survey=survey,
+        form=form,
+        plan=plan,
+        back_url=back_url,
+        SurveyAudience=SurveyAudience,
+    )
+
+
 @web_bp.route("/admin/surveys/<int:survey_id>/close", methods=["POST"])
 def admin_close_survey(survey_id: int):
     if not _current_admin():
@@ -6963,6 +7055,7 @@ def admin_survey_responses(survey_id: int):
         "status_filter": status_filter,
         "export_url": export_url,
         "SurveyAssignmentStatus": SurveyAssignmentStatus,
+        "SurveyStatus": SurveyStatus,
         "is_htmx": is_htmx,
     }
     if not is_htmx:
@@ -7148,6 +7241,7 @@ def admin_survey_send_reminder(survey_id: int):
             status_filter=status_filter,
             export_url=export_url,
             SurveyAssignmentStatus=SurveyAssignmentStatus,
+            SurveyStatus=SurveyStatus,
         )
     return redirect(back_url)
 
@@ -12269,6 +12363,63 @@ def _create_survey_assignments(
         created.append(assignment)
 
     return created
+
+
+def _survey_accepts_students(survey: Survey) -> bool:
+    return survey.audience in (SurveyAudience.STUDENT, SurveyAudience.MIXED)
+
+
+def _survey_accepts_teachers(survey: Survey) -> bool:
+    return survey.audience in (SurveyAudience.TEACHER, SurveyAudience.MIXED)
+
+
+def _survey_recipient_update_plan(survey: Survey) -> SimpleNamespace:
+    assigned_student_ids = {
+        student_id
+        for (student_id,) in (
+            db.session.query(SurveyAssignment.student_id)
+            .filter(
+                SurveyAssignment.survey_id == survey.id,
+                SurveyAssignment.student_id.isnot(None),
+            )
+            .all()
+        )
+    }
+    assigned_teacher_ids = {
+        teacher_id
+        for (teacher_id,) in (
+            db.session.query(SurveyAssignment.teacher_id)
+            .filter(
+                SurveyAssignment.survey_id == survey.id,
+                SurveyAssignment.teacher_id.isnot(None),
+            )
+            .all()
+        )
+    }
+
+    students: list[Student] = []
+    teachers: list[Teacher] = []
+    if _survey_accepts_students(survey):
+        students = Student.query.order_by(Student.last_name.asc(), Student.first_name.asc(), Student.id.asc()).all()
+    if _survey_accepts_teachers(survey):
+        teachers = Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc(), Teacher.id.asc()).all()
+
+    missing_students = [student for student in students if student.id not in assigned_student_ids]
+    missing_teachers = [teacher for teacher in teachers if teacher.id not in assigned_teacher_ids]
+
+    return SimpleNamespace(
+        accepts_students=_survey_accepts_students(survey),
+        accepts_teachers=_survey_accepts_teachers(survey),
+        eligible_students=len(students),
+        eligible_teachers=len(teachers),
+        assigned_students=len(assigned_student_ids),
+        assigned_teachers=len(assigned_teacher_ids),
+        missing_students=missing_students,
+        missing_teachers=missing_teachers,
+        missing_student_ids=[student.id for student in missing_students],
+        missing_teacher_ids=[teacher.id for teacher in missing_teachers],
+        missing_total=len(missing_students) + len(missing_teachers),
+    )
 
 
 def _survey_assignment_state(assignment: SurveyAssignment) -> SimpleNamespace:

@@ -542,6 +542,11 @@ class SurveyPublishForm(FlaskForm):
         return True
 
 
+class SurveyRecipientUpdateForm(FlaskForm):
+    notify_recipients = BooleanField("Send notification email to newly added recipients", default=True)
+    submit = SubmitField("Add missing recipients")
+
+
 class SurveyResponseForm(FlaskForm):
     submit = SubmitField("Submit response")
 
