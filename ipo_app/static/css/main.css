@@ -1277,7 +1277,7 @@ textarea {
 .group-cards {
   display: grid;
   gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
 }
 
 .group-card {
@@ -1486,13 +1486,22 @@ textarea {
 .group-assignments .form-inline {
   display: flex;
   gap: 0.75rem;
-  align-items: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .group-assignments .form-inline select {
+  flex: 1 1 18rem;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.4rem 0.6rem;
   border-radius: 6px;
   border: 1px solid var(--border-strong);
+}
+
+.group-assignments .form-inline button {
+  flex: 0 0 auto;
 }
 
 .link-like {
@@ -2861,6 +2870,10 @@ body.modal-open {
   padding: 1.5rem;
   position: relative;
   overflow: hidden;
+}
+
+#dashboard-content > .dashboard-panel {
+  margin-bottom: 2rem;
 }
 
 .dashboard-panel::before {
