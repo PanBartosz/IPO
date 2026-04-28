@@ -96,6 +96,7 @@ from .models import (
     EssayScore,
     EssayAssignmentExtraReader,
     GroupMemberRole,
+    PlannerAlgorithm,
     PlannerStatus,
     ReadingGroup,
     ReadingGroupMember,
@@ -855,6 +856,15 @@ def _assessment_eligible_teachers_query():
     )
 
 
+def _published_batch_guard_response(batch: AssignmentBatch):
+    if batch.status != PlannerStatus.PUBLISHED:
+        return None
+    flash("Cannot modify a published batch. Unpublish it first.", "error")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
 def _empty_load_entry() -> SimpleNamespace:
     return SimpleNamespace(
         stage1_expected=0,
@@ -1597,6 +1607,8 @@ GRADE_STAGE_SLOTS = {
     Stage.STAGE_2.value: 2,
 }
 
+STAGE_1_REQUIRED_READINGS = 4
+
 
 def _grade_score_stats(values: list[float]) -> dict[str, float | int | None]:
     if not values:
@@ -1989,11 +2001,17 @@ def _grades_export_pdf(students: list[dict], options: dict) -> Any:
 
 def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNamespace:
     assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
-    expected = len(assessors)
+    assigned_readers = len(assessors)
+    expected = max(assigned_readers, STAGE_1_REQUIRED_READINGS) if assignment else 0
+    missing_reader_assignments = max(STAGE_1_REQUIRED_READINGS - assigned_readers, 0) if assignment else 0
     if not assignment:
         return SimpleNamespace(
             entered_scores=0,
             expected_scores=expected,
+            assigned_readers=assigned_readers,
+            required_readers=STAGE_1_REQUIRED_READINGS,
+            missing_reader_assignments=missing_reader_assignments,
+            missing_scores=0,
             average_score=None,
             score_range=None,
             recommendation="No published Stage 1 batch.",
@@ -2016,6 +2034,12 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
 
     if expected == 0:
         recommendation = "No active readers assigned."
+    elif missing_reader_assignments > 0:
+        recommendation = (
+            f"Needs {missing_reader_assignments} additional reader assignment"
+            f"{'s' if missing_reader_assignments != 1 else ''} to reach "
+            f"{STAGE_1_REQUIRED_READINGS} Stage 1 readings."
+        )
     elif entered < expected:
         missing = expected - entered
         recommendation = f"Awaiting {missing} reader score{'s' if missing != 1 else ''}."
@@ -2029,12 +2053,16 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
     return SimpleNamespace(
         entered_scores=entered,
         expected_scores=expected,
+        assigned_readers=assigned_readers,
+        required_readers=STAGE_1_REQUIRED_READINGS,
+        missing_reader_assignments=missing_reader_assignments,
+        missing_scores=max(expected - entered, 0),
         average_score=average,
         score_range=score_range,
         recommendation=recommendation,
         needs_extra=assignment.needs_additional_reading,
         stage_two=assignment.stage_two_candidate,
-        completed=expected > 0 and entered >= expected,
+        completed=missing_reader_assignments == 0 and expected > 0 and entered >= expected,
     )
 
 
@@ -2050,6 +2078,7 @@ def _stage_one_extra_reader_state(
             extra_readers=0,
             extra_scores=0,
             missing_extra_scores=0,
+            missing_reader_assignments=0,
         )
 
     status = status or _compute_stage_one_status(assignment)
@@ -2070,8 +2099,17 @@ def _stage_one_extra_reader_state(
     extra_scores = len(extra_score_teacher_ids)
     missing_extra_scores = max(extra_count - extra_scores, 0)
     needs_extra = bool(status.needs_extra or assignment.needs_additional_reading)
+    missing_reader_assignments = getattr(status, "missing_reader_assignments", 0)
 
-    if needs_extra and extra_count == 0:
+    if missing_reader_assignments > 0:
+        bucket = "needs_assignment"
+        label = "Needs extra reader assignment"
+        needs_action = True
+    elif extra_count > 0 and getattr(status, "missing_scores", 0) > 0 and missing_extra_scores > 0:
+        bucket = "awaiting_score"
+        label = "Extra reader assigned; awaiting score"
+        needs_action = True
+    elif needs_extra and extra_count == 0:
         bucket = "needs_assignment"
         label = "Needs extra reader assignment"
         needs_action = True
@@ -2099,6 +2137,7 @@ def _stage_one_extra_reader_state(
         extra_readers=extra_count,
         extra_scores=extra_scores,
         missing_extra_scores=missing_extra_scores,
+        missing_reader_assignments=missing_reader_assignments,
     )
 
 
@@ -2828,6 +2867,10 @@ def _load_batch_groups(batch: AssignmentBatch) -> list[ReadingGroup]:
         ReadingGroup.query.options(
             joinedload(ReadingGroup.members).joinedload(ReadingGroupMember.teacher),
             joinedload(ReadingGroup.assignments).joinedload(EssayAssignment.student),
+            joinedload(ReadingGroup.assignments)
+            .joinedload(EssayAssignment.extra_readers)
+            .joinedload(EssayAssignmentExtraReader.teacher),
+            joinedload(ReadingGroup.assignments).joinedload(EssayAssignment.scores),
         )
         .filter(ReadingGroup.batch_id == batch.id)
         .order_by(ReadingGroup.language.asc(), ReadingGroup.name.asc())
@@ -2835,19 +2878,202 @@ def _load_batch_groups(batch: AssignmentBatch) -> list[ReadingGroup]:
     )
 
 
-def _auto_generate_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | dict[str, int]]:
+def _reader_score_is_complete(score_record: EssayScore | None) -> bool:
+    if not score_record or score_record.score is None:
+        return False
+    return bool(score_record.teacher_finalized or score_record.admin_entered or score_record.admin_override)
+
+
+def _teacher_stage_one_assignment_ids_for_batch(batch: AssignmentBatch, teacher_id: int) -> set[int]:
+    assignment_ids: set[int] = set()
+    group_query = (
+        db.session.query(EssayAssignment.id)
+        .join(ReadingGroup, EssayAssignment.group_id == ReadingGroup.id)
+        .join(ReadingGroupMember, ReadingGroupMember.group_id == ReadingGroup.id)
+        .filter(
+            EssayAssignment.batch_id == batch.id,
+            EssayAssignment.stage == Stage.STAGE_1,
+            ReadingGroupMember.teacher_id == teacher_id,
+            ReadingGroupMember.active.is_(True),
+        )
+    )
+    assignment_ids.update(assignment_id for (assignment_id,) in group_query.all())
+
+    extra_query = (
+        db.session.query(EssayAssignmentExtraReader.assignment_id)
+        .join(EssayAssignment, EssayAssignment.id == EssayAssignmentExtraReader.assignment_id)
+        .filter(
+            EssayAssignment.batch_id == batch.id,
+            EssayAssignment.stage == Stage.STAGE_1,
+            EssayAssignmentExtraReader.teacher_id == teacher_id,
+            EssayAssignmentExtraReader.stage == Stage.STAGE_1.value,
+        )
+    )
+    assignment_ids.update(assignment_id for (assignment_id,) in extra_query.all())
+    return assignment_ids
+
+
+def _teacher_stage_one_workload(batch: AssignmentBatch, teacher: Teacher) -> SimpleNamespace:
+    assignment_ids = _teacher_stage_one_assignment_ids_for_batch(batch, teacher.id)
+    score_map: dict[int, EssayScore] = {}
+    if assignment_ids:
+        scores = (
+            EssayScore.query.filter(
+                EssayScore.assignment_id.in_(assignment_ids),
+                EssayScore.teacher_id == teacher.id,
+                EssayScore.stage == Stage.STAGE_1,
+            )
+            .order_by(EssayScore.id.asc())
+            .all()
+        )
+        score_map = {score.assignment_id: score for score in scores if score.assignment_id}
+
+    completed_count = sum(
+        1
+        for assignment_id in assignment_ids
+        if _reader_score_is_complete(score_map.get(assignment_id))
+    )
+    assigned_count = len(assignment_ids)
+    pending_count = max(assigned_count - completed_count, 0)
+    return SimpleNamespace(
+        assignment_ids=assignment_ids,
+        assigned_count=assigned_count,
+        completed_count=completed_count,
+        pending_count=pending_count,
+        is_free=pending_count == 0,
+    )
+
+
+def _supplemental_reader_assignments_for_group(group: ReadingGroup, teacher: Teacher) -> list[EssayAssignment]:
+    eligible_assignments: list[EssayAssignment] = []
+    assignments = sorted(
+        group.assignments,
+        key=lambda assignment: (
+            assignment.student.country if assignment.student else "",
+            assignment.student.id if assignment.student else 0,
+        ),
+    )
+    for assignment in assignments:
+        if assignment.stage != Stage.STAGE_1 or not assignment.student:
+            continue
+        assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
+        if len(assessors) >= STAGE_1_REQUIRED_READINGS:
+            continue
+        if any(entry.teacher_id == teacher.id for entry in assessors):
+            continue
+        if not _teacher_can_grade(assignment.student, teacher, assignment.student.essay_language):
+            continue
+        eligible_assignments.append(assignment)
+    return eligible_assignments
+
+
+def _supplemental_reader_context(
+    batch: AssignmentBatch,
+    groups: list[ReadingGroup],
+    teachers: list[Teacher],
+) -> tuple[dict[int, SimpleNamespace], list[SimpleNamespace]]:
+    workload_map = {teacher.id: _teacher_stage_one_workload(batch, teacher) for teacher in teachers}
+    teacher_packet_entries = [
+        SimpleNamespace(teacher=teacher, workload=workload)
+        for teacher in teachers
+        for workload in [workload_map.get(teacher.id)]
+        if workload and workload.assigned_count > 0
+    ]
+    teacher_packet_entries.sort(key=lambda entry: (entry.teacher.last_name, entry.teacher.first_name, entry.teacher.id))
+
+    group_map: dict[int, SimpleNamespace] = {}
+    for group in groups:
+        missing_slots = 0
+        assignments_needing_readers = 0
+        for assignment in group.assignments:
+            if assignment.stage != Stage.STAGE_1:
+                continue
+            status = _compute_stage_one_status(assignment)
+            if status.missing_reader_assignments > 0:
+                assignments_needing_readers += 1
+                missing_slots += status.missing_reader_assignments
+
+        candidates: list[SimpleNamespace] = []
+        if missing_slots:
+            for teacher in teachers:
+                workload = workload_map.get(teacher.id)
+                if not workload or not workload.is_free:
+                    continue
+                assignments = _supplemental_reader_assignments_for_group(group, teacher)
+                if not assignments:
+                    continue
+                candidates.append(
+                    SimpleNamespace(
+                        teacher=teacher,
+                        workload=workload,
+                        eligible_assignments=assignments,
+                        eligible_count=len(assignments),
+                    )
+                )
+            candidates.sort(
+                key=lambda entry: (
+                    -entry.eligible_count,
+                    -entry.workload.completed_count,
+                    entry.teacher.last_name,
+                    entry.teacher.first_name,
+                    entry.teacher.id,
+                )
+            )
+
+        group_map[group.id] = SimpleNamespace(
+            missing_slots=missing_slots,
+            assignments_needing_readers=assignments_needing_readers,
+            candidates=candidates,
+        )
+
+    return group_map, teacher_packet_entries
+
+
+def _planner_algorithm_for_batch(batch: AssignmentBatch) -> PlannerAlgorithm:
+    algorithm = getattr(batch, "planner_algorithm", None)
+    if isinstance(algorithm, PlannerAlgorithm):
+        return algorithm
+    if algorithm:
+        try:
+            return PlannerAlgorithm(algorithm)
+        except ValueError:
+            try:
+                return PlannerAlgorithm[str(algorithm)]
+            except KeyError:
+                pass
+    return PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS
+
+
+def _planner_algorithm_choices() -> list[tuple[str, str]]:
+    return [
+        (PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value, "Strict 4 + backups"),
+        (PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS.value, "All assessors, no backups"),
+    ]
+
+
+def _remove_auto_generated_groups(batch: AssignmentBatch) -> tuple[int, int]:
     removed_groups = 0
+    removed_assignments = 0
     for group in list(batch.groups):
         if group.auto_generated:
             for assignment in list(group.assignments):
-                if assignment.manual_override:
-                    assignment.group_id = None
-                else:
-                    db.session.delete(assignment)
+                db.session.delete(assignment)
+                removed_assignments += 1
             db.session.delete(group)
             removed_groups += 1
 
     db.session.flush()
+    return removed_groups, removed_assignments
+
+
+def _auto_generate_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | dict[str, int]]:
+    if _planner_algorithm_for_batch(batch) == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS:
+        return _auto_generate_all_assessors_groups_for_batch(batch)
+    return _auto_generate_strict_groups_for_batch(batch)
+
+
+def _auto_generate_strict_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | dict[str, int]]:
+    removed_groups, removed_assignments = _remove_auto_generated_groups(batch)
 
     manual_teacher_ids: set[int] = set()
     manual_teacher_counts: dict[str, int] = defaultdict(int)
@@ -2896,7 +3122,7 @@ def _auto_generate_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | d
     remainder = total_eligible % 4
     slots_to_assign = full_groups * 4
 
-    summary: dict[str, int | dict[str, int]] = {"removed": removed_groups}
+    summary: dict[str, int | dict[str, int]] = {"removed": removed_groups, "removed_assignments": removed_assignments}
 
     if full_groups == 0:
         summary["created"] = {}
@@ -3179,6 +3405,161 @@ def _auto_generate_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | d
     return summary
 
 
+def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dict[str, int | dict[str, int]]:
+    removed_groups, removed_assignments = _remove_auto_generated_groups(batch)
+
+    manual_teacher_ids: set[int] = set()
+    manual_teacher_counts: dict[str, int] = defaultdict(int)
+    manual_group_counts: dict[str, int] = defaultdict(int)
+    for group in batch.groups:
+        if group.stage != batch.stage:
+            continue
+        if not group.auto_generated:
+            manual_group_counts[group.language] += 1
+        for member in group.members:
+            if not member.teacher or member.teacher.is_absent:
+                continue
+            manual_teacher_ids.add(member.teacher_id)
+            if not group.auto_generated and member.active:
+                manual_teacher_counts[group.language] += 1
+
+    student_counts: dict[str, int] = defaultdict(int)
+    for language, in Student.query.filter_by(is_absent=False).with_entities(Student.essay_language):
+        if language:
+            student_counts[language] += 1
+
+    teachers = _assessment_eligible_teachers_query().order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
+
+    eligible_teachers: list[Teacher] = []
+    teacher_languages_map: dict[int, set[str]] = {}
+    for teacher in teachers:
+        if teacher.id in manual_teacher_ids:
+            continue
+        _ensure_language_entries(teacher)
+        if _teacher_has_active_group(teacher.id, batch.stage):
+            continue
+        languages_spoken = {entry.language for entry in teacher.language_entries if entry.language}
+        if not languages_spoken:
+            continue
+        eligible_teachers.append(teacher)
+        teacher_languages_map[teacher.id] = languages_spoken
+
+    summary: dict[str, int | dict[str, int]] = {
+        "removed": removed_groups,
+        "removed_assignments": removed_assignments,
+        "backups": 0,
+    }
+
+    if not eligible_teachers:
+        summary["created"] = {}
+        summary["teachers_assigned"] = 0
+        summary["underfilled"] = 0
+        _recalculate_group_targets(batch, student_counts)
+        return summary
+
+    min_per_teacher_load = max(current_app.config.get("PLANNER_MIN_PER_TEACHER_LOAD", 3), 1)
+    planned_teacher_counts: dict[str, int] = defaultdict(int, manual_teacher_counts)
+    teachers_by_language: dict[str, list[Teacher]] = defaultdict(list)
+
+    def _teacher_sort_key(teacher: Teacher) -> tuple[int, int, str, str, int]:
+        languages = teacher_languages_map.get(teacher.id, set())
+        demand_languages = [language for language in languages if student_counts.get(language, 0) > 0]
+        useful_options = demand_languages or list(languages)
+        max_demand = max((student_counts.get(language, 0) for language in useful_options), default=0)
+        return (len(useful_options), -max_demand, teacher.last_name, teacher.first_name, teacher.id)
+
+    def _language_sort_key(language: str) -> tuple[int, int, float, int, int, str]:
+        students = student_counts.get(language, 0)
+        current_teachers = planned_teacher_counts.get(language, 0)
+        required_teachers = math.ceil(students / min_per_teacher_load) if students else 0
+        deficit = max(required_teachers - current_teachers, 0)
+        load_score = students / max(current_teachers + 1, 1)
+        return (
+            0 if students else 1,
+            -deficit,
+            -load_score,
+            -students,
+            current_teachers,
+            language,
+        )
+
+    for teacher in sorted(eligible_teachers, key=_teacher_sort_key):
+        languages = sorted(teacher_languages_map.get(teacher.id, set()))
+        languages_with_students = [language for language in languages if student_counts.get(language, 0) > 0]
+        candidate_languages = languages_with_students or languages
+        chosen_language = sorted(candidate_languages, key=_language_sort_key)[0]
+        teachers_by_language[chosen_language].append(teacher)
+        planned_teacher_counts[chosen_language] += 1
+
+    def _build_groups_for_language(teachers_in_language: list[Teacher]) -> list[list[Teacher]]:
+        pool = sorted(teachers_in_language, key=lambda t: (t.country, t.last_name, t.first_name, t.id))
+        groups: list[list[Teacher]] = []
+        while pool:
+            selected: list[Teacher] = []
+            used_countries: set[str] = set()
+            remainder_list: list[Teacher] = []
+            for teacher in pool:
+                if len(selected) == 4:
+                    remainder_list.append(teacher)
+                    continue
+                if teacher.country not in used_countries:
+                    selected.append(teacher)
+                    used_countries.add(teacher.country)
+                else:
+                    remainder_list.append(teacher)
+            if len(selected) < 4:
+                needed = min(4 - len(selected), len(remainder_list))
+                selected.extend(remainder_list[:needed])
+                remainder_list = remainder_list[needed:]
+            groups.append(selected)
+            pool = remainder_list
+        return groups
+
+    created_count: dict[str, int] = defaultdict(int)
+    underfilled_groups = 0
+    no_student_language_groups = 0
+
+    for language in sorted(teachers_by_language):
+        language_groups = _build_groups_for_language(teachers_by_language[language])
+        for members in language_groups:
+            group_name = f"{language} Group {created_count[language] + manual_group_counts.get(language, 0) + 1}"
+            group = ReadingGroup(
+                name=group_name,
+                language=language,
+                stage=batch.stage,
+                target_essay_load=0,
+                allow_same_country=False,
+                auto_generated=True,
+                status=batch.status,
+                batch=batch,
+            )
+            db.session.add(group)
+            db.session.flush()
+            for idx, teacher in enumerate(members):
+                role = GroupMemberRole.LEADER if idx == 0 else GroupMemberRole.READER
+                member = ReadingGroupMember(
+                    group_id=group.id,
+                    teacher_id=teacher.id,
+                    role=role,
+                    active=True,
+                )
+                db.session.add(member)
+            if len(members) < 4:
+                underfilled_groups += 1
+            if student_counts.get(language, 0) == 0:
+                no_student_language_groups += 1
+            created_count[language] += 1
+
+    summary["created"] = {language: count for language, count in created_count.items() if count}
+    summary["teachers_assigned"] = len(eligible_teachers)
+    summary["underfilled"] = underfilled_groups
+    if no_student_language_groups:
+        summary["no_student_language_groups"] = no_student_language_groups
+
+    _recalculate_group_targets(batch, student_counts)
+    return summary
+
+
 def _recalculate_group_targets(batch: AssignmentBatch, student_counts: dict[str, int] | None = None) -> None:
     if student_counts is None:
         counts: dict[str, int] = defaultdict(int)
@@ -3216,6 +3597,12 @@ def _recalculate_group_targets(batch: AssignmentBatch, student_counts: dict[str,
         if total_active_teachers == 0:
             continue
 
+        if total_students == 0:
+            for group in groups:
+                if active_counts.get(group.id):
+                    group.target_essay_load = 0
+            continue
+
         per_teacher_load = max(math.ceil(total_students / total_active_teachers), min_per_teacher_load)
 
         for group in groups:
@@ -3228,6 +3615,9 @@ def _recalculate_group_targets(batch: AssignmentBatch, student_counts: dict[str,
 def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
     # remove existing non-manual assignments
     for assignment in list(batch.assignments):
+        if assignment.manual_override and assignment.group_id is None:
+            db.session.delete(assignment)
+            continue
         if assignment.manual_override:
             continue
         db.session.delete(assignment)
@@ -3237,6 +3627,10 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
     groups = [group for group in batch.groups if group.members]
     if not groups:
         return 0, []
+
+    min_active_members = 1
+    if _planner_algorithm_for_batch(batch) == PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS:
+        min_active_members = 4
 
     group_teacher_countries: dict[int, set[str]] = {}
     for group in groups:
@@ -3262,7 +3656,7 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
 
     for student in students:
         manual_assignment = next(
-            (a for a in batch.assignments if a.student_id == student.id and a.manual_override),
+            (a for a in batch.assignments if a.student_id == student.id and a.manual_override and a.group_id),
             None,
         )
         if manual_assignment:
@@ -3279,7 +3673,7 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
                 for member in group.members
                 if member.active and member.teacher and not member.teacher.is_absent
             ]
-            if len(active_members) < 4:
+            if len(active_members) < min_active_members:
                 continue
             current_load = group_assignment_counts.get(group.id, 0)
             if current_load >= group.target_essay_load:
@@ -3472,6 +3866,72 @@ def _build_teacher_schedules(groups: list[ReadingGroup]) -> list[dict]:
     schedules = list(schedule_map.values())
     schedules.sort(key=lambda item: (item["teacher"].last_name, item["teacher"].first_name))
     return schedules
+
+
+def _teacher_stage_one_assignments_for_batch(batch: AssignmentBatch, teacher: Teacher) -> list[EssayAssignment]:
+    assignment_ids = _teacher_stage_one_assignment_ids_for_batch(batch, teacher.id)
+    if not assignment_ids:
+        return []
+    assignments = (
+        EssayAssignment.query.options(
+            joinedload(EssayAssignment.student),
+            joinedload(EssayAssignment.group),
+            joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
+        )
+        .filter(EssayAssignment.id.in_(assignment_ids))
+        .all()
+    )
+    assignments.sort(
+        key=lambda assignment: (
+            assignment.group.language if assignment.group else "",
+            assignment.group.name if assignment.group else "",
+            assignment.student.country if assignment.student else "",
+            assignment.student.id if assignment.student else 0,
+        )
+    )
+    return assignments
+
+
+def _build_teacher_reader_packet(teacher: Teacher, assignments: list[EssayAssignment]) -> tuple[BytesIO, list[int]]:
+    writer = PdfWriter()
+    double_sided = _packets_double_sided()
+    missing_files: list[int] = []
+    packet_group = SimpleNamespace(name="Individual packet", id="—")
+    essay_ids = [assignment.student.id for assignment in assignments if assignment.student]
+
+    title_reader = _create_teacher_title_page(teacher, packet_group, essay_ids)
+    writer.add_page(title_reader.pages[0])
+    if double_sided and assignments:
+        _add_blank_page(writer, title_reader.pages[0])
+
+    for assignment in assignments:
+        student = assignment.student
+        if not student:
+            continue
+        pdf_path = _essay_pdf_path(student)
+        if not pdf_path:
+            missing_files.append(student.id)
+            continue
+        try:
+            reader = PdfReader(str(pdf_path))
+        except Exception:
+            missing_files.append(student.id)
+            continue
+
+        overlay_reader = _create_essay_overlay_page(reader.pages[0], assignment.group, assignment)
+        first_page = reader.pages[0]
+        first_page.merge_page(overlay_reader.pages[0])
+        writer.add_page(first_page)
+        for page in reader.pages[1:]:
+            writer.add_page(page)
+
+        if double_sided and len(reader.pages) % 2 != 0:
+            _add_blank_page(writer, reader.pages[0])
+
+    output = BytesIO()
+    writer.write(output)
+    output.seek(0)
+    return output, missing_files
 
 
 @web_bp.route("/")
@@ -10938,6 +11398,7 @@ def admin_planner():
             "batches": batches,
             "active_batch": active_batch,
             "PlannerStatus": PlannerStatus,
+            "PlannerAlgorithm": PlannerAlgorithm,
             "is_htmx": is_htmx,
         }
         if not is_htmx:
@@ -10949,6 +11410,9 @@ def admin_planner():
             name=form.name.data.strip(),
             stage=Stage(form.stage.data),
             status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm(
+                form.planner_algorithm.data or PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value
+            ),
             notes=form.notes.data.strip() if form.notes.data else None,
         )
         db.session.add(batch)
@@ -10965,6 +11429,7 @@ def admin_planner():
         if is_htmx:
             fresh_form = AssignmentBatchForm()
             fresh_form.stage.data = Stage.STAGE_1.value
+            fresh_form.planner_algorithm.data = PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value
             return _render_planner_overview(fresh_form)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
@@ -10983,11 +11448,13 @@ def admin_planner_batch(batch_id: int):
     if not group_form.target_essay_load.data:
         group_form.target_essay_load.data = 5
     group_form.language.data = group_form.language.data or "English"
-    group_form.auto_generated.data = True
+    group_form.auto_generated.data = False
 
     member_form = ReadingGroupMemberForm()
     member_form.teacher_id.choices = _planner_teacher_choices(batch.stage)
     member_form.role.choices = [(role.value, role.name.title()) for role in GroupMemberRole]
+    if "active" not in request.form:
+        member_form.active.data = True
 
     groups = _load_batch_groups(batch)
     assigned_student_ids = {assignment.student_id for group in groups for assignment in group.assignments}
@@ -11058,6 +11525,14 @@ def admin_planner_batch(batch_id: int):
             available_teachers.append(teacher)
         available_teachers_map[group.id] = available_teachers
 
+    supplemental_reader_map, teacher_packet_entries = _supplemental_reader_context(batch, groups, teachers)
+    assignment_stage1_status_map = {
+        assignment.id: _compute_stage_one_status(assignment)
+        for group in groups
+        for assignment in group.assignments
+        if assignment.stage == Stage.STAGE_1
+    }
+
     template_name = "admin/partials/planner_batch_content.html" if is_htmx else "admin/planner/batch_detail.html"
     context = {
         "batch": batch,
@@ -11066,8 +11541,13 @@ def admin_planner_batch(batch_id: int):
         "member_form": member_form,
         "eligible_students_map": eligible_students_map,
         "available_teachers_map": available_teachers_map,
+        "supplemental_reader_map": supplemental_reader_map,
+        "teacher_packet_entries": teacher_packet_entries,
+        "assignment_stage1_status_map": assignment_stage1_status_map,
         "group_status_map": group_status_map,
         "PlannerStatus": PlannerStatus,
+        "PlannerAlgorithm": PlannerAlgorithm,
+        "planner_algorithm_choices": _planner_algorithm_choices(),
         "is_htmx": is_htmx,
     }
     if not is_htmx:
@@ -11076,11 +11556,47 @@ def admin_planner_batch(batch_id: int):
     return _render_htmx_template(template_name, **context)
 
 
+@web_bp.route("/admin/planner/batches/<int:batch_id>/algorithm", methods=["POST"])
+def admin_planner_update_algorithm(batch_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
+
+    algorithm_value = request.form.get("planner_algorithm")
+    try:
+        algorithm = PlannerAlgorithm(algorithm_value)
+    except Exception:
+        flash("Invalid planner algorithm.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    batch.planner_algorithm = algorithm
+    log_activity(
+        "planner_algorithm_updated",
+        f"Planner algorithm updated for batch {batch.name}",
+        object_type="assignment_batch",
+        object_id=batch.id,
+        details={"planner_algorithm": algorithm.value},
+    )
+    db.session.commit()
+    flash("Planner algorithm updated.", "success")
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
 @web_bp.route("/admin/planner/batches/<int:batch_id>/groups", methods=["POST"])
 def admin_planner_add_group(batch_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
 
     form = ReadingGroupForm()
     if form.validate_on_submit():
@@ -11121,6 +11637,9 @@ def admin_planner_toggle_lock(batch_id: int, group_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
     group.locked = not group.locked
     log_activity(
@@ -11142,6 +11661,9 @@ def admin_planner_delete_group(batch_id: int, group_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
     if group.assignments:
         flash("Group cannot be deleted while assignments exist.", "error")
@@ -11166,6 +11688,9 @@ def admin_planner_add_member(batch_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
 
     form = ReadingGroupMemberForm()
     form.teacher_id.choices = _planner_teacher_choices(batch.stage)
@@ -11229,6 +11754,9 @@ def admin_planner_remove_member(batch_id: int, member_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     member = (
         ReadingGroupMember.query.join(ReadingGroup)
         .filter(ReadingGroupMember.id == member_id, ReadingGroup.batch_id == batch.id)
@@ -11259,6 +11787,9 @@ def admin_planner_update_member_role(batch_id: int, group_id: int, member_id: in
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
 
     member = (
         ReadingGroupMember.query.join(ReadingGroup)
@@ -11319,6 +11850,9 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
     if group.locked:
         flash("Group is locked.", "error")
@@ -11392,18 +11926,105 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
+@web_bp.route(
+    "/admin/planner/batches/<int:batch_id>/groups/<int:group_id>/supplemental-readers",
+    methods=["POST"],
+)
+def admin_planner_assign_supplemental_reader(batch_id: int, group_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+    group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
+    if batch.stage != Stage.STAGE_1 or group.stage != Stage.STAGE_1:
+        flash("Supplemental readers are only supported for Stage 1 batches.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    teacher_id = request.form.get("teacher_id")
+    if not teacher_id:
+        flash("Select a teacher to assign.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+    try:
+        teacher_id_int = int(teacher_id)
+    except ValueError:
+        flash("Invalid teacher selection.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    teacher = db.session.get(Teacher, teacher_id_int)
+    if not teacher or teacher.is_absent or not teacher.declared_assessor_competence:
+        flash("Teacher is not available for assessment.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    workload = _teacher_stage_one_workload(batch, teacher)
+    if not workload.is_free:
+        flash(
+            f"{teacher.first_name} {teacher.last_name} still has "
+            f"{workload.pending_count} pending Stage 1 assignment"
+            f"{'s' if workload.pending_count != 1 else ''}.",
+            "error",
+        )
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    assignments = _supplemental_reader_assignments_for_group(group, teacher)
+    if not assignments:
+        flash("No underfilled essays in this group are eligible for that teacher.", "warning")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    created_assignment_ids: list[int] = []
+    for assignment in assignments:
+        db.session.add(
+            EssayAssignmentExtraReader(
+                assignment_id=assignment.id,
+                teacher_id=teacher.id,
+                stage=Stage.STAGE_1.value,
+            )
+        )
+        created_assignment_ids.append(assignment.id)
+
+    log_activity(
+        "stage1_supplemental_reader_assigned",
+        f"Assigned supplemental reader {teacher.id} to group {group.name}",
+        object_type="reading_group",
+        object_id=group.id,
+        details={
+            "batch_id": batch.id,
+            "teacher_id": teacher.id,
+            "assignment_ids": created_assignment_ids,
+        },
+    )
+    db.session.commit()
+    flash(
+        f"Assigned {teacher.first_name} {teacher.last_name} to "
+        f"{len(created_assignment_ids)} supplemental Stage 1 reading"
+        f"{'s' if len(created_assignment_ids) != 1 else ''}.",
+        "success",
+    )
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
 @web_bp.route("/admin/planner/batches/<int:batch_id>/assignments/<int:assignment_id>/remove", methods=["POST"])
 def admin_planner_remove_assignment(batch_id: int, assignment_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
 
     assignment = EssayAssignment.query.filter_by(id=assignment_id, batch_id=batch.id).first_or_404()
-    if batch.status == PlannerStatus.PUBLISHED:
-        flash("Cannot modify assignments on a published batch.", "error")
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     db.session.delete(assignment)
     log_activity(
@@ -11425,6 +12046,9 @@ def admin_planner_auto_generate(batch_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     summary = _auto_generate_groups_for_batch(batch)
     if "created" in summary:
         created_total = sum(summary["created"].values())
@@ -11432,7 +12056,18 @@ def admin_planner_auto_generate(batch_id: int):
         created_total = sum(
             count
             for key, count in summary.items()
-            if key not in {"removed", "backups", "shortfall", "matching_failed"} and isinstance(count, int)
+            if key
+            not in {
+                "removed",
+                "removed_assignments",
+                "backups",
+                "shortfall",
+                "matching_failed",
+                "teachers_assigned",
+                "underfilled",
+                "no_student_language_groups",
+            }
+            and isinstance(count, int)
         )
     log_activity(
         "groups_auto_generated",
@@ -11443,14 +12078,26 @@ def admin_planner_auto_generate(batch_id: int):
     )
     db.session.commit()
     removed_count = summary.get("removed", 0)
+    removed_assignment_count = summary.get("removed_assignments", 0)
     backups_count = summary.get("backups", 0)
     message = f"Generated {created_total} groups (removed {removed_count} auto-generated groups)."
+    if removed_assignment_count:
+        message += f" Removed {removed_assignment_count} assignment(s) from replaced groups."
     if backups_count:
         message += f" {backups_count} teacher(s) assigned as backups."
+    if summary.get("teachers_assigned") is not None:
+        message += f" {summary['teachers_assigned']} teacher(s) assigned as active readers."
     if summary.get("matching_failed"):
         flash("Unable to auto-generate groups for all teachers. Please adjust teacher availability or language coverage.", "error")
     else:
         flash(message, "success")
+        if summary.get("underfilled"):
+            flash(f"{summary['underfilled']} generated group(s) have fewer than four active teachers.", "warning")
+        if summary.get("no_student_language_groups"):
+            flash(
+                f"{summary['no_student_language_groups']} generated group(s) have no matching student essays yet.",
+                "warning",
+            )
         if summary.get("shortfall"):
             shortfall_items = ", ".join(f"{language}: {value}" for language, value in summary["shortfall"].items())
             flash(f"Not enough teachers in: {shortfall_items}. Some language coverage targets were reduced.", "warning")
@@ -11464,8 +12111,15 @@ def admin_planner_auto_assign(batch_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
     if not batch:
         abort(404)
+    guard_response = _published_batch_guard_response(batch)
+    if guard_response:
+        return guard_response
     assigned, skipped = _auto_assign_essays(batch)
-    metadata = {"assigned": assigned, "skipped": [student.id for student in skipped]}
+    metadata = {
+        "assigned": assigned,
+        "skipped": [student.id for student in skipped],
+        "planner_algorithm": _planner_algorithm_for_batch(batch).value,
+    }
     log_activity(
         "essays_auto_assigned",
         f"Auto-assigned essays for batch {batch.name}",
@@ -11525,9 +12179,23 @@ def admin_planner_publish(batch_id: int):
     if not batch:
         abort(404)
 
-    unresolved_groups = [group for group in batch.groups if len(group.members) < 4]
+    algorithm = _planner_algorithm_for_batch(batch)
+    unresolved_groups = []
+    for group in batch.groups:
+        active_count = sum(
+            1
+            for member in group.members
+            if member.active and member.teacher and not member.teacher.is_absent
+        )
+        if algorithm == PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS and active_count < 4:
+            unresolved_groups.append(group)
+        elif algorithm == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS and active_count == 0:
+            unresolved_groups.append(group)
     if unresolved_groups:
-        flash("All groups must have at least four members before publishing.", "error")
+        if algorithm == PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS:
+            flash("All groups must have at least four active teachers before publishing.", "error")
+        else:
+            flash("All groups must have at least one active teacher before publishing.", "error")
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
@@ -11562,6 +12230,7 @@ def admin_planner_publish(batch_id: int):
             "groups": len(batch.groups),
             "assignments": len(batch.assignments),
             "stage": batch.stage.value,
+            "planner_algorithm": algorithm.value,
         },
     )
     db.session.commit()
@@ -11622,6 +12291,30 @@ def admin_planner_export_teachers_pdf(batch_id: int):
         batch=batch,
         schedules=schedules,
     )
+
+
+@web_bp.route("/admin/planner/batches/<int:batch_id>/teachers/<int:teacher_id>/reader-packet.pdf")
+def admin_teacher_reader_packet(batch_id: int, teacher_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    teacher = db.session.get(Teacher, teacher_id)
+    if not batch or not teacher:
+        abort(404)
+
+    assignments = _teacher_stage_one_assignments_for_batch(batch, teacher)
+    if not assignments:
+        flash("No Stage 1 assignments found for this teacher in the selected batch.", "warning")
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    output, missing_files = _build_teacher_reader_packet(teacher, assignments)
+    if missing_files:
+        flash(
+            "Some essays are missing uploads: " + ", ".join(str(sid) for sid in sorted(set(missing_files))),
+            "warning",
+        )
+
+    filename_name = secure_filename(f"{teacher.last_name}-{teacher.first_name}") or f"teacher-{teacher.id}"
+    filename = f"{filename_name}-stage1-packet.pdf"
+    return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 @web_bp.route("/admin/planner/groups/<int:group_id>/reader-packet.pdf")

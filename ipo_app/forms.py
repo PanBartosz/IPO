@@ -28,6 +28,7 @@ from wtforms.validators import AnyOf
 from .models import (
     CommunicationAudience,
     GroupMemberRole,
+    PlannerAlgorithm,
     Stage,
     SurveyAudience,
     SurveyQuestionType,
@@ -319,6 +320,15 @@ class AssignmentBatchForm(FlaskForm):
         validators=[DataRequired()],
         choices=[(Stage.STAGE_1.value, "Stage 1"), (Stage.STAGE_2.value, "Stage 2")],
     )
+    planner_algorithm = SelectField(
+        "Planner algorithm",
+        validators=[Optional()],
+        choices=[
+            (PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value, "Strict 4 + backups"),
+            (PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS.value, "All assessors, no backups"),
+        ],
+        default=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value,
+    )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
     submit = SubmitField("Create batch")
 
@@ -328,7 +338,7 @@ class ReadingGroupForm(FlaskForm):
     language = SelectField("Language", validators=[DataRequired()], choices=LANGUAGE_CHOICES)
     target_essay_load = IntegerField("Target essays", validators=[Optional()])
     allow_same_country = BooleanField("Allow same-country readers")
-    auto_generated = BooleanField("Mark as auto-generated", default=True)
+    auto_generated = BooleanField("Mark as auto-generated", default=False)
     submit = SubmitField("Save group")
 
 

@@ -1,19 +1,31 @@
 <div id="planner-batch-content" data-preserve-scroll="true">
+  {% set current_algorithm = batch.planner_algorithm.value if batch.planner_algorithm else PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value %}
+  {% set batch_is_published = batch.status == PlannerStatus.PUBLISHED %}
   <div class="table-card table-card-wide">
     <div class="table-header">
       <h2>{{ batch.name }}</h2>
       <div class="table-actions">
         <span>Status: <strong>{{ batch.status.value.title() }}</strong></span>
+        <form method="post" action="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" class="planner-algorithm-form" hx-post="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="planner_algorithm">Algorithm</label>
+          <select name="planner_algorithm" id="planner_algorithm" {% if batch_is_published %}disabled{% endif %}>
+            {% for value, label in planner_algorithm_choices %}
+              <option value="{{ value }}" {% if value == current_algorithm %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Apply</button>
+        </form>
         <a class="button-link" href="{{ url_for('web.admin_planner') }}">Back to batches</a>
         <form method="post" action="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="button-link">Auto-generate groups</button>
+          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-generate groups</button>
         </form>
         <form method="post" action="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="button-link">Auto-assign essays</button>
+          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-assign essays</button>
         </form>
-        {% if batch.status == PlannerStatus.PUBLISHED %}
+        {% if batch_is_published %}
           <form method="post" action="{{ url_for('web.admin_planner_unpublish', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_unpublish', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="button-link danger">Unpublish</button>
@@ -30,10 +42,21 @@
     </div>
     <div class="batch-summary">
       <p><strong>Stage:</strong> {{ batch.stage.value.replace('_', ' ').title() }}</p>
+      <p><strong>Algorithm:</strong> {% if batch.planner_algorithm == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS %}All assessors, no backups{% else %}Strict 4 + backups{% endif %}</p>
       <p><strong>Groups:</strong> {{ batch.groups|length }}</p>
       <p><strong>Assignments:</strong> {{ batch.assignments|length }}</p>
       {% if batch.notes %}
         <p><strong>Notes:</strong> {{ batch.notes }}</p>
+      {% endif %}
+      {% if teacher_packet_entries %}
+        <div class="packet-link-list">
+          <strong>Individual packets:</strong>
+          {% for entry in teacher_packet_entries %}
+            <a class="button-link secondary" href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=entry.teacher.id) }}">
+              {{ entry.teacher.first_name }} {{ entry.teacher.last_name }} &middot; {{ entry.workload.assigned_count }}
+            </a>
+          {% endfor %}
+        </div>
       {% endif %}
     </div>
   </div>
@@ -45,39 +68,39 @@
         {{ group_form.hidden_tag() }}
         <div class="form-field">
           {{ group_form.name.label }}
-          {{ group_form.name() }}
+          {{ group_form.name(disabled=batch_is_published) }}
           {% for error in group_form.name.errors %}
             <div class="field-error">{{ error }}</div>
           {% endfor %}
         </div>
         <div class="form-field">
           {{ group_form.language.label }}
-          {{ group_form.language() }}
+          {{ group_form.language(disabled=batch_is_published) }}
           {% for error in group_form.language.errors %}
             <div class="field-error">{{ error }}</div>
           {% endfor %}
         </div>
         <div class="form-field">
           {{ group_form.target_essay_load.label }}
-          {{ group_form.target_essay_load() }}
+          {{ group_form.target_essay_load(disabled=batch_is_published) }}
           {% for error in group_form.target_essay_load.errors %}
             <div class="field-error">{{ error }}</div>
           {% endfor %}
         </div>
         <div class="form-field full-width">
           <label class="checkbox">
-            {{ group_form.allow_same_country() }}
+            {{ group_form.allow_same_country(disabled=batch_is_published) }}
             {{ group_form.allow_same_country.label.text }}
           </label>
         </div>
         <div class="form-field full-width">
           <label class="checkbox">
-            {{ group_form.auto_generated() }}
+            {{ group_form.auto_generated(disabled=batch_is_published) }}
             Auto-generated group
           </label>
         </div>
         <div class="form-actions">
-          {{ group_form.submit(class_="button") }}
+          {{ group_form.submit(class_="button", disabled=batch_is_published) }}
         </div>
       </form>
     </div>
@@ -88,14 +111,14 @@
         {{ member_form.hidden_tag() }}
         <div class="form-field">
           {{ member_form.teacher_id.label }}
-          {{ member_form.teacher_id() }}
+          {{ member_form.teacher_id(disabled=batch_is_published) }}
           {% for error in member_form.teacher_id.errors %}
             <div class="field-error">{{ error }}</div>
           {% endfor %}
         </div>
         <div class="form-field">
           <label for="group_id">Reading group</label>
-          <select name="group_id" id="group_id" required>
+          <select name="group_id" id="group_id" required {% if batch_is_published %}disabled{% endif %}>
             <option value="" disabled selected>Select group</option>
             {% for group in groups %}
               <option value="{{ group.id }}">{{ group.name }} &middot; {{ group.language }}</option>
@@ -104,16 +127,16 @@
         </div>
         <div class="form-field">
           {{ member_form.role.label }}
-          {{ member_form.role() }}
+          {{ member_form.role(disabled=batch_is_published) }}
         </div>
         <div class="form-field full-width">
           <label class="checkbox">
-            {{ member_form.active() }}
+            {{ member_form.active(disabled=batch_is_published) }}
             Active assignment
           </label>
         </div>
         <div class="form-actions">
-          {{ member_form.submit(class_="button") }}
+          {{ member_form.submit(class_="button", disabled=batch_is_published) }}
         </div>
       </form>
     </div>
@@ -132,28 +155,68 @@
           </div>
         </header>
         {% if status and status.needs_teachers %}
-          <p class="group-warning">Only {{ status.active_count }} active teacher{% if status.active_count != 1 %}s{% endif %}. Add {{ status.missing }} more to reach 4.</p>
-          <div class="group-assignments">
-            <h4>Add teacher</h4>
-            {% set available_teachers = available_teachers_map.get(group.id, []) %}
-            {% if available_teachers %}
-              <form method="post" action="{{ url_for('web.admin_planner_add_member', batch_id=batch.id) }}" class="form-inline" hx-post="{{ url_for('web.admin_planner_add_member', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
-                {{ member_form.csrf_token }}
-                <input type="hidden" name="group_id" value="{{ group.id }}">
-                <input type="hidden" name="role" value="{{ 'leader' if status.active_count == 0 else 'reader' }}">
-                <input type="hidden" name="active" value="y">
+          <p class="group-warning">
+            Only {{ status.active_count }} active teacher{% if status.active_count != 1 %}s{% endif %}.
+            Stage 1 target: 4 readings per essay.
+          </p>
+          {% if not batch_is_published %}
+            <div class="group-assignments">
+              <h4>Add teacher</h4>
+              {% set available_teachers = available_teachers_map.get(group.id, []) %}
+              {% if available_teachers %}
+                <form method="post" action="{{ url_for('web.admin_planner_add_member', batch_id=batch.id) }}" class="form-inline" hx-post="{{ url_for('web.admin_planner_add_member', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
+                  {{ member_form.csrf_token }}
+                  <input type="hidden" name="group_id" value="{{ group.id }}">
+                  <input type="hidden" name="role" value="{{ 'leader' if status.active_count == 0 else 'reader' }}">
+                  <input type="hidden" name="active" value="y">
+                  <select name="teacher_id" required>
+                    <option value="" disabled selected>Select teacher</option>
+                    {% for teacher in available_teachers %}
+                      <option value="{{ teacher.id }}">{{ teacher.first_name }} {{ teacher.last_name }} &middot; {{ teacher.country }} ({{ teacher.languages }}){% if teacher.veteran_level %} &middot; IPO veteran (Level {{ teacher.veteran_level }}){% endif %}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" class="button-link">Assign</button>
+                </form>
+              {% else %}
+                <p class="fine-print">No eligible teachers available for this language.</p>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endif %}
+        {% set supplemental = supplemental_reader_map.get(group.id) %}
+        {% if supplemental and supplemental.missing_slots %}
+          <div class="group-assignments supplemental-readers">
+            <h4>Supplemental readers</h4>
+            <p class="fine-print">
+              {{ supplemental.assignments_needing_readers }} essay{% if supplemental.assignments_needing_readers != 1 %}s{% endif %}
+              need {{ supplemental.missing_slots }} reader assignment{% if supplemental.missing_slots != 1 %}s{% endif %}.
+            </p>
+            {% if supplemental.candidates %}
+              <form
+                method="post"
+                action="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
+                class="form-inline"
+                hx-post="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
+                hx-target="#planner-batch-content"
+                hx-swap="outerHTML"
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <select name="teacher_id" required>
-                  <option value="" disabled selected>Select teacher</option>
-                  {% for teacher in available_teachers %}
-                    <option value="{{ teacher.id }}">{{ teacher.first_name }} {{ teacher.last_name }} &middot; {{ teacher.country }} ({{ teacher.languages }}){% if teacher.veteran_level %} &middot; IPO veteran (Level {{ teacher.veteran_level }}){% endif %}</option>
+                  <option value="" disabled selected>Select free assessor</option>
+                  {% for candidate in supplemental.candidates %}
+                    <option value="{{ candidate.teacher.id }}">
+                      {{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }} &middot; {{ candidate.teacher.country }}
+                      &middot; {{ candidate.eligible_count }} eligible essay{% if candidate.eligible_count != 1 %}s{% endif %}
+                      &middot; {{ candidate.workload.completed_count }}/{{ candidate.workload.assigned_count }} finished
+                    </option>
                   {% endfor %}
                 </select>
-                <button type="submit" class="button-link">Assign</button>
+                <button type="submit" class="button-link">Assign supplemental readings</button>
               </form>
             {% else %}
-              <p class="fine-print">No eligible teachers available for this language.</p>
+              <p class="fine-print">No free eligible assessors right now.</p>
             {% endif %}
-        </div>
+          </div>
         {% endif %}
         <ul class="group-members">
           {% for member in group.members %}
@@ -187,6 +250,16 @@
               </div>
               <div class="member-actions">
                 <div class="member-role-actions">
+                  {% if member.teacher %}
+                    <a
+                      class="pdf-icon-link"
+                      href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=member.teacher.id) }}"
+                      aria-label="Download PDF packet for {{ member.teacher.first_name }} {{ member.teacher.last_name }}"
+                      title="PDF packet"
+                    >
+                      <span aria-hidden="true">PDF</span>
+                    </a>
+                  {% endif %}
                   <span class="member-role-badge member-role-{{ member.role.value }}">{{ member.role.value.title() }}{% if not member.active %} &middot; inactive{% endif %}</span>
                   {% if member.role.value in ["leader", "reader"] %}
                     <form
@@ -199,7 +272,7 @@
                     >
                       {{ member_form.csrf_token }}
                       <input type="hidden" name="role" value="{{ 'reader' if member.role.value == 'leader' else 'leader' }}">
-                      <button type="submit" class="link-like">
+                      <button type="submit" class="link-like" {% if batch_is_published %}disabled{% endif %}>
                         {% if member.role.value == "leader" %}Make reader{% else %}Make leader{% endif %}
                       </button>
                     </form>
@@ -207,7 +280,7 @@
                 </div>
                 <form method="post" action="{{ url_for('web.admin_planner_remove_member', batch_id=batch.id, member_id=member.id) }}" onsubmit="return confirm('Remove this member?');" hx-post="{{ url_for('web.admin_planner_remove_member', batch_id=batch.id, member_id=member.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="link-like">Remove</button>
+                  <button type="submit" class="link-like" {% if batch_is_published %}disabled{% endif %}>Remove</button>
                 </form>
               </div>
             </li>
@@ -223,6 +296,7 @@
                   <th>Student</th>
                   <th>Country</th>
                   <th>Language</th>
+                  <th>Readers</th>
                   <th>Essay status</th>
                   <th>Presence</th>
                   <th></th>
@@ -235,6 +309,20 @@
                     <td>{{ assignment.student.first_name }} {{ assignment.student.last_name }}</td>
                     <td>{{ assignment.student.country }}</td>
                     <td>{{ assignment.student.essay_language }}</td>
+                    {% set assignment_status = assignment_stage1_status_map.get(assignment.id) %}
+                    <td>
+                      {% if assignment_status and assignment_status.missing_reader_assignments %}
+                        <span class="status-tag warning">
+                          {{ assignment_status.assigned_readers }}/{{ assignment_status.required_readers }}
+                        </span>
+                      {% elif assignment_status %}
+                        <span class="status-tag success">
+                          {{ assignment_status.assigned_readers }}/{{ assignment_status.required_readers }}
+                        </span>
+                      {% else %}
+                        &mdash;
+                      {% endif %}
+                    </td>
                     <td>
                       {% if assignment.student.essay_finalized %}
                         <span class="status-tag success">Finished</span>
@@ -248,7 +336,7 @@
                     <td class="table-actions">
                       <form method="post" action="{{ url_for('web.admin_planner_remove_assignment', batch_id=batch.id, assignment_id=assignment.id) }}" onsubmit="return confirm('Remove this assignment?');" hx-post="{{ url_for('web.admin_planner_remove_assignment', batch_id=batch.id, assignment_id=assignment.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="button-link danger">Remove</button>
+                        <button type="submit" class="button-link danger" {% if batch_is_published %}disabled{% endif %}>Remove</button>
                       </form>
                     </td>
                   </tr>
@@ -262,7 +350,9 @@
         <div class="group-assignments">
           <h4>Assign essay</h4>
           {% set eligible = eligible_students_map.get(group.id, []) %}
-          {% if group.locked %}
+          {% if batch_is_published %}
+            <p class="fine-print">Batch is published.</p>
+          {% elif group.locked %}
             <p class="fine-print">Group is locked.</p>
           {% elif eligible %}
             <form method="post" action="{{ url_for('web.admin_planner_assign_manual', batch_id=batch.id, group_id=group.id) }}" class="form-inline" hx-post="{{ url_for('web.admin_planner_assign_manual', batch_id=batch.id, group_id=group.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
@@ -283,11 +373,11 @@
           <a class="button-link" href="{{ url_for('web.admin_group_reader_packet', group_id=group.id) }}">Teacher packets PDF</a>
           <form method="post" action="{{ url_for('web.admin_planner_toggle_lock', batch_id=batch.id, group_id=group.id) }}" hx-post="{{ url_for('web.admin_planner_toggle_lock', batch_id=batch.id, group_id=group.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="button-link">{{ 'Unlock' if group.locked else 'Lock' }}</button>
+            <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>{{ 'Unlock' if group.locked else 'Lock' }}</button>
           </form>
           <form method="post" action="{{ url_for('web.admin_planner_delete_group', batch_id=batch.id, group_id=group.id) }}" onsubmit="return confirm('Delete this group?');" hx-post="{{ url_for('web.admin_planner_delete_group', batch_id=batch.id, group_id=group.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="button-link danger">Delete</button>
+            <button type="submit" class="button-link danger" {% if batch_is_published %}disabled{% endif %}>Delete</button>
           </form>
         </footer>
       </article>

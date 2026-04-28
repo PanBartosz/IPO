@@ -1391,6 +1391,37 @@ textarea {
   gap: 0.5rem;
 }
 
+.pdf-icon-link {
+  display: inline-grid;
+  place-items: center;
+  width: 2.45rem;
+  height: 1.75rem;
+  border-radius: 6px;
+  border: 1px solid rgba(185, 28, 28, 0.45);
+  background: #fff1f2;
+  color: #b91c1c;
+  font-family: var(--font-heading);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.pdf-icon-link:hover,
+.pdf-icon-link:focus {
+  background: #fee2e2;
+  border-color: #b91c1c;
+  color: #991b1b;
+}
+
+.pdf-icon-link:focus {
+  outline: 2px solid rgba(185, 28, 28, 0.28);
+  outline-offset: 2px;
+}
+
 .member-role-badge {
   display: inline-flex;
   align-items: center;
@@ -1510,6 +1541,12 @@ textarea {
   color: #dc2626;
   cursor: pointer;
   font-weight: 600;
+}
+
+.link-like:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 .icon-button {
@@ -2426,6 +2463,31 @@ body.modal-open {
 
 .batch-summary p {
   margin: 0.3rem 0;
+}
+
+.packet-link-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.planner-algorithm-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.planner-algorithm-form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.planner-algorithm-form select {
+  min-width: 12rem;
+  padding: 0.35rem 0.55rem;
 }
 
 .status-tag {

@@ -308,6 +308,8 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
 
         base_a = _create_teacher("extra-base-a")
         base_b = _create_teacher("extra-base-b")
+        base_c = _create_teacher("extra-base-c")
+        base_d = _create_teacher("extra-base-d")
         extra_a = _create_teacher("extra-assigned-a")
         extra_b = _create_teacher("extra-assigned-b")
         extra_c = _create_teacher("extra-resolved")
@@ -315,32 +317,38 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
         needs_assignment_student = _create_student("extra-needs-assignment", client.application)
         needs_assignment_id = _create_stage1_assignment(
             student_id=needs_assignment_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_a, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
+        _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         db.session.get(EssayAssignment, needs_assignment_id).needs_additional_reading = True
 
         awaiting_student = _create_student("extra-awaiting-score", client.application)
         awaiting_id = _create_stage1_assignment(
             student_id=awaiting_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_a, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
+        _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=extra_a)
         db.session.get(EssayAssignment, awaiting_id).needs_additional_reading = True
 
         review_student = _create_student("extra-review-spread", client.application)
         review_id = _create_stage1_assignment(
             student_id=review_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_a, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
+        _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=review_id, teacher_id=extra_b)
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=extra_b, stage=Stage.STAGE_1, score=9)
         db.session.get(EssayAssignment, review_id).needs_additional_reading = True
@@ -348,11 +356,13 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
         resolved_student = _create_student("extra-resolved-student", client.application)
         resolved_id = _create_stage1_assignment(
             student_id=resolved_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=resolved_id, student_id=resolved_student, teacher_id=base_a, stage=Stage.STAGE_1, score=7)
         _add_score(assignment_id=resolved_id, student_id=resolved_student, teacher_id=base_b, stage=Stage.STAGE_1, score=8)
+        _add_score(assignment_id=resolved_id, student_id=resolved_student, teacher_id=base_c, stage=Stage.STAGE_1, score=7)
+        _add_score(assignment_id=resolved_id, student_id=resolved_student, teacher_id=base_d, stage=Stage.STAGE_1, score=8)
         _add_stage1_extra_reader(assignment_id=resolved_id, teacher_id=extra_c)
         _add_score(assignment_id=resolved_id, student_id=resolved_student, teacher_id=extra_c, stage=Stage.STAGE_1, score=7.5)
         db.session.commit()
@@ -382,26 +392,32 @@ def test_stage1_extra_reader_filters_limit_overview_rows(client):
 
         base_a = _create_teacher("filter-base-a")
         base_b = _create_teacher("filter-base-b")
+        base_c = _create_teacher("filter-base-c")
+        base_d = _create_teacher("filter-base-d")
         extra_reader = _create_teacher("filter-extra-reader")
 
         needs_assignment_student = _create_student("filter-needs-assignment", client.application)
         needs_assignment_id = _create_stage1_assignment(
             student_id=needs_assignment_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_a, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
+        _add_score(assignment_id=needs_assignment_id, student_id=needs_assignment_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         db.session.get(EssayAssignment, needs_assignment_id).needs_additional_reading = True
 
         awaiting_student = _create_student("filter-awaiting-score", client.application)
         awaiting_id = _create_stage1_assignment(
             student_id=awaiting_student,
-            reader_ids=[base_a, base_b],
+            reader_ids=[base_a, base_b, base_c, base_d],
             batch_id=batch.id,
         )
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_a, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
+        _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=extra_reader)
         db.session.get(EssayAssignment, awaiting_id).needs_additional_reading = True
         db.session.commit()

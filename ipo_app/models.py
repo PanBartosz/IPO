@@ -463,6 +463,11 @@ class PlannerStatus(enum.StrEnum):
     PUBLISHED = "published"
 
 
+class PlannerAlgorithm(enum.StrEnum):
+    STRICT_FOUR_WITH_BACKUPS = "strict_four_with_backups"
+    ALL_ASSESSORS_NO_BACKUPS = "all_assessors_no_backups"
+
+
 class GroupMemberRole(enum.StrEnum):
     READER = "reader"
     BACKUP = "backup"
@@ -515,6 +520,11 @@ class AssignmentBatch(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     stage = db.Column(db.Enum(Stage), nullable=False, default=Stage.STAGE_1)
     status = db.Column(db.Enum(PlannerStatus), nullable=False, default=PlannerStatus.DRAFT)
+    planner_algorithm = db.Column(
+        db.Enum(PlannerAlgorithm),
+        nullable=False,
+        default=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
+    )
     name = db.Column(db.String(120), nullable=False)
     notes = db.Column(db.Text)
     created_by = db.Column(db.String(120))
