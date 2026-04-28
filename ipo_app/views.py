@@ -2971,20 +2971,15 @@ def _supplemental_reader_context(
     batch: AssignmentBatch,
     groups: list[ReadingGroup],
     teachers: list[Teacher],
-) -> tuple[dict[int, SimpleNamespace], list[SimpleNamespace]]:
+) -> dict[int, SimpleNamespace]:
     workload_map = {teacher.id: _teacher_stage_one_workload(batch, teacher) for teacher in teachers}
-    teacher_packet_entries = [
-        SimpleNamespace(teacher=teacher, workload=workload)
-        for teacher in teachers
-        for workload in [workload_map.get(teacher.id)]
-        if workload and workload.assigned_count > 0
-    ]
-    teacher_packet_entries.sort(key=lambda entry: (entry.teacher.last_name, entry.teacher.first_name, entry.teacher.id))
 
     group_map: dict[int, SimpleNamespace] = {}
     for group in groups:
         missing_slots = 0
         assignments_needing_readers = 0
+        assigned_supplemental_counts: dict[int, int] = defaultdict(int)
+        assigned_supplemental_teachers: dict[int, Teacher] = {}
         for assignment in group.assignments:
             if assignment.stage != Stage.STAGE_1:
                 continue
@@ -2992,6 +2987,27 @@ def _supplemental_reader_context(
             if status.missing_reader_assignments > 0:
                 assignments_needing_readers += 1
                 missing_slots += status.missing_reader_assignments
+            for assessor in _stage_assessors(assignment, Stage.STAGE_1, include_group=True):
+                if not assessor.is_extra:
+                    continue
+                assigned_supplemental_counts[assessor.teacher_id] += 1
+                assigned_supplemental_teachers[assessor.teacher_id] = assessor.teacher
+
+        assigned_readers: list[SimpleNamespace] = []
+        for teacher_id, assignment_count in assigned_supplemental_counts.items():
+            teacher = assigned_supplemental_teachers[teacher_id]
+            workload = workload_map.get(teacher.id)
+            if not workload:
+                workload = _teacher_stage_one_workload(batch, teacher)
+                workload_map[teacher.id] = workload
+            assigned_readers.append(
+                SimpleNamespace(
+                    teacher=teacher,
+                    assignment_count=assignment_count,
+                    workload=workload,
+                )
+            )
+        assigned_readers.sort(key=lambda entry: (entry.teacher.last_name, entry.teacher.first_name, entry.teacher.id))
 
         candidates: list[SimpleNamespace] = []
         if missing_slots:
@@ -3023,10 +3039,11 @@ def _supplemental_reader_context(
         group_map[group.id] = SimpleNamespace(
             missing_slots=missing_slots,
             assignments_needing_readers=assignments_needing_readers,
+            assigned_readers=assigned_readers,
             candidates=candidates,
         )
 
-    return group_map, teacher_packet_entries
+    return group_map
 
 
 def _planner_algorithm_for_batch(batch: AssignmentBatch) -> PlannerAlgorithm:
@@ -11525,7 +11542,7 @@ def admin_planner_batch(batch_id: int):
             available_teachers.append(teacher)
         available_teachers_map[group.id] = available_teachers
 
-    supplemental_reader_map, teacher_packet_entries = _supplemental_reader_context(batch, groups, teachers)
+    supplemental_reader_map = _supplemental_reader_context(batch, groups, teachers)
     assignment_stage1_status_map = {
         assignment.id: _compute_stage_one_status(assignment)
         for group in groups
@@ -11542,7 +11559,6 @@ def admin_planner_batch(batch_id: int):
         "eligible_students_map": eligible_students_map,
         "available_teachers_map": available_teachers_map,
         "supplemental_reader_map": supplemental_reader_map,
-        "teacher_packet_entries": teacher_packet_entries,
         "assignment_stage1_status_map": assignment_stage1_status_map,
         "group_status_map": group_status_map,
         "PlannerStatus": PlannerStatus,

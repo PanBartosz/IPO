@@ -48,16 +48,6 @@
       {% if batch.notes %}
         <p><strong>Notes:</strong> {{ batch.notes }}</p>
       {% endif %}
-      {% if teacher_packet_entries %}
-        <div class="packet-link-list">
-          <strong>Individual packets:</strong>
-          {% for entry in teacher_packet_entries %}
-            <a class="button-link secondary" href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=entry.teacher.id) }}">
-              {{ entry.teacher.first_name }} {{ entry.teacher.last_name }} &middot; {{ entry.workload.assigned_count }}
-            </a>
-          {% endfor %}
-        </div>
-      {% endif %}
     </div>
   </div>
 
@@ -184,13 +174,37 @@
           {% endif %}
         {% endif %}
         {% set supplemental = supplemental_reader_map.get(group.id) %}
-        {% if supplemental and supplemental.missing_slots %}
+        {% if supplemental and (supplemental.assigned_readers or supplemental.missing_slots) %}
           <div class="group-assignments supplemental-readers">
             <h4>Supplemental readers</h4>
-            <p class="fine-print">
-              {{ supplemental.assignments_needing_readers }} essay{% if supplemental.assignments_needing_readers != 1 %}s{% endif %}
-              need {{ supplemental.missing_slots }} reader assignment{% if supplemental.missing_slots != 1 %}s{% endif %}.
-            </p>
+            {% if supplemental.assigned_readers %}
+              <ul class="supplemental-reader-list">
+                {% for reader in supplemental.assigned_readers %}
+                  <li>
+                    <div>
+                      <strong>{{ reader.teacher.first_name }} {{ reader.teacher.last_name }}</strong>
+                      <span class="fine-print">
+                        Supplemental &middot; {{ reader.assignment_count }} essay{% if reader.assignment_count != 1 %}s{% endif %}
+                      </span>
+                    </div>
+                    <a
+                      class="pdf-icon-link"
+                      href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=reader.teacher.id) }}"
+                      aria-label="Download PDF packet for {{ reader.teacher.first_name }} {{ reader.teacher.last_name }}"
+                      title="PDF packet"
+                    >
+                      <span aria-hidden="true">PDF</span>
+                    </a>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if supplemental.missing_slots %}
+              <p class="fine-print">
+                {{ supplemental.assignments_needing_readers }} essay{% if supplemental.assignments_needing_readers != 1 %}s{% endif %}
+                need {{ supplemental.missing_slots }} reader assignment{% if supplemental.missing_slots != 1 %}s{% endif %}.
+              </p>
+            {% endif %}
             {% if supplemental.candidates %}
               <form
                 method="post"
@@ -213,7 +227,7 @@
                 </select>
                 <button type="submit" class="button-link">Assign supplemental readings</button>
               </form>
-            {% else %}
+            {% elif supplemental.missing_slots %}
               <p class="fine-print">No free eligible assessors right now.</p>
             {% endif %}
           </div>

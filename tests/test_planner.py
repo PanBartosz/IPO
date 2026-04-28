@@ -679,12 +679,28 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
         )
         packet_teacher = _create_assessor(401, country="Packet Country")
         other_teacher = _create_assessor(402, country="Other Country")
+        other_teacher_2 = _create_assessor(403, country="Other Country 2")
+        other_teacher_3 = _create_assessor(404, country="Other Country 3")
         primary_student = _create_student(401, country="Primary Country")
         supplemental_student = _create_student(402, country="Supplemental Country")
-        db.session.add_all([batch, group_a, group_b, packet_teacher, other_teacher, primary_student, supplemental_student])
+        db.session.add_all(
+            [
+                batch,
+                group_a,
+                group_b,
+                packet_teacher,
+                other_teacher,
+                other_teacher_2,
+                other_teacher_3,
+                primary_student,
+                supplemental_student,
+            ]
+        )
         db.session.flush()
         _add_reader(group_a, packet_teacher, role=GroupMemberRole.LEADER)
         _add_reader(group_b, other_teacher, role=GroupMemberRole.LEADER)
+        _add_reader(group_b, other_teacher_2)
+        _add_reader(group_b, other_teacher_3)
         primary_assignment = EssayAssignment(
             student_id=primary_student.id,
             group_id=group_a.id,
@@ -728,6 +744,9 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert 'class="pdf-icon-link"' in planner_html
     assert packet_url in planner_html
     assert "Download PDF packet for Teacher401 Assessor401" in planner_html
+    assert "Individual packets:" not in planner_html
+    assert "supplemental-reader-list" in planner_html
+    assert "Supplemental &middot; 1 essay" in planner_html
 
     response = client.get(
         packet_url,
