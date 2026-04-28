@@ -174,64 +174,6 @@
           {% endif %}
         {% endif %}
         {% set supplemental = supplemental_reader_map.get(group.id) %}
-        {% if supplemental and (supplemental.assigned_readers or supplemental.missing_slots) %}
-          <div class="group-assignments supplemental-readers">
-            <h4>Supplemental readers</h4>
-            {% if supplemental.assigned_readers %}
-              <ul class="supplemental-reader-list">
-                {% for reader in supplemental.assigned_readers %}
-                  <li>
-                    <div>
-                      <strong>{{ reader.teacher.first_name }} {{ reader.teacher.last_name }}</strong>
-                      <span class="fine-print">
-                        Supplemental &middot; {{ reader.assignment_count }} essay{% if reader.assignment_count != 1 %}s{% endif %}
-                      </span>
-                    </div>
-                    <a
-                      class="pdf-icon-link"
-                      href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=reader.teacher.id) }}"
-                      aria-label="Download PDF packet for {{ reader.teacher.first_name }} {{ reader.teacher.last_name }}"
-                      title="PDF packet"
-                    >
-                      <span aria-hidden="true">PDF</span>
-                    </a>
-                  </li>
-                {% endfor %}
-              </ul>
-            {% endif %}
-            {% if supplemental.missing_slots %}
-              <p class="fine-print">
-                {{ supplemental.assignments_needing_readers }} essay{% if supplemental.assignments_needing_readers != 1 %}s{% endif %}
-                need {{ supplemental.missing_slots }} reader assignment{% if supplemental.missing_slots != 1 %}s{% endif %}.
-              </p>
-            {% endif %}
-            {% if supplemental.candidates %}
-              <form
-                method="post"
-                action="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
-                class="form-inline"
-                hx-post="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
-                hx-target="#planner-batch-content"
-                hx-swap="outerHTML"
-              >
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <select name="teacher_id" required>
-                  <option value="" disabled selected>Select free assessor</option>
-                  {% for candidate in supplemental.candidates %}
-                    <option value="{{ candidate.teacher.id }}">
-                      {{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }} &middot; {{ candidate.teacher.country }}
-                      &middot; {{ candidate.eligible_count }} eligible essay{% if candidate.eligible_count != 1 %}s{% endif %}
-                      &middot; {{ candidate.workload.completed_count }}/{{ candidate.workload.assigned_count }} finished
-                    </option>
-                  {% endfor %}
-                </select>
-                <button type="submit" class="button-link">Assign supplemental readings</button>
-              </form>
-            {% elif supplemental.missing_slots %}
-              <p class="fine-print">No free eligible assessors right now.</p>
-            {% endif %}
-          </div>
-        {% endif %}
         <ul class="group-members">
           {% for member in group.members %}
             <li>
@@ -300,6 +242,78 @@
             </li>
           {% endfor %}
         </ul>
+        {% if supplemental and (supplemental.assigned_readers or supplemental.missing_slots) %}
+          <div class="group-assignments supplemental-readers">
+            <h4>Supplemental readers</h4>
+            {% if supplemental.assigned_readers %}
+              <ul class="supplemental-reader-list">
+                {% for reader in supplemental.assigned_readers %}
+                  <li>
+                    <div>
+                      <strong>{{ reader.teacher.first_name }} {{ reader.teacher.last_name }}</strong>
+                      <span class="fine-print">
+                        Supplemental &middot; {{ reader.assignment_count }} essay{% if reader.assignment_count != 1 %}s{% endif %}
+                      </span>
+                    </div>
+                    <div class="supplemental-reader-actions">
+                      <a
+                        class="pdf-icon-link"
+                        href="{{ url_for('web.admin_teacher_reader_packet', batch_id=batch.id, teacher_id=reader.teacher.id) }}"
+                        aria-label="Download PDF packet for {{ reader.teacher.first_name }} {{ reader.teacher.last_name }}"
+                        title="PDF packet"
+                      >
+                        <span aria-hidden="true">PDF</span>
+                      </a>
+                      <form
+                        method="post"
+                        action="{{ url_for('web.admin_planner_remove_supplemental_reader', batch_id=batch.id, group_id=group.id, teacher_id=reader.teacher.id) }}"
+                        class="inline-form"
+                        onsubmit="return confirm('Remove this supplemental reader from this group? Any saved scores for these supplemental readings will also be removed.');"
+                        hx-post="{{ url_for('web.admin_planner_remove_supplemental_reader', batch_id=batch.id, group_id=group.id, teacher_id=reader.teacher.id) }}"
+                        hx-target="#planner-batch-content"
+                        hx-swap="outerHTML"
+                      >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="link-like supplemental-remove-link">Remove</button>
+                      </form>
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if supplemental.missing_slots %}
+              <p class="fine-print">
+                {{ supplemental.assignments_needing_readers }} essay{% if supplemental.assignments_needing_readers != 1 %}s{% endif %}
+                need {{ supplemental.missing_slots }} reader assignment{% if supplemental.missing_slots != 1 %}s{% endif %}.
+              </p>
+            {% endif %}
+            {% if supplemental.candidates %}
+              <form
+                method="post"
+                action="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
+                class="form-inline"
+                hx-post="{{ url_for('web.admin_planner_assign_supplemental_reader', batch_id=batch.id, group_id=group.id) }}"
+                hx-target="#planner-batch-content"
+                hx-swap="outerHTML"
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <select name="teacher_id" required>
+                  <option value="" disabled selected>Select free assessor</option>
+                  {% for candidate in supplemental.candidates %}
+                    <option value="{{ candidate.teacher.id }}">
+                      {{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }} &middot; {{ candidate.teacher.country }}
+                      &middot; {{ candidate.eligible_count }} eligible essay{% if candidate.eligible_count != 1 %}s{% endif %}
+                      &middot; {{ candidate.workload.completed_count }}/{{ candidate.workload.assigned_count }} finished
+                    </option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="button-link">Assign supplemental readings</button>
+              </form>
+            {% elif supplemental.missing_slots %}
+              <p class="fine-print">No free eligible assessors right now.</p>
+            {% endif %}
+          </div>
+        {% endif %}
         <div class="group-assignments">
           <h4>Assigned essays</h4>
           {% if group.assignments %}

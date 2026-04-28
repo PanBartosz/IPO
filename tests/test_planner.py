@@ -655,6 +655,141 @@ def test_supplemental_reader_route_blocks_teacher_with_pending_stage1_work(clien
         assert EssayAssignmentExtraReader.query.filter_by(teacher_id=busy_teacher_id).count() == 0
 
 
+def test_planner_can_remove_supplemental_reader_from_published_group(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Remove Supplemental Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        target_group = ReadingGroup(
+            name="Target Remove",
+            language="English",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        other_group = ReadingGroup(
+            name="Other Remove",
+            language="English",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        core_reader = _create_assessor(351, country="Core Country")
+        supplemental_teacher = _create_assessor(352, country="Supplemental Country")
+        target_student_a = _create_student(351, country="Target A")
+        target_student_b = _create_student(352, country="Target B")
+        other_student = _create_student(353, country="Other Target")
+        db.session.add_all(
+            [
+                batch,
+                target_group,
+                other_group,
+                core_reader,
+                supplemental_teacher,
+                target_student_a,
+                target_student_b,
+                other_student,
+            ]
+        )
+        db.session.flush()
+        _add_reader(target_group, core_reader, role=GroupMemberRole.LEADER)
+        target_assignment_a = EssayAssignment(
+            student_id=target_student_a.id,
+            group_id=target_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        target_assignment_b = EssayAssignment(
+            student_id=target_student_b.id,
+            group_id=target_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        other_assignment = EssayAssignment(
+            student_id=other_student.id,
+            group_id=other_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add_all([target_assignment_a, target_assignment_b, other_assignment])
+        db.session.flush()
+        db.session.add_all(
+            [
+                EssayAssignmentExtraReader(
+                    assignment_id=target_assignment_a.id,
+                    teacher_id=supplemental_teacher.id,
+                    stage=Stage.STAGE_1.value,
+                ),
+                EssayAssignmentExtraReader(
+                    assignment_id=target_assignment_b.id,
+                    teacher_id=supplemental_teacher.id,
+                    stage=Stage.STAGE_1.value,
+                ),
+                EssayAssignmentExtraReader(
+                    assignment_id=other_assignment.id,
+                    teacher_id=supplemental_teacher.id,
+                    stage=Stage.STAGE_1.value,
+                ),
+            ]
+        )
+        _add_stage1_score(target_assignment_a, supplemental_teacher, 8)
+        _add_stage1_score(other_assignment, supplemental_teacher, 9)
+        db.session.commit()
+        batch_id = batch.id
+        target_group_id = target_group.id
+        supplemental_teacher_id = supplemental_teacher.id
+        target_assignment_ids = {target_assignment_a.id, target_assignment_b.id}
+        other_assignment_id = other_assignment.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        (
+            f"/admin/planner/batches/{batch_id}/groups/{target_group_id}"
+            f"/supplemental-readers/{supplemental_teacher_id}/remove"
+        ),
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Removed Teacher352 Assessor352 from 2 supplemental Stage 1 readings." in response.get_data(as_text=True)
+    with client.application.app_context():
+        removed_extra_rows = (
+            EssayAssignmentExtraReader.query
+            .filter(
+                EssayAssignmentExtraReader.assignment_id.in_(target_assignment_ids),
+                EssayAssignmentExtraReader.teacher_id == supplemental_teacher_id,
+                EssayAssignmentExtraReader.stage == Stage.STAGE_1.value,
+            )
+            .count()
+        )
+        assert removed_extra_rows == 0
+        assert not EssayScore.query.filter(
+            EssayScore.assignment_id.in_(target_assignment_ids),
+            EssayScore.teacher_id == supplemental_teacher_id,
+            EssayScore.stage == Stage.STAGE_1,
+        ).first()
+        assert EssayAssignmentExtraReader.query.filter_by(
+            assignment_id=other_assignment_id,
+            teacher_id=supplemental_teacher_id,
+            stage=Stage.STAGE_1.value,
+        ).first()
+        assert EssayScore.query.filter_by(
+            assignment_id=other_assignment_id,
+            teacher_id=supplemental_teacher_id,
+            stage=Stage.STAGE_1,
+        ).first()
+
+
 def test_individual_teacher_packet_includes_group_and_supplemental_assignments(client):
     with client.application.app_context():
         batch = AssignmentBatch(
@@ -733,6 +868,7 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
         db.session.commit()
         batch_id = batch.id
         packet_teacher_id = packet_teacher.id
+        group_b_id = group_b.id
 
     with client.session_transaction() as session:
         session["admin_user"] = "admin"
@@ -741,12 +877,18 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert planner_page.status_code == 200
     planner_html = planner_page.get_data(as_text=True)
     packet_url = f"/admin/planner/batches/{batch_id}/teachers/{packet_teacher_id}/reader-packet.pdf"
+    remove_url = (
+        f"/admin/planner/batches/{batch_id}/groups/{group_b_id}"
+        f"/supplemental-readers/{packet_teacher_id}/remove"
+    )
     assert 'class="pdf-icon-link"' in planner_html
     assert packet_url in planner_html
+    assert remove_url in planner_html
     assert "Download PDF packet for Teacher401 Assessor401" in planner_html
     assert "Individual packets:" not in planner_html
     assert "supplemental-reader-list" in planner_html
     assert "Supplemental &middot; 1 essay" in planner_html
+    assert planner_html.index("Teacher402 Assessor402") < planner_html.index("supplemental-reader-list")
 
     response = client.get(
         packet_url,

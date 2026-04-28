@@ -1373,6 +1373,22 @@ textarea {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.supplemental-reader-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+}
+
+.supplemental-remove-link {
+  color: #b91c1c;
+}
+
+.supplemental-remove-link:hover,
+.supplemental-remove-link:focus {
+  color: #991b1b;
+}
+
 .group-member-details {
   display: flex;
   flex-direction: column;

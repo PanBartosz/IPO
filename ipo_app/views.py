@@ -12031,6 +12031,79 @@ def admin_planner_assign_supplemental_reader(batch_id: int, group_id: int):
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
 
+@web_bp.route(
+    "/admin/planner/batches/<int:batch_id>/groups/<int:group_id>/supplemental-readers/<int:teacher_id>/remove",
+    methods=["POST"],
+)
+def admin_planner_remove_supplemental_reader(batch_id: int, group_id: int, teacher_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+    group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
+    if batch.stage != Stage.STAGE_1 or group.stage != Stage.STAGE_1:
+        flash("Supplemental readers are only supported for Stage 1 batches.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    extra_rows = (
+        EssayAssignmentExtraReader.query
+        .join(EssayAssignment, EssayAssignment.id == EssayAssignmentExtraReader.assignment_id)
+        .filter(
+            EssayAssignment.batch_id == batch.id,
+            EssayAssignment.group_id == group.id,
+            EssayAssignment.stage == Stage.STAGE_1,
+            EssayAssignmentExtraReader.teacher_id == teacher_id,
+            EssayAssignmentExtraReader.stage == Stage.STAGE_1.value,
+        )
+        .all()
+    )
+    if not extra_rows:
+        flash("Supplemental reader assignment not found for this group.", "warning")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    assignment_ids = [row.assignment_id for row in extra_rows]
+    score_records = (
+        EssayScore.query.filter(
+            EssayScore.assignment_id.in_(assignment_ids),
+            EssayScore.teacher_id == teacher_id,
+            EssayScore.stage == Stage.STAGE_1,
+        )
+        .all()
+    )
+    score_ids = [score.id for score in score_records]
+    for score in score_records:
+        db.session.delete(score)
+    for extra in extra_rows:
+        db.session.delete(extra)
+
+    teacher = db.session.get(Teacher, teacher_id)
+    teacher_label = f"{teacher.first_name} {teacher.last_name}" if teacher else f"teacher {teacher_id}"
+    log_activity(
+        "stage1_supplemental_reader_removed",
+        f"Removed supplemental reader {teacher_id} from group {group.name}",
+        object_type="reading_group",
+        object_id=group.id,
+        details={
+            "batch_id": batch.id,
+            "teacher_id": teacher_id,
+            "assignment_ids": assignment_ids,
+            "score_ids": score_ids,
+        },
+    )
+    db.session.commit()
+    flash(
+        f"Removed {teacher_label} from {len(assignment_ids)} supplemental Stage 1 reading"
+        f"{'s' if len(assignment_ids) != 1 else ''}.",
+        "success",
+    )
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
 @web_bp.route("/admin/planner/batches/<int:batch_id>/assignments/<int:assignment_id>/remove", methods=["POST"])
 def admin_planner_remove_assignment(batch_id: int, assignment_id: int):
     batch = db.session.get(AssignmentBatch, batch_id)
