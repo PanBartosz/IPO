@@ -7,7 +7,7 @@
         <a class="button-link" href="{{ url_for('web.admin_extra_reader_packet', assignment_id=assignment.id) }}">Extra reader packet</a>
       </div>
     </div>
-    <p><strong>Country:</strong> {{ student.country }} &middot; <strong>Essay language:</strong> {{ student.essay_language }}</p>
+    <p><strong>Essay ID:</strong> {{ student.id }} &middot; <strong>Country:</strong> {{ student.country }} &middot; <strong>Essay language:</strong> {{ student.essay_language }}</p>
     <p><strong>Upload status:</strong>
       {% if student.uploaded_filename %}
         <span class="status-tag">Uploaded on {{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
@@ -27,7 +27,7 @@
           <tr>
             <th>Teacher</th>
             <th>Country</th>
-            <th>Score (0-10)</th>
+            <th>Score</th>
             <th>Portal status</th>
             <th>Last updated</th>
             <th>Source</th>
@@ -53,7 +53,12 @@
               </td>
               <td>{{ entry.teacher.country }}</td>
               <td>
-                <input type="number" min="0" max="10" step="0.1" name="score_{{ entry.teacher.id }}" value="{{ entry.score or '' }}" style="width: 5rem;">
+                <select name="score_{{ entry.teacher.id }}" class="score-select" style="width: 6rem;">
+                  <option value="">—</option>
+                  {% for value, label in score_choices %}
+                    <option value="{{ value }}" {% if entry.score_value == value %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
               </td>
               <td>
                 {% set status_code = entry.portal_status_code or '' %}

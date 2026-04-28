@@ -10,6 +10,21 @@
   <div class="table-header">
     <h2>Stage 1 overview</h2>
     <div class="table-actions">
+      <form method="get" action="{{ url_for('web.admin_essay_jump') }}">
+        <input type="hidden" name="stage" value="stage_1">
+        <input type="number" name="essay_id" min="1" placeholder="Essay ID" aria-label="Essay ID" style="width: 8rem;">
+        <button type="submit" class="button secondary">Open</button>
+      </form>
+      <form method="get" hx-get="{{ url_for('web.admin_uploads') }}" hx-target="#uploads-content" hx-push-url="true">
+        <select name="status" aria-label="Stage 1 status filter">
+          <option value="" {% if not stage1_filter %}selected{% endif %}>All statuses</option>
+          <option value="needs_extra" {% if stage1_filter == 'needs_extra' %}selected{% endif %}>Needs extra action</option>
+          <option value="extra_needs_assignment" {% if stage1_filter == 'extra_needs_assignment' %}selected{% endif %}>Needs assignment</option>
+          <option value="extra_awaiting_score" {% if stage1_filter == 'extra_awaiting_score' %}selected{% endif %}>Awaiting extra score</option>
+          <option value="extra_review_spread" {% if stage1_filter == 'extra_review_spread' %}selected{% endif %}>Review spread</option>
+        </select>
+        <button type="submit" class="button secondary">Filter</button>
+      </form>
       <form method="get" hx-get="{{ url_for('web.admin_uploads') }}" hx-target="#uploads-content" hx-push-url="true">
         <button type="submit" class="button secondary">Refresh</button>
       </form>
@@ -18,7 +33,7 @@
   <table id="uploads-table" class="data-table display">
     <thead>
       <tr>
-        <th>ID</th>
+        <th>Essay ID</th>
         <th>Student</th>
         <th>Country</th>
         <th>Language</th>
@@ -29,12 +44,14 @@
         <th>Stage 1 avg</th>
         <th>Stage 1 spread</th>
         <th>Stage 1 status</th>
+        <th>Extra reader</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for student in students %}
         {% set status = status_map[student.id] %}
+        {% set extra = extra_reader_map[student.id] %}
         <tr>
           <td>{{ student.id }}</td>
           <td>{{ student.first_name }} {{ student.last_name }}</td>
@@ -81,6 +98,22 @@
               <span class="status-tag">Stage 1 complete</span>
             {% else %}
               <span class="status-tag warning">Incomplete</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if extra.bucket == "needs_assignment" %}
+              <span class="status-tag warning">{{ extra.label }}</span>
+            {% elif extra.bucket == "awaiting_score" %}
+              <span class="status-tag warning">{{ extra.label }}</span>
+            {% elif extra.bucket == "review_spread" %}
+              <span class="status-tag warning">{{ extra.label }}</span>
+            {% elif extra.bucket == "resolved" %}
+              <span class="status-tag success">{{ extra.label }}</span>
+            {% else %}
+              —
+            {% endif %}
+            {% if extra.extra_readers %}
+              <div class="fine-print">{{ extra.extra_scores }}/{{ extra.extra_readers }} extra scores entered</div>
             {% endif %}
           </td>
           <td class="table-actions">

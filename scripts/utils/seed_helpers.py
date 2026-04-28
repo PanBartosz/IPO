@@ -25,6 +25,7 @@ from ipo_app.models import (  # noqa: E402
     Student,
     Teacher,
 )
+from ipo_app.scoring import closest_allowed_score  # noqa: E402
 from ipo_app.views import _apply_stage_one_rules, _get_upload_folder, _stage_assessors  # noqa: E402
 
 
@@ -43,6 +44,7 @@ class ScoreOptions:
     min_score: float = 6.0
     max_score: float = 9.0
     step: float = 0.1
+    statutory_only: bool = True
     finalize: bool = False
     admin_entered: bool = True
     admin_override: bool = False
@@ -59,6 +61,8 @@ class ScoreOptions:
 
     def quantize(self, value: float) -> float:
         self.validate()
+        if self.statutory_only:
+            return closest_allowed_score(value, min_score=self.min_score, max_score=self.max_score)
         clamped = max(self.min_score, min(self.max_score, value))
         scaled = round(clamped / self.step)
         quantized = scaled * self.step
@@ -211,7 +215,7 @@ def update_score(
     options: ScoreOptions,
     now: datetime,
 ) -> None:
-    record.score = score
+    record.score = options.quantize(score) if options.statutory_only else score
     record.submitted_at = now
     record.admin_entered = options.admin_entered
     record.admin_override = options.admin_override

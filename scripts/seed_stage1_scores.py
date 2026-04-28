@@ -26,7 +26,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--min-score", type=float, default=4.5, help="Lower bound for generated scores.")
     parser.add_argument("--max-score", type=float, default=9.5, help="Upper bound for generated scores.")
-    parser.add_argument("--step", type=float, default=0.1, help="Score increment (e.g. 0.1).")
+    parser.add_argument("--step", type=float, default=0.1, help="Score increment when non-statutory scores are allowed.")
+    parser.add_argument(
+        "--allow-non-statutory-scores",
+        action="store_true",
+        help="Use the numeric step instead of the statutory IPO score grid.",
+    )
     parser.add_argument("--finalize", action="store_true", help="Mark seeded scores as teacher-finalized.")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing Stage 1 scores.")
     parser.add_argument(
@@ -65,6 +70,7 @@ def main() -> None:
         min_score=args.min_score,
         max_score=args.max_score,
         step=args.step,
+        statutory_only=not args.allow_non_statutory_scores,
         finalize=args.finalize,
     )
     score_options.validate()

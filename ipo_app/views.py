@@ -131,6 +131,12 @@ from .models import (
     StaticPage,
     StaticPageAttachment,
 )
+from .scoring import (
+    SCORE_VALIDATION_MESSAGE,
+    format_score_value,
+    parse_score_value,
+    score_choices,
+)
 
 web_bp = Blueprint("web", __name__)
 teacher_portal_bp = Blueprint("teacher_portal", __name__, url_prefix="/teacher")
@@ -2029,6 +2035,70 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
         needs_extra=assignment.needs_additional_reading,
         stage_two=assignment.stage_two_candidate,
         completed=expected > 0 and entered >= expected,
+    )
+
+
+def _stage_one_extra_reader_state(
+    assignment: EssayAssignment | None,
+    status: SimpleNamespace | None = None,
+) -> SimpleNamespace:
+    if not assignment:
+        return SimpleNamespace(
+            bucket="none",
+            label="No extra reader needed",
+            needs_action=False,
+            extra_readers=0,
+            extra_scores=0,
+            missing_extra_scores=0,
+        )
+
+    status = status or _compute_stage_one_status(assignment)
+    extra_readers = [
+        extra
+        for extra in assignment.extra_readers
+        if extra.stage == Stage.STAGE_1.value
+    ]
+    extra_teacher_ids = {extra.teacher_id for extra in extra_readers}
+    extra_score_teacher_ids = {
+        score.teacher_id
+        for score in assignment.scores
+        if score.stage == Stage.STAGE_1
+        and score.teacher_id in extra_teacher_ids
+        and score.score is not None
+    }
+    extra_count = len(extra_readers)
+    extra_scores = len(extra_score_teacher_ids)
+    missing_extra_scores = max(extra_count - extra_scores, 0)
+    needs_extra = bool(status.needs_extra or assignment.needs_additional_reading)
+
+    if needs_extra and extra_count == 0:
+        bucket = "needs_assignment"
+        label = "Needs extra reader assignment"
+        needs_action = True
+    elif needs_extra and missing_extra_scores > 0:
+        bucket = "awaiting_score"
+        label = "Extra reader assigned; awaiting score"
+        needs_action = True
+    elif needs_extra:
+        bucket = "review_spread"
+        label = "Extra score entered; review spread"
+        needs_action = True
+    elif extra_count > 0:
+        bucket = "resolved"
+        label = "Resolved after extra reading"
+        needs_action = False
+    else:
+        bucket = "none"
+        label = "No extra reader needed"
+        needs_action = False
+
+    return SimpleNamespace(
+        bucket=bucket,
+        label=label,
+        needs_action=needs_action,
+        extra_readers=extra_count,
+        extra_scores=extra_scores,
+        missing_extra_scores=missing_extra_scores,
     )
 
 
@@ -4564,6 +4634,7 @@ def _collect_dashboard_data(filters: dict | None = None):
     stage1_assignments = (
         EssayAssignment.query.options(
             joinedload(EssayAssignment.scores),
+            joinedload(EssayAssignment.extra_readers),
             joinedload(EssayAssignment.student),
             joinedload(EssayAssignment.group)
             .joinedload(ReadingGroup.members)
@@ -4580,6 +4651,14 @@ def _collect_dashboard_data(filters: dict | None = None):
     stage1_entered_scores = 0
     tie_break_needed = 0
     stage1_pending_list = []
+    extra_reader_summary = {
+        "needs_assignment": 0,
+        "awaiting_score": 0,
+        "review_spread": 0,
+        "resolved": 0,
+        "action_total": 0,
+    }
+    stage1_extra_reader_queue = []
 
     stage2_candidates = []
     stage2_completed = 0
@@ -4591,6 +4670,7 @@ def _collect_dashboard_data(filters: dict | None = None):
 
     for assignment in stage1_assignments:
         status = _compute_stage_one_status(assignment)
+        extra_state = _stage_one_extra_reader_state(assignment, status)
         expected = status.expected_scores or 0
         entered = status.entered_scores or 0
         stage1_expected_scores += expected
@@ -4608,6 +4688,19 @@ def _collect_dashboard_data(filters: dict | None = None):
             )
         if status.needs_extra or assignment.needs_additional_reading:
             tie_break_needed += 1
+        if extra_state.bucket in extra_reader_summary:
+            extra_reader_summary[extra_state.bucket] += 1
+        if extra_state.needs_action:
+            extra_reader_summary["action_total"] += 1
+            stage1_extra_reader_queue.append(
+                {
+                    "assignment": assignment,
+                    "student": assignment.student,
+                    "state": extra_state,
+                    "score_range": status.score_range,
+                    "average_score": status.average_score,
+                }
+            )
 
         stage1_scores_map = {
             score.teacher_id: score
@@ -4686,6 +4779,7 @@ def _collect_dashboard_data(filters: dict | None = None):
                 "expected_scores": stage1_expected_scores,
                 "entered_scores": stage1_entered_scores,
                 "tie_break": tie_break_needed,
+                "extra_readers": extra_reader_summary,
                 "completion_rate": stage1_completion_rate,
                 "score_rate": stage1_score_rate,
             },
@@ -4729,6 +4823,14 @@ def _collect_dashboard_data(filters: dict | None = None):
                 "link": url_for("web.admin_uploads"),
             }
         )
+    if extra_reader_summary["action_total"]:
+        alerts.append(
+            {
+                "message": f"{extra_reader_summary['action_total']} Stage 1 essay(s) need additional assessor action.",
+                "level": "warning",
+                "link": url_for("web.admin_uploads", status="needs_extra"),
+            }
+        )
     if stage2_pending_count:
         alerts.append(
             {
@@ -4757,9 +4859,15 @@ def _collect_dashboard_data(filters: dict | None = None):
             for item in stage1_pending_list
             if item["student"] and item["student"].essay_language == essay_language_filter
         ]
+        extra_reader_filtered = [
+            item
+            for item in stage1_extra_reader_queue
+            if item["student"] and item["student"].essay_language == essay_language_filter
+        ]
     else:
         students_filtered = students_without_uploads
         stage1_filtered = stage1_pending_list
+        extra_reader_filtered = stage1_extra_reader_queue
 
     if alert_level_filter:
         alerts_filtered = [alert for alert in alerts if alert["level"] == alert_level_filter]
@@ -4770,6 +4878,7 @@ def _collect_dashboard_data(filters: dict | None = None):
         "teacher_workload": teacher_workload,
         "students_without_uploads": students_filtered[:10],
         "stage1_pending": stage1_filtered[:8],
+        "stage1_extra_reader_queue": extra_reader_filtered[:8],
     }
 
     alerts = alerts_filtered
@@ -8436,7 +8545,7 @@ def assignment_detail(assignment_id: int, stage: str):
     form = TeacherScoreForm()
     if request.method == "GET":
         if state.score_record and state.score_record.score is not None:
-            form.score.data = state.score_record.score
+            form.score.data = format_score_value(state.score_record.score)
         if state.score_record and state.score_record.comments:
             form.comments.data = state.score_record.comments
 
@@ -8453,16 +8562,15 @@ def assignment_detail(assignment_id: int, stage: str):
             return redirect(url_for("teacher_portal.assignment_detail", assignment_id=assignment.id, stage=stage_enum.value))
 
         finalize_requested = bool(form.finalize.data)
-        numeric_score = form.score.data
+        numeric_score, score_error = parse_score_value(form.score.data)
+        if score_error:
+            form.score.errors.append(score_error)
         if finalize_requested and numeric_score is None:
             form.score.errors.append("Score is required to finalize.")
             finalize_requested = False
 
-        if numeric_score is not None and (numeric_score < 0 or numeric_score > 10):
-            form.score.errors.append("Score must be between 0 and 10.")
-
-            if form.errors:
-                return _render_response(form, state)
+        if form.errors:
+            return _render_response(form, state)
 
         if state.score_record is None:
             state.score_record = EssayScore(
@@ -8518,7 +8626,7 @@ def assignment_detail(assignment_id: int, stage: str):
             updated_state = _load_state()
             fresh_form = TeacherScoreForm()
             if updated_state.score_record and updated_state.score_record.score is not None:
-                fresh_form.score.data = updated_state.score_record.score
+                fresh_form.score.data = format_score_value(updated_state.score_record.score)
             if updated_state.score_record and updated_state.score_record.comments:
                 fresh_form.comments.data = updated_state.score_record.comments
             return _render_response(fresh_form, updated_state)
@@ -10345,26 +10453,75 @@ def admin_uploads():
     active_batch = _get_active_batch(Stage.STAGE_1)
     if not active_batch:
         flash("No Stage 1 batch is published; draft assignments are ignored.", "warning")
-    students = (
+    stage1_filter = request.args.get("status", "")
+    all_students = (
         Student.query.filter_by(is_absent=False)
         .order_by(Student.last_name.asc(), Student.first_name.asc())
         .all()
     )
     status_map = {}
-    for student in students:
+    extra_reader_map = {}
+    students = []
+    for student in all_students:
         assignment = _get_stage_one_assignment(student)
-        status_map[student.id] = _compute_stage_one_status(assignment)
+        status = _compute_stage_one_status(assignment)
+        extra_state = _stage_one_extra_reader_state(assignment, status)
+        if stage1_filter == "needs_extra" and not extra_state.needs_action:
+            continue
+        if stage1_filter == "extra_needs_assignment" and extra_state.bucket != "needs_assignment":
+            continue
+        if stage1_filter == "extra_awaiting_score" and extra_state.bucket != "awaiting_score":
+            continue
+        if stage1_filter == "extra_review_spread" and extra_state.bucket != "review_spread":
+            continue
+        students.append(student)
+        status_map[student.id] = status
+        extra_reader_map[student.id] = extra_state
     is_htmx = _is_htmx_request()
     template_name = "admin/partials/uploads_content.html" if is_htmx else "admin/uploads.html"
     context = {
         "students": students,
         "status_map": status_map,
+        "extra_reader_map": extra_reader_map,
+        "stage1_filter": stage1_filter,
         "active_batch": active_batch,
         "is_htmx": is_htmx,
     }
     if not is_htmx:
         return render_template(template_name, **context)
     return _render_htmx_template(template_name, **context)
+
+
+@web_bp.route("/admin/essays/jump")
+def admin_essay_jump():
+    stage = request.args.get("stage", Stage.STAGE_1.value)
+    raw_essay_id = (request.args.get("essay_id") or "").strip()
+    fallback_endpoint = "web.admin_stage2_overview" if stage == Stage.STAGE_2.value else "web.admin_uploads"
+
+    if not raw_essay_id:
+        flash("Enter an Essay ID.", "error")
+        return redirect(url_for(fallback_endpoint))
+    if not raw_essay_id.isdigit():
+        flash("Essay ID must be a number.", "error")
+        return redirect(url_for(fallback_endpoint))
+
+    essay_id = int(raw_essay_id)
+    student = db.session.get(Student, essay_id)
+    if not student or student.is_absent:
+        flash(f"No essay with ID {essay_id} was found.", "error")
+        return redirect(url_for(fallback_endpoint))
+
+    assignment = _get_stage_one_assignment(student)
+    if not assignment:
+        flash(f"Essay {essay_id} has no published Stage 1 assignment.", "error")
+        return redirect(url_for(fallback_endpoint))
+
+    if stage == Stage.STAGE_2.value:
+        if assignment.stage_two_candidate:
+            return redirect(url_for("web.admin_stage2_score_student", student_id=student.id))
+        flash(f"Essay {essay_id} is not marked for Stage 2. Opening Stage 1 scoring instead.", "warning")
+
+    return redirect(url_for("web.admin_score_student", student_id=student.id))
 
 
 @web_bp.route("/admin/uploads/<int:student_id>/download")
@@ -10486,6 +10643,7 @@ def admin_score_student(student_id: int):
                     source=assessor.source,
                     is_extra=assessor.is_extra,
                     score=score_record.score if score_record else None,
+                    score_value=format_score_value(score_record.score) if score_record and score_record.score is not None else "",
                     updated_at=score_record.updated_at if score_record else None,
                     finalized=score_record.teacher_finalized if score_record else False,
                     finalized_at=score_record.teacher_finalized_at if score_record else None,
@@ -10533,6 +10691,7 @@ def admin_score_student(student_id: int):
             "status": state.status,
             "available_teachers": state.available_teachers,
             "stage1_global_lock": state.stage1_global_lock,
+            "score_choices": score_choices(include_blank=False),
             "is_htmx": is_htmx,
         }
         if not is_htmx:
@@ -10665,14 +10824,15 @@ def admin_score_student(student_id: int):
             value = request.form.get(field_name, "").strip()
             if not value:
                 continue
-            try:
-                numeric = float(value)
-            except ValueError:
-                flash(f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}.", "error")
+            score_value, score_error = parse_score_value(value)
+            if score_error or score_value is None:
+                flash(
+                    f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}. "
+                    f"{SCORE_VALIDATION_MESSAGE}",
+                    "error",
+                )
                 return _post_response()
-            if numeric < 0 or numeric > 10:
-                flash("Scores must be between 0 and 10.", "error")
-                return _post_response()
+            numeric = float(score_value)
             score_record = state.scores_map.get(entry.teacher_id)
             if not score_record:
                 score_record = EssayScore(
@@ -11963,6 +12123,7 @@ def admin_stage2_score_student(student_id: int):
                     source=assessor.source,
                     is_extra=assessor.is_extra,
                     score=score_record.score if score_record else None,
+                    score_value=format_score_value(score_record.score) if score_record and score_record.score is not None else "",
                     updated_at=score_record.updated_at if score_record else None,
                     submitted_at=score_record.submitted_at if score_record else None,
                     finalized=score_record.teacher_finalized if score_record else False,
@@ -11986,6 +12147,7 @@ def admin_stage2_score_student(student_id: int):
                     source=assessor.source,
                     is_extra=True,
                     score=score_record.score if score_record else None,
+                    score_value=format_score_value(score_record.score) if score_record and score_record.score is not None else "",
                     updated_at=score_record.updated_at if score_record else None,
                     finalized=score_record.teacher_finalized if score_record else False,
                     finalized_at=score_record.teacher_finalized_at if score_record else None,
@@ -12092,6 +12254,7 @@ def admin_stage2_score_student(student_id: int):
             "suggested_teachers": state.suggested_teachers,
             "stage1_global_lock": state.stage1_global_lock,
             "stage2_global_lock": state.stage2_global_lock,
+            "score_choices": score_choices(include_blank=False),
             "is_htmx": is_htmx,
         }
         if not is_htmx:
@@ -12227,14 +12390,15 @@ def admin_stage2_score_student(student_id: int):
             value = request.form.get(field_name, '').strip()
             if not value:
                 continue
-            try:
-                numeric = float(value)
-            except ValueError:
-                flash(f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}.", 'error')
+            score_value, score_error = parse_score_value(value)
+            if score_error or score_value is None:
+                flash(
+                    f"Invalid score for {entry.teacher.first_name} {entry.teacher.last_name}. "
+                    f"{SCORE_VALIDATION_MESSAGE}",
+                    'error',
+                )
                 return _post_response()
-            if numeric < 0 or numeric > 10:
-                flash('Scores must be between 0 and 10.', 'error')
-                return _post_response()
+            numeric = float(score_value)
             score_record = state.stage2_scores_map.get(entry.teacher_id)
             if not score_record:
                 score_record = EssayScore(

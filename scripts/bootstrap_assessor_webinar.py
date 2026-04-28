@@ -725,7 +725,7 @@ def _set_demo_score(
 ) -> EssayScore:
     now = datetime.utcnow()
     record = helpers.ensure_score_record(assignment, assignment.student_id, teacher.id, stage)
-    record.score = score
+    record.score = helpers.ScoreOptions(min_score=1, max_score=10).quantize(score)
     record.comments = comments
     record.submitted_at = now
     record.teacher_finalized = finalized
@@ -754,7 +754,7 @@ def shape_demo_teacher_assignments(demo_teacher: Teacher, demo_assignments: list
         draft,
         demo_teacher,
         Stage.STAGE_1,
-        score=8.1,
+        score=8.0,
         comments="Draft score prepared for the webinar.",
         finalized=False,
     )
@@ -762,7 +762,7 @@ def shape_demo_teacher_assignments(demo_teacher: Teacher, demo_assignments: list
         finalized,
         demo_teacher,
         Stage.STAGE_1,
-        score=8.7,
+        score=8.5,
         comments="Finalized demo score.",
         finalized=True,
     )
@@ -840,7 +840,7 @@ def add_stage2_demo_assignments(demo_teacher: Teacher) -> int:
         helpers.update_score(
             support_record,
             8.0 + (index * 0.3),
-            options=helpers.ScoreOptions(min_score=0, max_score=10, step=0.1, finalize=False),
+            options=helpers.ScoreOptions(min_score=1, max_score=10, step=0.1, finalize=False),
             now=datetime.utcnow(),
         )
         if index == 1:
@@ -848,7 +848,7 @@ def add_stage2_demo_assignments(demo_teacher: Teacher) -> int:
                 assignment,
                 demo_teacher,
                 Stage.STAGE_2,
-                score=8.4,
+                score=8.5,
                 comments="Stage 2 draft prepared for the webinar.",
                 finalized=False,
             )

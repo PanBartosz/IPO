@@ -258,6 +258,50 @@ def test_teacher_score_finalization_sets_teacher_finalized_and_timestamp(client,
         assert score.teacher_finalized_at is not None
 
 
+def test_teacher_score_rejects_non_statutory_score(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        teacher_id = _create_teacher(username="teacher-invalid-score", password="teacher-pass")
+        student_id = _create_student(label="student-invalid-score")
+        student = db.session.get(Student, student_id)
+        assert student is not None
+        student.uploaded_filename = f"student-{student_id}-invalid-score.pdf"
+        student.uploaded_at = datetime.utcnow()
+        student.essay_finalized = True
+        student.essay_finalized_at = datetime.utcnow()
+        db.session.commit()
+
+        upload_folder = Path(client.application.config["UPLOAD_FOLDER"])
+        (upload_folder / student.uploaded_filename).write_bytes(b"%PDF-1.4\n% invalid score\n%%EOF\n")
+
+        assignment_id = _create_stage1_assignment(teacher_id=teacher_id, student_id=student_id)
+
+    _login_teacher_portal(client, csrf_token, "teacher-invalid-score", "teacher-pass")
+
+    detail_page = client.get(f"/teacher/assignments/{assignment_id}/stage_1")
+    token = csrf_token(detail_page)
+
+    response = client.post(
+        f"/teacher/assignments/{assignment_id}/stage_1",
+        data={
+            "csrf_token": token,
+            "score": "7.76",
+            "comments": "Invalid precision.",
+            "save": "Save draft",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+
+    with client.application.app_context():
+        assert (
+            EssayScore.query
+            .filter_by(assignment_id=assignment_id, teacher_id=teacher_id, stage=Stage.STAGE_1)
+            .all()
+            == []
+        )
+
+
 def test_stage_lock_blocks_teacher_downloads_and_score_edits(client, csrf_token):
     with client.application.app_context():
         _set_setting("teacher_portal_enabled", "true")

@@ -2,6 +2,11 @@
   <div class="table-header">
     <h2>Stage 2 Candidates</h2>
     <div class="table-actions">
+      <form method="get" action="{{ url_for('web.admin_essay_jump') }}">
+        <input type="hidden" name="stage" value="stage_2">
+        <input type="number" name="essay_id" min="1" placeholder="Essay ID" aria-label="Essay ID" style="width: 8rem;">
+        <button type="submit" class="button secondary">Open</button>
+      </form>
       <form method="get" hx-get="{{ url_for('web.admin_stage2_overview') }}" hx-target="#stage2-overview-content" hx-push-url="true">
         <button type="submit" class="button secondary">Refresh</button>
       </form>
@@ -13,7 +18,7 @@
     <table class="data-table display" id="stage2-table">
       <thead>
         <tr>
-          <th>ID</th>
+          <th>Essay ID</th>
           <th>Name</th>
           <th>Country</th>
           <th>Language</th>

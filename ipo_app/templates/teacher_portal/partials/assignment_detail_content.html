@@ -65,7 +65,7 @@
     {{ form.hidden_tag() }}
     <div class="form-field">
       {{ form.score.label }}
-      {{ form.score(step="0.01", min="0", max="10", placeholder="Enter score between 0 and 10", disabled=not can_edit) }}
+      {{ form.score(disabled=not can_edit) }}
       {% for error in form.score.errors %}
         <div class="field-error">{{ error }}</div>
       {% endfor %}

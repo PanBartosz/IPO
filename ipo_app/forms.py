@@ -7,7 +7,6 @@ from wtforms import (
     BooleanField,
     DateField,
     DateTimeField,
-    DecimalField,
     EmailField,
     IntegerField,
     PasswordField,
@@ -33,6 +32,7 @@ from .models import (
     SurveyAudience,
     SurveyQuestionType,
 )
+from .scoring import score_choices
 
 LANGUAGE_CHOICES = [
     ("English", "English"),
@@ -608,10 +608,11 @@ class TeacherPortalLoginForm(FlaskForm):
 
 
 class TeacherScoreForm(FlaskForm):
-    score = DecimalField(
-        "Score (0-10)",
-        places=2,
-        validators=[Optional(), NumberRange(min=0, max=10, message="Score must be between 0 and 10.")],
+    score = SelectField(
+        "Score",
+        choices=score_choices(),
+        validators=[Optional()],
+        validate_choice=False,
     )
     comments = TextAreaField("Comments", validators=[Optional(), Length(max=5000)])
     save = SubmitField("Save draft")
