@@ -45,6 +45,9 @@
             <td>
               {% if stage1.average_score is not none %}
                 {{ "%.2f"|format(stage1.average_score) }}
+                {% if stage1.average_is_trimmed %}
+                  <span class="status-tag">Trimmed</span>
+                {% endif %}
               {% else %}
                 —
               {% endif %}

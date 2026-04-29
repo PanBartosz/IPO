@@ -78,6 +78,9 @@
           <td>
             {% if status.average_score is not none %}
               {{ "%.2f"|format(status.average_score) }}
+              {% if status.average_is_trimmed %}
+                <span class="status-tag">Trimmed</span>
+              {% endif %}
             {% else %}
               —
             {% endif %}

@@ -30,6 +30,9 @@
     <p><strong>Average:</strong>
       {% if stage1_status.average_score is not none %}
         {{ "%.2f"|format(stage1_status.average_score) }}
+        {% if stage1_status.average_is_trimmed %}
+          <span class="status-tag">Trimmed {{ stage1_status.average_score_count }}/{{ stage1_status.raw_score_count }}</span>
+        {% endif %}
       {% else %}
         &mdash;
       {% endif %}

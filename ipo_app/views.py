@@ -393,6 +393,7 @@ SETTING_EVENT_END_OVERRIDE = "event_end_override"
 SETTING_PACKET_PRINT_MODE = "packet_print_mode"
 SETTING_ESSAY_WORD_LIMIT = "essay_word_limit_words"
 SETTING_ESSAY_WORD_LIMIT_MODE = "essay_word_limit_mode"
+SETTING_STAGE1_TRIM_EXTREME_SCORES = "stage1_trim_extreme_scores"
 SETTING_ETHICS_CONSENT_HTML = "ethics_consent_html"
 SETTING_GDPR_NOTICE_HTML = "gdpr_notice_html"
 SETTING_PHOTO_CONSENT_HTML = "photo_consent_html"
@@ -440,6 +441,10 @@ def _essay_word_limit_mode() -> str:
     if raw in {"off", "soft", "hard"}:
         return raw
     return DEFAULT_ESSAY_WORD_LIMIT_MODE
+
+
+def _stage1_trim_extreme_scores_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_STAGE1_TRIM_EXTREME_SCORES, "false"))
 
 
 def _ethics_consent_html() -> str:
@@ -1610,13 +1615,70 @@ GRADE_STAGE_SLOTS = {
 STAGE_1_REQUIRED_READINGS = 4
 
 
-def _grade_score_stats(values: list[float]) -> dict[str, float | int | None]:
-    if not values:
-        return {"count": 0, "average": None, "spread": None}
-    count = len(values)
-    average = sum(values) / count
-    spread = max(values) - min(values) if count >= 2 else 0.0
-    return {"count": count, "average": average, "spread": spread}
+def _score_stats(
+    values: list[float],
+    *,
+    trim_extremes: bool = False,
+) -> SimpleNamespace:
+    raw_values = [float(value) for value in values if value is not None]
+    count = len(raw_values)
+    if not raw_values:
+        return SimpleNamespace(
+            count=0,
+            used_count=0,
+            average=None,
+            raw_average=None,
+            spread=None,
+            used_values=[],
+            trimmed=False,
+            dropped_low=None,
+            dropped_high=None,
+        )
+
+    used_values = list(raw_values)
+    dropped_low = None
+    dropped_high = None
+    trimmed = False
+    if trim_extremes and count > STAGE_1_REQUIRED_READINGS:
+        sorted_values = sorted(raw_values)
+        dropped_low = sorted_values[0]
+        dropped_high = sorted_values[-1]
+        used_values = sorted_values[1:-1]
+        trimmed = True
+
+    raw_average = sum(raw_values) / count
+    average = sum(used_values) / len(used_values) if used_values else None
+    spread = max(raw_values) - min(raw_values) if count >= 2 else 0.0
+    return SimpleNamespace(
+        count=count,
+        used_count=len(used_values),
+        average=average,
+        raw_average=raw_average,
+        spread=spread,
+        used_values=used_values,
+        trimmed=trimmed,
+        dropped_low=dropped_low,
+        dropped_high=dropped_high,
+    )
+
+
+def _stage_one_score_stats(values: list[float]) -> SimpleNamespace:
+    return _score_stats(values, trim_extremes=_stage1_trim_extreme_scores_enabled())
+
+
+def _grade_score_stats(values: list[float], *, trim_extremes: bool = False) -> dict[str, Any]:
+    stats = _score_stats(values, trim_extremes=trim_extremes)
+    return {
+        "count": stats.count,
+        "used_count": stats.used_count,
+        "average": stats.average,
+        "raw_average": stats.raw_average,
+        "spread": stats.spread,
+        "used_values": stats.used_values,
+        "trimmed": stats.trimmed,
+        "dropped_low": stats.dropped_low,
+        "dropped_high": stats.dropped_high,
+    }
 
 
 def _grade_export_rows(
@@ -1709,8 +1771,13 @@ def _summarize_grade_rows(rows: list[dict]) -> list[dict]:
     summarized: list[dict] = []
     for entry in students.values():
         stage_summary: dict[str, dict] = {}
+        combined_average_values: list[float] = []
         for stage_key, data in entry["stages"].items():
-            stats = _grade_score_stats(data["values"])
+            stage_enum = Stage(stage_key)
+            stats = _grade_score_stats(
+                data["values"],
+                trim_extremes=stage_enum == Stage.STAGE_1 and _stage1_trim_extreme_scores_enabled(),
+            )
             sorted_scores = sorted(
                 data["scores"],
                 key=lambda item: (
@@ -1723,10 +1790,14 @@ def _summarize_grade_rows(rows: list[dict]) -> list[dict]:
             stage_summary[stage_key] = {
                 "scores": sorted_scores,
                 "count": stats["count"],
+                "used_count": stats["used_count"],
                 "average": stats["average"],
+                "raw_average": stats["raw_average"],
                 "spread": stats["spread"],
+                "average_is_trimmed": stats["trimmed"],
             }
-        combined_stats = _grade_score_stats(entry["all_scores"])
+            combined_average_values.extend(stats["used_values"])
+        combined_stats = _grade_score_stats(combined_average_values)
         summarized.append(
             {
                 "student_id": entry["student_id"],
@@ -2013,6 +2084,12 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
             missing_reader_assignments=missing_reader_assignments,
             missing_scores=0,
             average_score=None,
+            raw_average_score=None,
+            average_score_count=0,
+            raw_score_count=0,
+            average_is_trimmed=False,
+            trimmed_low_score=None,
+            trimmed_high_score=None,
             score_range=None,
             recommendation="No published Stage 1 batch.",
             needs_extra=False,
@@ -2026,11 +2103,10 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
         if score.stage == Stage.STAGE_1 and score.score is not None
     ]
     entered = len(scores)
-    average = sum(s.score for s in scores) / entered if entered else None
-    score_range = None
-    if len(scores) >= 2:
-        values = [s.score for s in scores]
-        score_range = max(values) - min(values)
+    values = [s.score for s in scores if s.score is not None]
+    score_stats = _stage_one_score_stats(values)
+    average = score_stats.average
+    score_range = score_stats.spread if entered else None
 
     if expected == 0:
         recommendation = "No active readers assigned."
@@ -2043,7 +2119,7 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
     elif entered < expected:
         missing = expected - entered
         recommendation = f"Awaiting {missing} reader score{'s' if missing != 1 else ''}."
-    elif score_range is not None and score_range > 3:
+    elif score_range is not None and score_range > 3 and not score_stats.trimmed:
         recommendation = "Score disparity >3: assign additional reader."
     elif average is not None and average >= 7:
         recommendation = "Qualifies for Stage 2."
@@ -2058,6 +2134,12 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
         missing_reader_assignments=missing_reader_assignments,
         missing_scores=max(expected - entered, 0),
         average_score=average,
+        raw_average_score=score_stats.raw_average,
+        average_score_count=score_stats.used_count,
+        raw_score_count=score_stats.count,
+        average_is_trimmed=score_stats.trimmed,
+        trimmed_low_score=score_stats.dropped_low,
+        trimmed_high_score=score_stats.dropped_high,
         score_range=score_range,
         recommendation=recommendation,
         needs_extra=assignment.needs_additional_reading,
@@ -2179,7 +2261,18 @@ def _compute_combined_status(assignment: EssayAssignment | None) -> SimpleNamesp
     if not assignment:
         return SimpleNamespace(count=0, average=None, score_range=None)
 
-    values = [score.score for score in assignment.scores if score.score is not None]
+    stage1_values = [
+        score.score
+        for score in assignment.scores
+        if score.stage == Stage.STAGE_1 and score.score is not None
+    ]
+    stage2_values = [
+        score.score
+        for score in assignment.scores
+        if score.stage == Stage.STAGE_2 and score.score is not None
+    ]
+    stage1_stats = _stage_one_score_stats(stage1_values)
+    values = list(stage1_stats.used_values) + stage2_values
     if not values:
         return SimpleNamespace(count=0, average=None, score_range=None)
 
@@ -2191,7 +2284,7 @@ def _apply_stage_one_rules(assignment: EssayAssignment) -> None:
     status = _compute_stage_one_status(assignment)
     if not status.completed:
         return
-    if status.score_range is not None and status.score_range > 3:
+    if status.score_range is not None and status.score_range > 3 and not status.average_is_trimmed:
         assignment.needs_additional_reading = True
         assignment.stage_two_candidate = False
     else:
@@ -2200,6 +2293,23 @@ def _apply_stage_one_rules(assignment: EssayAssignment) -> None:
             assignment.stage_two_candidate = True
         else:
             assignment.stage_two_candidate = False
+
+
+def _recompute_stage_one_rules() -> int:
+    assignments = (
+        EssayAssignment.query.options(
+            joinedload(EssayAssignment.scores),
+            joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
+            joinedload(EssayAssignment.group)
+            .joinedload(ReadingGroup.members)
+            .joinedload(ReadingGroupMember.teacher),
+        )
+        .filter(EssayAssignment.stage == Stage.STAGE_1)
+        .all()
+    )
+    for assignment in assignments:
+        _apply_stage_one_rules(assignment)
+    return len(assignments)
 
 
 def _ensure_student_credentials(student: Student, *, reset_password: bool = False) -> tuple[str, str | None]:
@@ -5600,6 +5710,7 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
     except (TypeError, ValueError):
         form.essay_word_limit.data = DEFAULT_ESSAY_WORD_LIMIT
     form.essay_word_limit_mode.data = _essay_word_limit_mode()
+    form.stage1_trim_extreme_scores_enabled.data = _stage1_trim_extreme_scores_enabled()
     form.ethics_consent_html.data = _ethics_consent_html()
     form.gdpr_notice_html.data = _gdpr_notice_html()
     form.photo_consent_html.data = _photo_consent_html()
@@ -5653,12 +5764,14 @@ def admin_settings():
                 "Cannot enable folded login aliases until all folded student and teacher usernames are unique."
             )
         else:
+            previous_stage1_trim_extreme_scores = _stage1_trim_extreme_scores_enabled()
             upload_value = form.upload_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.upload_deadline.data else None
             stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
             event_end_value = form.event_end.data.strftime("%Y-%m-%dT%H:%M") if form.event_end.data else None
             event_override_value = form.event_end_override.data if form.event_end_override.data != "auto" else None
             stage1_sla_value = str(form.stage1_sla.data) if form.stage1_sla.data else None
             stage2_sla_value = str(form.stage2_sla.data) if form.stage2_sla.data else None
+            stage1_trim_extreme_scores_value = bool(form.stage1_trim_extreme_scores_enabled.data)
 
             _set_setting(SETTING_UPLOAD_DEADLINE, upload_value)
             _set_setting(SETTING_STAGE2_DEADLINE, stage2_value)
@@ -5672,6 +5785,10 @@ def admin_settings():
                 str(form.essay_word_limit.data).strip() if form.essay_word_limit.data else None,
             )
             _set_setting(SETTING_ESSAY_WORD_LIMIT_MODE, form.essay_word_limit_mode.data)
+            _set_setting(
+                SETTING_STAGE1_TRIM_EXTREME_SCORES,
+                "true" if stage1_trim_extreme_scores_value else "false",
+            )
             ethics_html = (form.ethics_consent_html.data or "").strip() or None
             gdpr_html = (form.gdpr_notice_html.data or "").strip() or None
             photo_html = (form.photo_consent_html.data or "").strip() or None
@@ -5710,6 +5827,8 @@ def admin_settings():
             _set_setting(SETTING_EMAIL_TEACHER_RESET_LINK_BODY, form.email_teacher_reset_link_body.data.strip() or None)
             _set_setting(SETTING_EMAIL_TEACHER_RESET_SUBJECT, form.email_teacher_reset_subject.data.strip() or None)
             _set_setting(SETTING_EMAIL_TEACHER_RESET_BODY, form.email_teacher_reset_body.data.strip() or None)
+            if stage1_trim_extreme_scores_value != previous_stage1_trim_extreme_scores:
+                _recompute_stage_one_rules()
             db.session.commit()
             flash("Dashboard settings updated.", "success")
             return redirect(url_for("web.admin_settings"))

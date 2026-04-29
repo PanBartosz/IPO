@@ -13,6 +13,7 @@
         <div class="settings-sidebar__title">Settings Sections</div>
         <nav class="settings-nav">
           <a href="#settings-deadlines">Deadlines & SLA</a>
+          <a href="#settings-scoring">Scoring Rules</a>
           <a href="#settings-uploads">Uploads & Limits</a>
           <a href="#settings-modules">Modules & Automation</a>
           <a href="#settings-login-aliases">Login Aliases</a>
@@ -71,6 +72,19 @@
         {{ form.stage2_sla(min=1) }}
         <span class="form-help">Default: {{ config.DASHBOARD_STAGE2_SCORE_SLA_HOURS }} hours.</span>
         {% for error in form.stage2_sla.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-scoring" class="settings-section-title">Scoring Rules</h3>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.stage1_trim_extreme_scores_enabled() }}
+          {{ form.stage1_trim_extreme_scores_enabled.label.text }}
+        </label>
+        <span class="form-help">When Stage 1 has more than four scores, remove one lowest and one highest score before calculating the final Stage 1 average and Stage 2 threshold.</span>
+        {% for error in form.stage1_trim_extreme_scores_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>

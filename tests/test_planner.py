@@ -487,6 +487,84 @@ def test_stage1_status_requires_four_readings_for_underfilled_assignment(client)
         assert "additional reader assignment" in status.recommendation
 
 
+def _create_six_score_stage1_assignment(index: int) -> tuple[EssayAssignment, list[Teacher]]:
+    batch = AssignmentBatch(
+        name=f"Trimmed Average Batch {index}",
+        stage=Stage.STAGE_1,
+        status=PlannerStatus.PUBLISHED,
+        planner_algorithm=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
+    )
+    group = ReadingGroup(
+        name=f"Trimmed Average Group {index}",
+        language="English",
+        stage=Stage.STAGE_1,
+        status=PlannerStatus.PUBLISHED,
+        batch=batch,
+    )
+    teachers = [_create_assessor(index * 10 + offset) for offset in range(1, 7)]
+    student = _create_student(index, country=f"Trim Student {index}")
+    db.session.add_all([batch, group, student, *teachers])
+    db.session.flush()
+    for offset, teacher in enumerate(teachers[:4]):
+        _add_reader(group, teacher, role=GroupMemberRole.LEADER if offset == 0 else GroupMemberRole.READER)
+    assignment = EssayAssignment(
+        student_id=student.id,
+        group_id=group.id,
+        batch_id=batch.id,
+        stage=Stage.STAGE_1,
+        status=PlannerStatus.PUBLISHED,
+    )
+    db.session.add(assignment)
+    db.session.flush()
+    for teacher in teachers[4:]:
+        db.session.add(
+            EssayAssignmentExtraReader(
+                assignment_id=assignment.id,
+                teacher_id=teacher.id,
+                stage=Stage.STAGE_1.value,
+            )
+        )
+    for teacher, score in zip(teachers, [1, 7, 7, 7, 8, 10], strict=True):
+        _add_stage1_score(assignment, teacher, score)
+    db.session.commit()
+    return assignment, teachers
+
+
+def test_stage1_trimmed_average_setting_controls_stage2_decision(client):
+    with client.application.app_context():
+        views._set_setting(views.SETTING_STAGE1_TRIM_EXTREME_SCORES, "true")
+        assignment, _teachers = _create_six_score_stage1_assignment(41)
+
+        status = views._compute_stage_one_status(assignment)
+        views._apply_stage_one_rules(assignment)
+
+        assert status.entered_scores == 6
+        assert status.expected_scores == 6
+        assert status.average_is_trimmed is True
+        assert status.average_score_count == 4
+        assert status.raw_score_count == 6
+        assert abs(status.raw_average_score - (40 / 6)) < 0.0001
+        assert abs(status.average_score - 7.25) < 0.0001
+        assert status.score_range == 9
+        assert status.recommendation == "Qualifies for Stage 2."
+        assert assignment.needs_additional_reading is False
+        assert assignment.stage_two_candidate is True
+
+
+def test_stage1_default_average_still_requires_extra_reader_on_large_spread(client):
+    with client.application.app_context():
+        assignment, _teachers = _create_six_score_stage1_assignment(42)
+
+        status = views._compute_stage_one_status(assignment)
+        views._apply_stage_one_rules(assignment)
+
+        assert status.average_is_trimmed is False
+        assert abs(status.average_score - (40 / 6)) < 0.0001
+        assert status.recommendation == "Score disparity >3: assign additional reader."
+        assert assignment.needs_additional_reading is True
+        assert assignment.stage_two_candidate is False
+
+
 def test_supplemental_reader_route_assigns_free_teacher_to_eligible_underfilled_essays(client, csrf_token):
     with client.application.app_context():
         batch = AssignmentBatch(

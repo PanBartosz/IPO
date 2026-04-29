@@ -73,6 +73,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             packet_print_mode="double",
             essay_word_limit="2750",
             essay_word_limit_mode="hard",
+            stage1_trim_extreme_scores_enabled="y",
             ethics_consent_html="  <p>Ethics</p>  ",
             gdpr_notice_html="  <p>GDPR</p>  ",
             photo_consent_html="  <p>Photo</p>  ",
@@ -103,6 +104,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_PACKET_PRINT_MODE).value == "double"
         assert _setting_row(views.SETTING_ESSAY_WORD_LIMIT).value == "2750"
         assert _setting_row(views.SETTING_ESSAY_WORD_LIMIT_MODE).value == "hard"
+        assert _setting_row(views.SETTING_STAGE1_TRIM_EXTREME_SCORES).value == "true"
         assert _setting_row(views.SETTING_ETHICS_CONSENT_HTML).value == "<p>Ethics</p>"
         assert _setting_row(views.SETTING_GDPR_NOTICE_HTML).value == "<p>GDPR</p>"
         assert _setting_row(views.SETTING_PHOTO_CONSENT_HTML).value == "<p>Photo</p>"

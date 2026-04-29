@@ -409,6 +409,9 @@ class DashboardSettingsForm(FlaskForm):
         validators=[DataRequired(), AnyOf(["off", "soft", "hard"])],
         default="soft",
     )
+    stage1_trim_extreme_scores_enabled = BooleanField(
+        "Use trimmed Stage 1 average after additional readings"
+    )
     ethics_consent_html = TextAreaField(
         "Code of Ethics consent text (HTML)",
         validators=[Optional()],
