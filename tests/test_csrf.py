@@ -14,6 +14,7 @@ def _get_setting_value(key: str) -> str | None:
     ("path", "data"),
     [
         ("/admin/uploads/lock", {"state": "lock"}),
+        ("/admin/uploads/1/override", {"reason": "rescue", "confirm": "y", "finalize_current": "Finalize current upload"}),
         ("/admin/grading/lock", {"stage": "stage_1", "state": "lock"}),
         ("/admin/planner", {}),
         ("/admin/exports/essays", {}),

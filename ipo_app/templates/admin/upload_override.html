@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Essay Override · Admin{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <div>
+        <h2>Essay override · Essay {{ student.id }}</h2>
+        <p class="fine-print">{{ student.first_name }} {{ student.last_name }} · {{ student.country }} · {{ student.essay_language }}</p>
+      </div>
+      <div class="table-actions">
+        <a class="button-link secondary" href="{{ url_for('web.admin_uploads') }}">Back to Stage 1</a>
+        {% if student.uploaded_filename and current_file_exists %}
+          <a class="button-link" href="{{ url_for('web.admin_download_essay', student_id=student.id) }}">Download current</a>
+        {% endif %}
+      </div>
+    </div>
+    <table class="data-table">
+      <tbody>
+        <tr>
+          <th>Current status</th>
+          <td>
+            {% if student.essay_finalized %}
+              <span class="status-tag success">Finished</span>
+            {% elif student.uploaded_filename %}
+              <span class="status-tag">Uploaded, not finalized</span>
+            {% else %}
+              <span class="status-tag warning">No upload</span>
+            {% endif %}
+            {% if student.uploaded_filename and not current_file_exists %}
+              <span class="status-tag warning">File missing</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <th>Current file</th>
+          <td>{{ student.uploaded_filename or "—" }}</td>
+        </tr>
+        <tr>
+          <th>Uploaded at</th>
+          <td>{{ student.uploaded_at.strftime('%Y-%m-%d %H:%M') if student.uploaded_at else "—" }}</td>
+        </tr>
+        <tr>
+          <th>Finalized at</th>
+          <td>{{ student.essay_finalized_at.strftime('%Y-%m-%d %H:%M') if student.essay_finalized_at else "—" }}</td>
+        </tr>
+        <tr>
+          <th>Word count</th>
+          <td>
+            {% if student.essay_word_count is not none %}
+              {{ student.essay_word_count }}
+              {% if student.essay_word_count > word_limit %}
+                <span class="status-tag warning">Over limit {{ word_limit }}</span>
+              {% endif %}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% if score_count %}
+      <p class="status-tag warning">{{ score_count }} score{% if score_count != 1 %}s{% endif %} already recorded for this essay.</p>
+    {% endif %}
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Admin rescue action</h3>
+    <form method="post" class="form-grid" enctype="multipart/form-data" novalidate>
+      {{ form.hidden_tag() }}
+
+      <div class="form-field full-width">
+        {{ form.reason.label }}
+        {{ form.reason(rows=4) }}
+        {% for error in form.reason.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field full-width">
+        {{ form.essay.label }}
+        {{ form.essay() }}
+        <span class="form-help">Optional for finalizing an existing upload. Required when replacing the official essay.</span>
+        {% for error in form.essay.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-field checkbox-field full-width">
+        {{ form.confirm() }}
+        {{ form.confirm.label }}
+        {% for error in form.confirm.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-actions full-width">
+        {% if student.uploaded_filename and current_file_exists and not student.essay_finalized %}
+          {{ form.finalize_current(class_="button secondary") }}
+        {% endif %}
+        {{ form.replace_and_finalize(class_="button danger") }}
+      </div>
+    </form>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <h3>Upload history</h3>
+    {% if history_entries %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>File</th>
+            <th>Uploaded at</th>
+            <th>Finalized at</th>
+            <th>Word count</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in history_entries %}
+            <tr>
+              <td>{{ entry.upload.id }}</td>
+              <td>{{ entry.upload.filename }}</td>
+              <td>{{ entry.upload.created_at.strftime('%Y-%m-%d %H:%M') if entry.upload.created_at else "—" }}</td>
+              <td>{{ entry.upload.finalized_at.strftime('%Y-%m-%d %H:%M') if entry.upload.finalized_at else "—" }}</td>
+              <td>{{ entry.upload.word_count if entry.upload.word_count is not none else "—" }}</td>
+              <td>
+                {% if entry.is_current %}
+                  <span class="status-tag success">Current</span>
+                {% endif %}
+                {% if not entry.file_exists %}
+                  <span class="status-tag warning">File missing</span>
+                {% endif %}
+              </td>
+              <td class="table-actions">
+                {% if entry.download_url %}
+                  <a class="button-link" href="{{ entry.download_url }}">Download</a>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No upload history has been recorded for this student yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}

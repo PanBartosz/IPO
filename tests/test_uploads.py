@@ -5,7 +5,7 @@ from pathlib import Path
 from werkzeug.security import generate_password_hash
 
 from ipo_app.extensions import db
-from ipo_app.models import AppSetting, EssayUpload, Student
+from ipo_app.models import ActivityLog, AppSetting, EssayUpload, Student
 
 
 def _set_setting(key: str, value: str) -> None:
@@ -50,6 +50,18 @@ def _login_student(client, csrf_token, username: str, password: str) -> None:
         follow_redirects=False,
     )
     assert response.status_code == 302
+
+
+def _login_admin(client) -> None:
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+
+def _write_pdf(app, filename: str, content: bytes | None = None) -> None:
+    upload_folder = Path(app.config["UPLOAD_FOLDER"])
+    upload_folder.mkdir(parents=True, exist_ok=True)
+    payload = content or b"%PDF-1.4\n% upload test\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+    (upload_folder / filename).write_bytes(payload)
 
 
 def test_student_upload_stores_file_and_creates_upload_row(client, csrf_token):
@@ -344,6 +356,141 @@ def test_student_finalize_sets_essay_finalized(client, csrf_token):
         )
         assert upload_entry is not None
         assert upload_entry.finalized_at is not None
+
+
+def test_admin_finalize_current_upload_sets_finalized_history_and_log(client, csrf_token):
+    with client.application.app_context():
+        student_id = _create_student("student-admin-finalize", "student-pass")
+        student = db.session.get(Student, student_id)
+        assert student is not None
+        uploaded_at = datetime.utcnow()
+        student.uploaded_filename = f"student-{student_id}-draft.pdf"
+        student.uploaded_at = uploaded_at
+        db.session.add(
+            EssayUpload(
+                student_id=student_id,
+                filename=student.uploaded_filename,
+                created_at=uploaded_at,
+                updated_at=uploaded_at,
+            )
+        )
+        db.session.commit()
+        _write_pdf(client.application, student.uploaded_filename)
+
+    _login_admin(client)
+    page = client.get(f"/admin/uploads/{student_id}/override")
+    assert page.status_code == 200
+    assert "Finalize current upload" in page.get_data(as_text=True)
+    token = csrf_token(page)
+
+    response = client.post(
+        f"/admin/uploads/{student_id}/override",
+        data={
+            "csrf_token": token,
+            "reason": "Student could not finalize before the upload desk closed.",
+            "confirm": "y",
+            "finalize_current": "Finalize current upload",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/admin/uploads/{student_id}/override")
+
+    with client.application.app_context():
+        refreshed = db.session.get(Student, student_id)
+        assert refreshed is not None
+        assert refreshed.essay_finalized is True
+        assert refreshed.essay_finalized_at is not None
+
+        upload_entry = EssayUpload.query.filter_by(student_id=student_id, filename=refreshed.uploaded_filename).one()
+        assert upload_entry.finalized_at == refreshed.essay_finalized_at
+
+        log = ActivityLog.query.filter_by(action="admin_essay_finalized", object_id=str(student_id)).one()
+        assert log.actor == "admin"
+        assert log.details["reason"] == "Student could not finalize before the upload desk closed."
+        assert log.details["filename"] == refreshed.uploaded_filename
+        assert log.details["previous"]["finalized"] is False
+
+
+def test_admin_replacement_upload_preserves_previous_file_and_logs(client, csrf_token):
+    with client.application.app_context():
+        student_id = _create_student("student-admin-replace", "student-pass")
+        student = db.session.get(Student, student_id)
+        assert student is not None
+        old_name = f"student-{student_id}-old.pdf"
+        uploaded_at = datetime.utcnow()
+        student.uploaded_filename = old_name
+        student.uploaded_at = uploaded_at
+        student.essay_finalized = True
+        student.essay_finalized_at = uploaded_at
+        db.session.add(
+            EssayUpload(
+                student_id=student_id,
+                filename=old_name,
+                finalized_at=uploaded_at,
+                created_at=uploaded_at,
+                updated_at=uploaded_at,
+            )
+        )
+        db.session.commit()
+        _write_pdf(client.application, old_name, b"%PDF-1.4\n% old essay\n%%EOF\n")
+
+    _login_admin(client)
+    page = client.get(f"/admin/uploads/{student_id}/override")
+    assert page.status_code == 200
+    token = csrf_token(page)
+
+    response = client.post(
+        f"/admin/uploads/{student_id}/override",
+        data={
+            "csrf_token": token,
+            "reason": "Official copy recovered from the competition laptop.",
+            "confirm": "y",
+            "essay": (io.BytesIO(b"%PDF-1.4\n% replacement essay\n%%EOF\n"), "replacement.pdf"),
+            "replace_and_finalize": "Upload replacement and finalize",
+        },
+        content_type="multipart/form-data",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+
+    with client.application.app_context():
+        refreshed = db.session.get(Student, student_id)
+        assert refreshed is not None
+        assert refreshed.uploaded_filename != old_name
+        assert refreshed.uploaded_filename.startswith(f"admin-student-{student_id}-")
+        assert refreshed.essay_finalized is True
+        assert refreshed.essay_finalized_at is not None
+
+        upload_folder = Path(client.application.config["UPLOAD_FOLDER"])
+        assert (upload_folder / old_name).exists()
+        assert (upload_folder / refreshed.uploaded_filename).exists()
+
+        uploads = EssayUpload.query.filter_by(student_id=student_id).order_by(EssayUpload.id.asc()).all()
+        assert [upload.filename for upload in uploads] == [old_name, refreshed.uploaded_filename]
+        assert uploads[-1].finalized_at == refreshed.essay_finalized_at
+
+        log = ActivityLog.query.filter_by(action="admin_essay_replaced", object_id=str(student_id)).one()
+        assert log.actor == "admin"
+        assert log.details["reason"] == "Official copy recovered from the competition laptop."
+        assert log.details["previous"]["filename"] == old_name
+        assert log.details["new_filename"] == refreshed.uploaded_filename
+        assert log.details["original_filename"] == "replacement.pdf"
+
+
+def test_admin_uploads_links_to_override_page(client):
+    with client.application.app_context():
+        student_id = _create_student("student-admin-link", "student-pass")
+
+    _login_admin(client)
+    response = client.get("/admin/uploads")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert f"/admin/uploads/{student_id}/override" in html
+    assert "Override upload" in html
 
 
 def test_student_hard_word_limit_blocks_finalization(client, csrf_token):

@@ -367,6 +367,17 @@ class StudentUploadForm(FlaskForm):
     submit = SubmitField("Upload essay")
 
 
+class AdminEssayOverrideForm(FlaskForm):
+    essay = FileField("Replacement essay PDF", validators=[Optional(), FileAllowed(["pdf"], "PDF only")])
+    reason = TextAreaField("Reason", validators=[DataRequired(), Length(max=1000)])
+    confirm = BooleanField(
+        "I confirm this changes the official essay record and should be kept in the audit trail.",
+        validators=[DataRequired()],
+    )
+    finalize_current = SubmitField("Finalize current upload")
+    replace_and_finalize = SubmitField("Upload replacement and finalize")
+
+
 class DashboardSettingsForm(FlaskForm):
     upload_deadline = DateTimeField(
         "Essay upload deadline", format="%Y-%m-%dT%H:%M", validators=[Optional()]

@@ -52,6 +52,7 @@ from sendgrid.helpers.mail import Mail
 from .extensions import db, limiter
 from .forms import (
     AssignmentBatchForm,
+    AdminEssayOverrideForm,
     AdminLoginForm,
     ReadingGroupForm,
     ReadingGroupMemberForm,
@@ -2416,6 +2417,55 @@ def _current_essay_upload(student: Student) -> EssayUpload | None:
         .order_by(EssayUpload.id.desc())
         .first()
     )
+
+
+def _admin_essay_history_entries(student: Student) -> list[SimpleNamespace]:
+    uploads = (
+        EssayUpload.query
+        .filter_by(student_id=student.id)
+        .order_by(EssayUpload.created_at.desc(), EssayUpload.id.desc())
+        .all()
+    )
+    entries: list[SimpleNamespace] = []
+    for upload in uploads:
+        file_path = _essay_pdf_path_by_filename(upload.filename)
+        entries.append(
+            SimpleNamespace(
+                upload=upload,
+                is_current=upload.filename == student.uploaded_filename,
+                file_exists=file_path is not None,
+                download_url=(
+                    url_for("web.admin_download_essay_upload", upload_id=upload.id)
+                    if file_path
+                    else None
+                ),
+            )
+        )
+    return entries
+
+
+def _essay_upload_score_count(student: Student) -> int:
+    return (
+        EssayScore.query
+        .filter(
+            EssayScore.student_id == student.id,
+            EssayScore.score.isnot(None),
+        )
+        .count()
+    )
+
+
+def _store_admin_essay_pdf(student: Student, file) -> tuple[str, Path, int | None, datetime | None]:
+    upload_folder = _get_upload_folder()
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    suffix = secrets.token_hex(4)
+    stored_name = f"admin-student-{student.id}-{timestamp}-{suffix}.pdf"
+    file_path = upload_folder / stored_name
+    file.save(file_path)
+
+    word_count = _count_pdf_words(file_path)
+    counted_at = datetime.utcnow() if word_count is not None else None
+    return stored_name, file_path, word_count, counted_at
 
 
 def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids: list[int]) -> PdfReader:
@@ -11130,6 +11180,184 @@ def admin_download_essay(student_id: int):
     if not file_path.exists():
         abort(404)
     return send_from_directory(upload_folder, student.uploaded_filename, as_attachment=True)
+
+
+@web_bp.route("/admin/uploads/history/<int:upload_id>/download")
+def admin_download_essay_upload(upload_id: int):
+    upload = db.session.get(EssayUpload, upload_id)
+    if not upload or not upload.student:
+        abort(404)
+    pdf_path = _essay_pdf_path_by_filename(upload.filename)
+    if not pdf_path:
+        abort(404)
+    filename = secure_filename(f"essay-{upload.student_id}-upload-{upload.id}.pdf")
+    log_activity(
+        "admin_essay_history_downloaded",
+        f"Admin downloaded essay history for student {upload.student_id}",
+        object_type="student",
+        object_id=upload.student_id,
+        details={"filename": upload.filename, "upload_id": upload.id},
+    )
+    db.session.commit()
+    return send_file(
+        pdf_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
+
+
+@web_bp.route("/admin/uploads/<int:student_id>/override", methods=["GET", "POST"])
+def admin_essay_override(student_id: int):
+    student = db.session.get(Student, student_id)
+    if not student or student.is_absent:
+        abort(404)
+
+    form = AdminEssayOverrideForm()
+    word_limit = _essay_word_limit()
+    score_count = _essay_upload_score_count(student)
+
+    def _iso(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
+
+    def _render_override_response():
+        return render_template(
+            "admin/upload_override.html",
+            form=form,
+            student=student,
+            current_file_exists=_essay_pdf_path(student) is not None,
+            current_upload=_current_essay_upload(student),
+            history_entries=_admin_essay_history_entries(student),
+            score_count=score_count,
+            word_limit=word_limit,
+        )
+
+    if form.validate_on_submit():
+        reason = (form.reason.data or "").strip()
+        previous = {
+            "filename": student.uploaded_filename,
+            "uploaded_at": _iso(student.uploaded_at),
+            "word_count": student.essay_word_count,
+            "word_counted_at": _iso(student.essay_word_counted_at),
+            "finalized": bool(student.essay_finalized),
+            "finalized_at": _iso(student.essay_finalized_at),
+        }
+
+        if form.finalize_current.data:
+            if student.essay_finalized:
+                flash("Current essay is already finalized.", "info")
+                return redirect(url_for("web.admin_essay_override", student_id=student.id))
+            if not student.uploaded_filename:
+                flash("There is no current upload to finalize. Upload a replacement PDF instead.", "error")
+                return _render_override_response()
+            if _essay_pdf_path(student) is None:
+                flash("The current upload record points to a missing file. Upload a replacement PDF instead.", "error")
+                return _render_override_response()
+
+            finalized_at = datetime.utcnow()
+            student.essay_finalized = True
+            student.essay_finalized_at = finalized_at
+            upload_entry = _current_essay_upload(student)
+            if upload_entry:
+                upload_entry.finalized_at = finalized_at
+            else:
+                upload_entry = EssayUpload(
+                    student_id=student.id,
+                    filename=student.uploaded_filename,
+                    word_count=student.essay_word_count,
+                    word_counted_at=student.essay_word_counted_at,
+                    finalized_at=finalized_at,
+                    created_at=student.uploaded_at or finalized_at,
+                    updated_at=finalized_at,
+                )
+                db.session.add(upload_entry)
+
+            log_activity(
+                "admin_essay_finalized",
+                f"Admin finalized essay for student {student.id}",
+                object_type="student",
+                object_id=student.id,
+                details={
+                    "reason": reason,
+                    "previous": previous,
+                    "filename": student.uploaded_filename,
+                    "finalized_at": _iso(finalized_at),
+                    "score_count": score_count,
+                },
+            )
+            db.session.commit()
+            flash("Current essay finalized by admin.", "success")
+            return redirect(url_for("web.admin_essay_override", student_id=student.id))
+
+        if form.replace_and_finalize.data:
+            file = form.essay.data
+            if not file or not (file.filename or "").strip():
+                form.essay.errors.append("Select a replacement PDF.")
+                return _render_override_response()
+
+            filename = secure_filename(file.filename or "")
+            if not filename.lower().endswith(".pdf"):
+                form.essay.errors.append("PDF only")
+                return _render_override_response()
+
+            file.seek(0, 2)
+            size = file.tell()
+            file.seek(0)
+            if size > MAX_UPLOAD_SIZE:
+                form.essay.errors.append("File too large (max 10 MB).")
+                return _render_override_response()
+
+            uploaded_at = datetime.utcnow()
+            stored_name, _file_path, word_count, counted_at = _store_admin_essay_pdf(student, file)
+            student.uploaded_filename = stored_name
+            student.uploaded_at = uploaded_at
+            student.essay_finalized = True
+            student.essay_finalized_at = uploaded_at
+            student.essay_word_count = word_count
+            student.essay_word_counted_at = counted_at
+            upload_entry = EssayUpload(
+                student_id=student.id,
+                filename=stored_name,
+                word_count=word_count,
+                word_counted_at=counted_at,
+                finalized_at=uploaded_at,
+                created_at=uploaded_at,
+                updated_at=uploaded_at,
+            )
+            db.session.add(upload_entry)
+
+            details = {
+                "reason": reason,
+                "previous": previous,
+                "new_filename": stored_name,
+                "original_filename": filename,
+                "uploaded_at": _iso(uploaded_at),
+                "finalized_at": _iso(uploaded_at),
+                "word_count": word_count,
+                "word_counted_at": _iso(counted_at),
+                "score_count": score_count,
+            }
+            log_activity(
+                "admin_essay_replaced",
+                f"Admin replaced and finalized essay for student {student.id}",
+                object_type="student",
+                object_id=student.id,
+                details=details,
+            )
+            db.session.commit()
+            if word_count is not None and word_count > word_limit:
+                flash(
+                    f"Replacement uploaded and finalized. Word count warning: {word_count} words "
+                    f"(limit {word_limit}).",
+                    "warning",
+                )
+            else:
+                flash("Replacement essay uploaded and finalized by admin.", "success")
+            return redirect(url_for("web.admin_essay_override", student_id=student.id))
+
+        flash("Choose an admin essay action.", "error")
+
+    return _render_override_response()
 
 
 @web_bp.route("/admin/students/cards.pdf")
