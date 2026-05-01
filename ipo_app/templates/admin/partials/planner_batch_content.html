@@ -51,6 +51,113 @@
     </div>
   </div>
 
+  <details class="planner-diagnostics" {% if planner_diagnostics.issue_count %}open{% endif %}>
+    <summary>
+      <span>Check groups and assignments</span>
+      <span class="status-tag {% if planner_diagnostics.issue_count %}warning{% else %}success{% endif %}">
+        {{ planner_diagnostics.readiness_label }}
+      </span>
+    </summary>
+    <div class="planner-diagnostics-panel">
+      <div class="planner-diagnostics-grid" aria-label="Planner diagnostics summary">
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Teachers</span>
+          <strong>{{ planner_diagnostics.total_teachers }}</strong>
+          <p>{{ planner_diagnostics.non_absent_teachers }} non-absent · {{ planner_diagnostics.eligible_assessors }} eligible assessors</p>
+        </article>
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Students</span>
+          <strong>{{ planner_diagnostics.total_students }}</strong>
+          <p>{{ planner_diagnostics.non_absent_students }} non-absent · {{ planner_diagnostics.assigned_present_students }} assigned</p>
+        </article>
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Groups</span>
+          <strong>{{ planner_diagnostics.group_count }}</strong>
+          <p>{{ planner_diagnostics.groups_below_three }} below 3 · {{ planner_diagnostics.groups_below_four }} below 4</p>
+        </article>
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Assignments</span>
+          <strong>{{ planner_diagnostics.assignment_count }}</strong>
+          <p>{{ planner_diagnostics.unassigned_students }} students unassigned · {{ planner_diagnostics.total_target_essays }} target essays</p>
+        </article>
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Assessor placement</span>
+          <strong>{{ planner_diagnostics.active_main_assessors }}</strong>
+          <p>{{ planner_diagnostics.teacher_assignment_label }}: {{ planner_diagnostics.eligible_assessors_without_group }}</p>
+        </article>
+        <article class="planner-diagnostic-card">
+          <span class="planner-diagnostic-label">Reader coverage</span>
+          <strong>{{ planner_diagnostics.missing_reader_slots }}</strong>
+          <p>{{ planner_diagnostics.under_read_assignments }} essays below four reader assignments</p>
+        </article>
+      </div>
+
+      <div class="planner-diagnostics-body">
+        <section>
+          <h3>Readiness checks</h3>
+          {% if planner_diagnostics.issues %}
+            <ul class="planner-issue-list">
+              {% for issue in planner_diagnostics.issues %}
+                <li class="planner-issue planner-issue-{{ issue.severity }}">
+                  <span class="status-tag {% if issue.severity == 'danger' %}danger{% else %}warning{% endif %}">{{ issue.count }}</span>
+                  <div>
+                    <strong>{{ issue.title }}</strong>
+                    <span>{{ issue.detail }}</span>
+                  </div>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="fine-print">No obvious planner issues were found for this batch.</p>
+          {% endif %}
+        </section>
+
+        <section>
+          <h3>Planning balance</h3>
+          <table class="planner-diagnostics-table">
+            <tbody>
+              <tr>
+                <th>Student assignment rate</th>
+                <td>{{ "%.0f"|format(planner_diagnostics.student_assignment_rate) }}%</td>
+              </tr>
+              <tr>
+                <th>Eligible assessor placement rate</th>
+                <td>{{ "%.0f"|format(planner_diagnostics.assessor_assignment_rate) }}%</td>
+              </tr>
+              <tr>
+                <th>Non-assessing present teachers</th>
+                <td>{{ planner_diagnostics.non_assessing_present_teachers }}</td>
+              </tr>
+              <tr>
+                <th>Supplemental-only assessors</th>
+                <td>{{ planner_diagnostics.supplemental_only_assessors }}</td>
+              </tr>
+              <tr>
+                <th>Groups without assignments</th>
+                <td>{{ planner_diagnostics.groups_without_assignments }}</td>
+              </tr>
+              <tr>
+                <th>Groups without matching students</th>
+                <td>{{ planner_diagnostics.groups_without_matching_students }}</td>
+              </tr>
+              <tr>
+                <th>Country conflicts</th>
+                <td>{{ planner_diagnostics.country_conflicts }}</td>
+              </tr>
+              <tr>
+                <th>Language conflicts</th>
+                <td>{{ planner_diagnostics.language_conflicts }}</td>
+              </tr>
+            </tbody>
+          </table>
+          {% if planner_diagnostics.languages_without_groups %}
+            <p class="fine-print">Languages without active groups: {{ planner_diagnostics.languages_without_groups|join(', ') }}</p>
+          {% endif %}
+        </section>
+      </div>
+    </div>
+  </details>
+
   <section class="planner-grid">
     <div class="table-card">
       <h3>Create reading group</h3>

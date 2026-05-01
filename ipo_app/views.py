@@ -3228,6 +3228,267 @@ def _planner_algorithm_choices() -> list[tuple[str, str]]:
     ]
 
 
+def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup]) -> SimpleNamespace:
+    teachers = Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
+    students = Student.query.order_by(Student.last_name.asc(), Student.first_name.asc()).all()
+    present_teachers = [teacher for teacher in teachers if not teacher.is_absent]
+    present_students = [student for student in students if not student.is_absent]
+    eligible_assessors = [
+        teacher
+        for teacher in teachers
+        if not teacher.is_absent and teacher.declared_assessor_competence
+    ]
+
+    present_student_ids = {student.id for student in present_students}
+    eligible_assessor_ids = {teacher.id for teacher in eligible_assessors}
+    group_ids = {group.id for group in groups}
+    grouped_assignments = [
+        assignment
+        for group in groups
+        for assignment in group.assignments
+        if assignment.stage == batch.stage and assignment.student
+    ]
+    batch_assignments = [
+        assignment
+        for assignment in batch.assignments
+        if assignment.stage == batch.stage
+    ]
+
+    active_main_teacher_ids: set[int] = set()
+    all_main_teacher_ids: set[int] = set()
+    groups_below_three: list[ReadingGroup] = []
+    groups_below_four: list[ReadingGroup] = []
+    groups_without_leader: list[ReadingGroup] = []
+    groups_without_assignments: list[ReadingGroup] = []
+    groups_over_target: list[ReadingGroup] = []
+    groups_without_matching_students: list[ReadingGroup] = []
+
+    student_language_counts: dict[str, int] = defaultdict(int)
+    for student in present_students:
+        if student.essay_language:
+            student_language_counts[student.essay_language] += 1
+
+    languages_with_active_groups: set[str] = set()
+    total_target_essays = 0
+    for group in groups:
+        active_members = [
+            member
+            for member in group.members
+            if member.active and member.teacher and not member.teacher.is_absent
+        ]
+        for member in group.members:
+            if member.teacher_id:
+                all_main_teacher_ids.add(member.teacher_id)
+        for member in active_members:
+            active_main_teacher_ids.add(member.teacher_id)
+        if active_members:
+            languages_with_active_groups.add(group.language)
+        if len(active_members) < 3:
+            groups_below_three.append(group)
+        if len(active_members) < STAGE_1_REQUIRED_READINGS:
+            groups_below_four.append(group)
+        if not any(member.role == GroupMemberRole.LEADER for member in active_members):
+            groups_without_leader.append(group)
+        group_assignment_count = sum(1 for assignment in group.assignments if assignment.stage == batch.stage)
+        if group_assignment_count == 0:
+            groups_without_assignments.append(group)
+        if group.target_essay_load is not None:
+            total_target_essays += max(group.target_essay_load, 0)
+            if group_assignment_count > group.target_essay_load:
+                groups_over_target.append(group)
+        if student_language_counts.get(group.language, 0) == 0:
+            groups_without_matching_students.append(group)
+
+    grouped_student_ids = {assignment.student_id for assignment in grouped_assignments if assignment.student_id}
+    assigned_present_student_ids = grouped_student_ids.intersection(present_student_ids)
+    unassigned_students = [student for student in present_students if student.id not in grouped_student_ids]
+    assigned_absent_students = [
+        assignment.student
+        for assignment in grouped_assignments
+        if assignment.student and assignment.student.is_absent
+    ]
+    ungrouped_assignments = [
+        assignment
+        for assignment in batch_assignments
+        if not assignment.group_id or assignment.group_id not in group_ids
+    ]
+
+    language_conflicts = [
+        assignment
+        for assignment in grouped_assignments
+        if assignment.student and assignment.group and assignment.student.essay_language != assignment.group.language
+    ]
+    country_conflicts: list[EssayAssignment] = []
+    for assignment in grouped_assignments:
+        group = assignment.group
+        student = assignment.student
+        if not group or not student or group.allow_same_country:
+            continue
+        if any(
+            member.active
+            and member.teacher
+            and not member.teacher.is_absent
+            and member.teacher.country == student.country
+            for member in group.members
+        ):
+            country_conflicts.append(assignment)
+
+    missing_reader_slots = 0
+    under_read_assignments = 0
+    if batch.stage == Stage.STAGE_1:
+        for assignment in grouped_assignments:
+            status = _compute_stage_one_status(assignment)
+            if status.missing_reader_assignments > 0:
+                under_read_assignments += 1
+                missing_reader_slots += status.missing_reader_assignments
+
+    supplemental_teacher_ids = {
+        extra.teacher_id
+        for assignment in grouped_assignments
+        for extra in assignment.extra_readers
+        if extra.stage == batch.stage.value
+    }
+    supplemental_only_teacher_ids = supplemental_teacher_ids.difference(active_main_teacher_ids)
+    eligible_without_group_ids = eligible_assessor_ids.difference(active_main_teacher_ids)
+
+    languages_without_groups = sorted(
+        language
+        for language in student_language_counts
+        if language not in languages_with_active_groups
+    )
+
+    all_assessors_required = _planner_algorithm_for_batch(batch) == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS
+    teacher_assignment_label = (
+        "Eligible assessors without group"
+        if all_assessors_required
+        else "Eligible assessors in backup pool"
+    )
+
+    issues: list[SimpleNamespace] = []
+
+    def add_issue(severity: str, title: str, detail: str, count: int) -> None:
+        if count:
+            issues.append(SimpleNamespace(severity=severity, title=title, detail=detail, count=count))
+
+    add_issue(
+        "warning",
+        "Students not assigned",
+        "Present students without a group assignment in this batch.",
+        len(unassigned_students),
+    )
+    add_issue(
+        "danger",
+        "Groups below 3 assessors",
+        "These groups have fewer than three active non-absent assessors.",
+        len(groups_below_three),
+    )
+    add_issue(
+        "warning",
+        "Groups below 4 assessors",
+        "These groups are below the preferred Stage 1 reading team size.",
+        len(groups_below_four),
+    )
+    if all_assessors_required:
+        add_issue(
+            "warning",
+            "Eligible assessors without group",
+            "The selected algorithm expects every eligible non-absent assessor to be assigned.",
+            len(eligible_without_group_ids),
+        )
+    add_issue(
+        "warning",
+        "Groups without active leader",
+        "Every group should have one active leader for operational clarity.",
+        len(groups_without_leader),
+    )
+    add_issue(
+        "warning",
+        "Student languages without active groups",
+        "These essay languages have present students but no active group.",
+        len(languages_without_groups),
+    )
+    add_issue(
+        "danger",
+        "Language assignment conflicts",
+        "Assigned essays whose language does not match the group language.",
+        len(language_conflicts),
+    )
+    add_issue(
+        "danger",
+        "Country conflicts",
+        "Assigned essays where an active group assessor is from the student's country.",
+        len(country_conflicts),
+    )
+    add_issue(
+        "warning",
+        "Assigned absent students",
+        "Absent students should normally not remain in planned reading groups.",
+        len(assigned_absent_students),
+    )
+    add_issue(
+        "warning",
+        "Ungrouped assignments",
+        "Assignments in this batch that are not attached to a current group.",
+        len(ungrouped_assignments),
+    )
+    add_issue(
+        "warning",
+        "Missing Stage 1 reader slots",
+        "Assigned essays that currently have fewer than four reader assignments.",
+        missing_reader_slots,
+    )
+    add_issue(
+        "warning",
+        "Groups over target essay load",
+        "Groups whose assignment count is above their target essay load.",
+        len(groups_over_target),
+    )
+
+    return SimpleNamespace(
+        total_teachers=len(teachers),
+        total_students=len(students),
+        non_absent_teachers=len(present_teachers),
+        non_absent_students=len(present_students),
+        eligible_assessors=len(eligible_assessors),
+        non_assessing_present_teachers=max(len(present_teachers) - len(eligible_assessors), 0),
+        group_count=len(groups),
+        assignment_count=len(grouped_assignments),
+        assigned_present_students=len(assigned_present_student_ids),
+        unassigned_students=len(unassigned_students),
+        active_main_assessors=len(active_main_teacher_ids),
+        main_group_teachers=len(all_main_teacher_ids),
+        eligible_assessors_without_group=len(eligible_without_group_ids),
+        supplemental_only_assessors=len(supplemental_only_teacher_ids),
+        groups_below_three=len(groups_below_three),
+        groups_below_four=len(groups_below_four),
+        groups_without_assignments=len(groups_without_assignments),
+        groups_without_leader=len(groups_without_leader),
+        total_target_essays=total_target_essays,
+        groups_over_target=len(groups_over_target),
+        languages_without_groups=languages_without_groups,
+        groups_without_matching_students=len(groups_without_matching_students),
+        language_conflicts=len(language_conflicts),
+        country_conflicts=len(country_conflicts),
+        assigned_absent_students=len(assigned_absent_students),
+        ungrouped_assignments=len(ungrouped_assignments),
+        under_read_assignments=under_read_assignments,
+        missing_reader_slots=missing_reader_slots,
+        teacher_assignment_label=teacher_assignment_label,
+        all_assessors_required=all_assessors_required,
+        issues=issues,
+        issue_count=len(issues),
+        readiness_label="Review needed" if issues else "Looks ready",
+        student_assignment_rate=(
+            (len(assigned_present_student_ids) / len(present_students) * 100)
+            if present_students else 100
+        ),
+        assessor_assignment_rate=(
+            (len(active_main_teacher_ids.intersection(eligible_assessor_ids)) / len(eligible_assessors) * 100)
+            if eligible_assessors else 100
+        ),
+    )
+
+
 def _remove_auto_generated_groups(batch: AssignmentBatch) -> tuple[int, int]:
     removed_groups = 0
     removed_assignments = 0
@@ -11896,6 +12157,7 @@ def admin_planner_batch(batch_id: int):
         for assignment in group.assignments
         if assignment.stage == Stage.STAGE_1
     }
+    planner_diagnostics = _planner_batch_diagnostics(batch, groups)
 
     template_name = "admin/partials/planner_batch_content.html" if is_htmx else "admin/planner/batch_detail.html"
     context = {
@@ -11908,6 +12170,7 @@ def admin_planner_batch(batch_id: int):
         "supplemental_reader_map": supplemental_reader_map,
         "assignment_stage1_status_map": assignment_stage1_status_map,
         "group_status_map": group_status_map,
+        "planner_diagnostics": planner_diagnostics,
         "PlannerStatus": PlannerStatus,
         "PlannerAlgorithm": PlannerAlgorithm,
         "planner_algorithm_choices": _planner_algorithm_choices(),

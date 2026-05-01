@@ -1274,6 +1274,212 @@ textarea {
   margin-bottom: 2rem;
 }
 
+.planner-diagnostics {
+  margin: 0 0 2rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.planner-diagnostics summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  color: rgba(18, 18, 18, 0.9);
+  list-style: none;
+}
+
+.planner-diagnostics summary::-webkit-details-marker {
+  display: none;
+}
+
+.planner-diagnostics summary > span:first-of-type {
+  margin-right: auto;
+}
+
+.planner-diagnostics summary::before {
+  content: "▸";
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-right: 0.2rem;
+  color: var(--brand-purple);
+  transition: transform 160ms ease;
+}
+
+.planner-diagnostics[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.planner-diagnostics-panel {
+  border-top: 1px solid var(--border);
+  padding: 1.25rem;
+}
+
+.planner-diagnostics-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 1.25rem;
+}
+
+.planner-diagnostic-card {
+  min-height: 112px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.78);
+  padding: 0.95rem;
+}
+
+.planner-diagnostic-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.planner-diagnostic-card strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.9rem;
+  line-height: 1.1;
+}
+
+.planner-diagnostic-card p {
+  margin: 0.45rem 0 0 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.planner-diagnostics-body {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.planner-diagnostics-body h3 {
+  margin: 0 0 0.75rem 0;
+}
+
+.planner-issue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.planner-issue {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.planner-issue-danger {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.planner-issue div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.planner-issue span:not(.status-tag) {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.planner-diagnostics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.planner-diagnostics-table th,
+.planner-diagnostics-table td {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.planner-diagnostics-table th {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.planner-diagnostics-table td {
+  font-weight: 800;
+  text-align: right;
+}
+
+@media (max-width: 860px) {
+  .table-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .table-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .planner-algorithm-form {
+    flex-wrap: wrap;
+  }
+
+  .planner-algorithm-form select {
+    max-width: 100%;
+  }
+
+  .planner-diagnostics-body {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-diagnostics summary {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .group-members li,
+  .supplemental-reader-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .member-actions {
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .member-role-actions,
+  .supplemental-reader-actions {
+    flex-wrap: wrap;
+  }
+
+  .group-assignments table {
+    display: block;
+    overflow-x: auto;
+    width: 100%;
+  }
+}
+
 .group-cards {
   display: grid;
   gap: 1.5rem;
@@ -2534,6 +2740,12 @@ body.modal-open {
   color: rgba(18, 18, 18, 0.86);
   background: rgba(222, 116, 59, 0.14);
   border-color: rgba(222, 116, 59, 0.28);
+}
+
+.status-tag.danger {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: rgba(220, 38, 38, 0.35);
 }
 
 .status-tag.success {

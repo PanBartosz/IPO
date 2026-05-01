@@ -487,6 +487,155 @@ def test_stage1_status_requires_four_readings_for_underfilled_assignment(client)
         assert "additional reader assignment" in status.recommendation
 
 
+def test_planner_batch_diagnostics_summarize_assignment_risks(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Diagnostics Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Diagnostics Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            allow_same_country=False,
+            batch=batch,
+        )
+        reader_a = _create_assessor(301, country="Sharedland")
+        reader_b = _create_assessor(302, country="Readerland")
+        free_assessor = _create_assessor(303, country="Freeland")
+        absent_assessor = _create_assessor(304, country="Absentland")
+        absent_assessor.is_absent = True
+        non_assessor = Teacher(
+            country="Organizers",
+            first_name="Teacher305",
+            last_name="NonAssessor305",
+            email="teacher305@example.com",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            declared_assessor_competence=False,
+        )
+        assigned_student = _create_student(301, country="Sharedland")
+        unassigned_student = _create_student(302, country="Studentland")
+        absent_student = _create_student(303, country="Absent Studentland")
+        absent_student.is_absent = True
+        db.session.add_all([
+            batch,
+            group,
+            reader_a,
+            reader_b,
+            free_assessor,
+            absent_assessor,
+            non_assessor,
+            assigned_student,
+            unassigned_student,
+            absent_student,
+        ])
+        db.session.flush()
+        _add_reader(group, reader_a, role=GroupMemberRole.LEADER)
+        _add_reader(group, reader_b)
+        db.session.add_all([
+            EssayAssignment(
+                student_id=assigned_student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.DRAFT,
+            ),
+            EssayAssignment(
+                student_id=absent_student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.DRAFT,
+            ),
+        ])
+        db.session.commit()
+
+        groups = views._load_batch_groups(batch)
+        diagnostics = views._planner_batch_diagnostics(batch, groups)
+
+        assert diagnostics.total_teachers == 5
+        assert diagnostics.non_absent_teachers == 4
+        assert diagnostics.eligible_assessors == 3
+        assert diagnostics.total_students == 3
+        assert diagnostics.non_absent_students == 2
+        assert diagnostics.group_count == 1
+        assert diagnostics.assignment_count == 2
+        assert diagnostics.assigned_present_students == 1
+        assert diagnostics.unassigned_students == 1
+        assert diagnostics.groups_below_three == 1
+        assert diagnostics.groups_below_four == 1
+        assert diagnostics.eligible_assessors_without_group == 1
+        assert diagnostics.missing_reader_slots == 4
+        assert diagnostics.under_read_assignments == 2
+        assert diagnostics.country_conflicts == 1
+        assert diagnostics.assigned_absent_students == 1
+        assert diagnostics.groups_over_target == 1
+        assert diagnostics.teacher_assignment_label == "Eligible assessors without group"
+        assert diagnostics.readiness_label == "Review needed"
+        assert {issue.title for issue in diagnostics.issues} >= {
+            "Students not assigned",
+            "Groups below 3 assessors",
+            "Eligible assessors without group",
+            "Country conflicts",
+            "Assigned absent students",
+        }
+
+
+def test_planner_batch_view_renders_diagnostics_dashboard(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Diagnostics View Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Diagnostics View Group",
+            language="English",
+            target_essay_load=2,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        reader = _create_assessor(306)
+        student = _create_student(306)
+        db.session.add_all([batch, group, reader, student])
+        db.session.flush()
+        _add_reader(group, reader, role=GroupMemberRole.LEADER)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.DRAFT,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/planner/batches/{batch_id}")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Check groups and assignments" in html
+    assert "Readiness checks" in html
+    assert "Teachers" in html
+    assert "Students" in html
+    assert "Eligible assessors without group" in html
+    assert "Missing Stage 1 reader slots" in html
+
+
 def _create_six_score_stage1_assignment(index: int) -> tuple[EssayAssignment, list[Teacher]]:
     batch = AssignmentBatch(
         name=f"Trimmed Average Batch {index}",
