@@ -3279,6 +3279,57 @@ def _planner_algorithm_choices() -> list[tuple[str, str]]:
     ]
 
 
+def _planner_group_soft_max_for_batch(batch: AssignmentBatch) -> int:
+    try:
+        value = int(getattr(batch, "planner_group_soft_max", 5) or 5)
+    except (TypeError, ValueError):
+        value = 5
+    return min(max(value, 5), 6)
+
+
+def _planner_group_soft_max_choices() -> list[tuple[str, str]]:
+    return [("5", "5 essays"), ("6", "6 essays")]
+
+
+def _planner_cross_language_assignments_enabled(batch: AssignmentBatch) -> bool:
+    return bool(getattr(batch, "planner_allow_cross_language_assignments", False))
+
+
+def _active_group_teachers(group: ReadingGroup) -> list[Teacher]:
+    return [
+        member.teacher
+        for member in group.members
+        if member.active and member.teacher and not member.teacher.is_absent
+    ]
+
+
+def _group_active_teachers_support_language(group: ReadingGroup, language: str | None) -> bool:
+    normalized_language = _normalize_language(language)
+    if normalized_language is None:
+        return False
+
+    active_teachers = _active_group_teachers(group)
+    if not active_teachers:
+        return False
+    return all(normalized_language in _teacher_languages(teacher) for teacher in active_teachers)
+
+
+def _group_supports_student_language(group: ReadingGroup, student: Student, batch: AssignmentBatch) -> bool:
+    if _normalize_language(group.language) == _normalize_language(student.essay_language):
+        return True
+    if not _planner_cross_language_assignments_enabled(batch):
+        return False
+    return _group_active_teachers_support_language(group, student.essay_language)
+
+
+def _group_can_receive_student(group: ReadingGroup, student: Student, batch: AssignmentBatch) -> bool:
+    if not _group_supports_student_language(group, student, batch):
+        return False
+    if not group.allow_same_country and _teacher_has_active_group_conflict(group, student.country):
+        return False
+    return True
+
+
 def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup]) -> SimpleNamespace:
     teachers = Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
     students = Student.query.order_by(Student.last_name.asc(), Student.first_name.asc()).all()
@@ -3374,10 +3425,17 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
         if not assignment.group_id or assignment.group_id not in group_ids
     ]
 
-    language_conflicts = [
+    cross_language_assignments = [
         assignment
         for assignment in grouped_assignments
         if assignment.student and assignment.group and assignment.student.essay_language != assignment.group.language
+    ]
+    language_conflicts = [
+        assignment
+        for assignment in cross_language_assignments
+        if assignment.student
+        and assignment.group
+        and not _group_supports_student_language(assignment.group, assignment.student, batch)
     ]
     country_conflicts: list[EssayAssignment] = []
     for assignment in grouped_assignments:
@@ -3477,7 +3535,7 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
     add_issue(
         "danger",
         "Language assignment conflicts",
-        "Assigned essays whose language does not match the group language.",
+        "Assigned essays whose language is not supported by every active group assessor.",
         len(language_conflicts),
     )
     add_issue(
@@ -3536,6 +3594,7 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
         groups_over_target=len(groups_over_target),
         languages_without_groups=languages_without_groups,
         groups_without_matching_students=len(groups_without_matching_students),
+        cross_language_assignments=len(cross_language_assignments),
         language_conflicts=len(language_conflicts),
         country_conflicts=len(country_conflicts),
         assigned_absent_students=len(assigned_absent_students),
@@ -4141,7 +4200,7 @@ def _auto_generate_strict_groups_for_batch(batch: AssignmentBatch) -> dict[str, 
         _recalculate_group_targets(batch, student_counts)
         return summary
 
-    min_per_teacher_load = max(current_app.config.get("PLANNER_MIN_PER_TEACHER_LOAD", 3), 1)
+    soft_group_max = _planner_group_soft_max_for_batch(batch)
     languages = set(student_counts.keys()) | set(language_capacity.keys())
 
     language_group_capacity: dict[str, int] = {language: language_capacity.get(language, 0) // 4 for language in languages}
@@ -4154,24 +4213,21 @@ def _auto_generate_strict_groups_for_batch(batch: AssignmentBatch) -> dict[str, 
         if capacity_groups == 0:
             language_min_groups[language] = 0
             if student_counts.get(language, 0) > 0:
-                required_slots = max(4, math.ceil(student_counts[language] / min_per_teacher_load))
-                manual_slots = manual_teacher_counts.get(language, 0)
-                needed_slots = max(required_slots - manual_slots, 0)
-                if needed_slots > 0:
-                    shortfalls[language] = needed_slots
+                required_groups = max(1, math.ceil(student_counts[language] / soft_group_max))
+                needed_groups = max(required_groups - manual_group_counts.get(language, 0), 0)
+                if needed_groups > 0:
+                    shortfalls[language] = needed_groups * 4
             continue
 
-        required_slots = 0
+        required_groups = 0
         if student_counts.get(language, 0) > 0:
-            required_slots = max(4, math.ceil(student_counts[language] / min_per_teacher_load))
-        manual_slots = manual_teacher_counts.get(language, 0)
-        needed_slots = max(required_slots - manual_slots, 0)
-        required_groups = math.ceil(needed_slots / 4) if needed_slots else 0
-        min_groups = min(required_groups, capacity_groups)
+            required_groups = max(1, math.ceil(student_counts[language] / soft_group_max))
+        needed_groups = max(required_groups - manual_group_counts.get(language, 0), 0)
+        min_groups = min(needed_groups, capacity_groups)
         language_min_groups[language] = min_groups
         total_min_groups += min_groups
-        if required_groups > capacity_groups:
-            shortfalls[language] = (required_groups - capacity_groups) * 4
+        if needed_groups > capacity_groups:
+            shortfalls[language] = (needed_groups - capacity_groups) * 4
 
     if total_min_groups > full_groups:
         summary["created"] = {}
@@ -4412,6 +4468,9 @@ def _auto_generate_strict_groups_for_batch(batch: AssignmentBatch) -> dict[str, 
     if shortfalls:
         summary["shortfall"] = shortfalls
 
+    country_repairs = _repair_auto_generated_group_country_coverage(batch)
+    if country_repairs:
+        summary["country_repairs"] = country_repairs
     _recalculate_group_targets(batch, student_counts)
     return summary
 
@@ -4468,7 +4527,12 @@ def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dic
         _recalculate_group_targets(batch, student_counts)
         return summary
 
-    min_per_teacher_load = max(current_app.config.get("PLANNER_MIN_PER_TEACHER_LOAD", 3), 1)
+    soft_group_max = _planner_group_soft_max_for_batch(batch)
+    language_required_groups: dict[str, int] = {}
+    for language, student_count in student_counts.items():
+        if student_count > 0:
+            language_required_groups[language] = max(1, math.ceil(student_count / soft_group_max))
+
     planned_teacher_counts: dict[str, int] = defaultdict(int, manual_teacher_counts)
     teachers_by_language: dict[str, list[Teacher]] = defaultdict(list)
 
@@ -4479,14 +4543,16 @@ def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dic
         max_demand = max((student_counts.get(language, 0) for language in useful_options), default=0)
         return (len(useful_options), -max_demand, teacher.last_name, teacher.first_name, teacher.id)
 
-    def _language_sort_key(language: str) -> tuple[int, int, float, int, int, str]:
+    def _language_sort_key(language: str) -> tuple[int, int, int, float, int, int, str]:
         students = student_counts.get(language, 0)
         current_teachers = planned_teacher_counts.get(language, 0)
-        required_teachers = math.ceil(students / min_per_teacher_load) if students else 0
+        required_groups = language_required_groups.get(language, 0)
+        required_teachers = required_groups * 4
         deficit = max(required_teachers - current_teachers, 0)
         load_score = students / max(current_teachers + 1, 1)
         return (
             0 if students else 1,
+            0 if deficit else 1,
             -deficit,
             -load_score,
             -students,
@@ -4502,28 +4568,35 @@ def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dic
         teachers_by_language[chosen_language].append(teacher)
         planned_teacher_counts[chosen_language] += 1
 
-    def _build_groups_for_language(teachers_in_language: list[Teacher]) -> list[list[Teacher]]:
+    def _build_groups_for_language(language: str, teachers_in_language: list[Teacher]) -> list[list[Teacher]]:
         pool = sorted(teachers_in_language, key=lambda t: (t.country, t.last_name, t.first_name, t.id))
-        groups: list[list[Teacher]] = []
-        while pool:
-            selected: list[Teacher] = []
-            used_countries: set[str] = set()
-            remainder_list: list[Teacher] = []
-            for teacher in pool:
-                if len(selected) == 4:
-                    remainder_list.append(teacher)
-                    continue
-                if teacher.country not in used_countries:
-                    selected.append(teacher)
-                    used_countries.add(teacher.country)
-                else:
-                    remainder_list.append(teacher)
-            if len(selected) < 4:
-                needed = min(4 - len(selected), len(remainder_list))
-                selected.extend(remainder_list[:needed])
-                remainder_list = remainder_list[needed:]
-            groups.append(selected)
-            pool = remainder_list
+        if not pool:
+            return []
+
+        required_groups = max(
+            language_required_groups.get(language, 0) - manual_group_counts.get(language, 0),
+            0,
+        )
+        group_count = max(required_groups, math.ceil(len(pool) / 4), 1)
+        group_count = min(group_count, len(pool))
+        base_size, extra = divmod(len(pool), group_count)
+        target_sizes = [base_size + (1 if idx < extra else 0) for idx in range(group_count)]
+        groups: list[list[Teacher]] = [[] for _ in range(group_count)]
+        group_countries: list[set[str]] = [set() for _ in range(group_count)]
+
+        for teacher in pool:
+            candidates = [idx for idx, target_size in enumerate(target_sizes) if len(groups[idx]) < target_size]
+            candidates.sort(
+                key=lambda idx: (
+                    teacher.country in group_countries[idx],
+                    len(groups[idx]),
+                    idx,
+                )
+            )
+            chosen_idx = candidates[0]
+            groups[chosen_idx].append(teacher)
+            group_countries[chosen_idx].add(teacher.country)
+
         return groups
 
     created_count: dict[str, int] = defaultdict(int)
@@ -4531,7 +4604,7 @@ def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dic
     no_student_language_groups = 0
 
     for language in sorted(teachers_by_language):
-        language_groups = _build_groups_for_language(teachers_by_language[language])
+        language_groups = _build_groups_for_language(language, teachers_by_language[language])
         for members in language_groups:
             group_name = f"{language} Group {created_count[language] + manual_group_counts.get(language, 0) + 1}"
             group = ReadingGroup(
@@ -4567,6 +4640,9 @@ def _auto_generate_all_assessors_groups_for_batch(batch: AssignmentBatch) -> dic
     if no_student_language_groups:
         summary["no_student_language_groups"] = no_student_language_groups
 
+    country_repairs = _repair_auto_generated_group_country_coverage(batch)
+    if country_repairs:
+        summary["country_repairs"] = country_repairs
     _recalculate_group_targets(batch, student_counts)
     return summary
 
@@ -4579,7 +4655,11 @@ def _recalculate_group_targets(batch: AssignmentBatch, student_counts: dict[str,
                 counts[language] += 1
         student_counts = counts
 
-    min_per_teacher_load = max(current_app.config.get("PLANNER_MIN_PER_TEACHER_LOAD", 3), 1)
+    soft_group_max = _planner_group_soft_max_for_batch(batch)
+    cross_language_enabled = _planner_cross_language_assignments_enabled(batch)
+
+    def target_for_active_count(active_count: int) -> int:
+        return max(math.ceil(soft_group_max * min(active_count, 4) / 4), 1)
 
     groups_by_language: dict[str, list[ReadingGroup]] = defaultdict(list)
     for group in batch.groups:
@@ -4610,17 +4690,169 @@ def _recalculate_group_targets(batch: AssignmentBatch, student_counts: dict[str,
 
         if total_students == 0:
             for group in groups:
-                if active_counts.get(group.id):
-                    group.target_essay_load = 0
+                active_count = active_counts.get(group.id)
+                if not active_count:
+                    continue
+                can_receive_other_language = cross_language_enabled and any(
+                    count > 0 and _group_active_teachers_support_language(group, language)
+                    for language, count in student_counts.items()
+                )
+                group.target_essay_load = target_for_active_count(active_count) if can_receive_other_language else 0
             continue
-
-        per_teacher_load = max(math.ceil(total_students / total_active_teachers), min_per_teacher_load)
 
         for group in groups:
             active_count = active_counts.get(group.id)
             if not active_count:
                 continue
-            group.target_essay_load = max(per_teacher_load * active_count, 1)
+            group.target_essay_load = target_for_active_count(active_count)
+
+
+def _repair_auto_generated_group_country_coverage(batch: AssignmentBatch) -> int:
+    student_countries_by_language: dict[str, set[str]] = defaultdict(set)
+    for language, country in (
+        Student.query.filter_by(is_absent=False)
+        .with_entities(Student.essay_language, Student.country)
+        .all()
+    ):
+        if language and country:
+            student_countries_by_language[language].add(country)
+
+    if not student_countries_by_language:
+        return 0
+
+    min_active_members = 1
+    if _planner_algorithm_for_batch(batch) == PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS:
+        min_active_members = 4
+
+    groups = [
+        group
+        for group in batch.groups
+        if group.stage == batch.stage and group.members and not group.locked
+    ]
+    groups_by_language: dict[str, list[ReadingGroup]] = defaultdict(list)
+    for group in groups:
+        groups_by_language[group.language].append(group)
+
+    repairs = 0
+
+    def active_members(group: ReadingGroup) -> list[ReadingGroupMember]:
+        return [
+            member
+            for member in group.members
+            if member.active and member.teacher and not member.teacher.is_absent
+        ]
+
+    def teacher_can_read(teacher: Teacher, language: str) -> bool:
+        return _normalize_language(language) in _teacher_languages(teacher)
+
+    def group_teacher_countries(group: ReadingGroup) -> set[str]:
+        return {member.teacher.country for member in active_members(group)}
+
+    def language_uncovered_countries(language: str) -> list[str]:
+        language_groups = groups_by_language.get(language, [])
+        countries = student_countries_by_language.get(language, set())
+        uncovered = []
+        for country in countries:
+            has_eligible_group = any(
+                len(active_members(group)) >= min_active_members
+                and country not in group_teacher_countries(group)
+                for group in language_groups
+            )
+            if not has_eligible_group:
+                uncovered.append(country)
+        return sorted(uncovered)
+
+    def coverage_ok(language: str) -> bool:
+        return not language_uncovered_countries(language)
+
+    def member_sort_key(member: ReadingGroupMember) -> tuple[str, str, int]:
+        teacher = member.teacher
+        if not teacher:
+            return ("", "", member.id or 0)
+        return (teacher.country or "", teacher.last_name or "", teacher.id or 0)
+
+    changed = True
+    while changed:
+        changed = False
+        for language in sorted(student_countries_by_language):
+            uncovered_countries = language_uncovered_countries(language)
+            if not uncovered_countries:
+                continue
+
+            for country in uncovered_countries:
+                target_groups = [
+                    group
+                    for group in groups_by_language.get(language, [])
+                    if group.auto_generated and country in group_teacher_countries(group)
+                ]
+                target_groups.sort(key=lambda group: (len(active_members(group)), group.id))
+
+                for target_group in target_groups:
+                    conflict_members = [
+                        member
+                        for member in active_members(target_group)
+                        if member.teacher and member.teacher.country == country
+                    ]
+                    conflict_members.sort(key=member_sort_key)
+
+                    for conflict_member in conflict_members:
+                        conflict_teacher = conflict_member.teacher
+                        if not conflict_teacher:
+                            continue
+
+                        donor_groups = [
+                            group
+                            for group in groups
+                            if group.id != target_group.id and group.auto_generated
+                        ]
+                        donor_groups.sort(key=lambda group: (group.language, group.id))
+
+                        for donor_group in donor_groups:
+                            if not teacher_can_read(conflict_teacher, donor_group.language):
+                                continue
+
+                            donor_members = sorted(active_members(donor_group), key=member_sort_key)
+                            for donor_member in donor_members:
+                                donor_teacher = donor_member.teacher
+                                if not donor_teacher:
+                                    continue
+                                if donor_teacher.id == conflict_teacher.id:
+                                    continue
+                                if donor_teacher.country == country:
+                                    continue
+                                if not teacher_can_read(donor_teacher, target_group.language):
+                                    continue
+                                if any(member.teacher_id == donor_teacher.id for member in target_group.members):
+                                    continue
+                                if any(member.teacher_id == conflict_teacher.id for member in donor_group.members):
+                                    continue
+
+                                conflict_member.teacher, donor_member.teacher = donor_teacher, conflict_teacher
+                                conflict_member.teacher_id = donor_teacher.id
+                                donor_member.teacher_id = conflict_teacher.id
+                                db.session.flush()
+                                if coverage_ok(target_group.language) and coverage_ok(donor_group.language):
+                                    repairs += 1
+                                    changed = True
+                                    break
+
+                                conflict_member.teacher, donor_member.teacher = conflict_teacher, donor_teacher
+                                conflict_member.teacher_id = conflict_teacher.id
+                                donor_member.teacher_id = donor_teacher.id
+                                db.session.flush()
+
+                            if changed:
+                                break
+                        if changed:
+                            break
+                    if changed:
+                        break
+                if changed:
+                    break
+            if changed:
+                break
+
+    return repairs
 
 
 def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
@@ -4633,7 +4865,17 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
             continue
         db.session.delete(assignment)
     db.session.flush()
+    country_repairs = _repair_auto_generated_group_country_coverage(batch)
     _recalculate_group_targets(batch)
+    if country_repairs:
+        log_activity(
+            "planner_country_coverage_repaired",
+            f"Adjusted {country_repairs} generated group member assignment(s) before auto-assigning essays.",
+            actor="system",
+            object_type="assignment_batch",
+            object_id=batch.id,
+            details={"repairs": country_repairs},
+        )
 
     groups = [group for group in batch.groups if group.members]
     if not groups:
@@ -4644,13 +4886,16 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
         min_active_members = 4
 
     group_teacher_countries: dict[int, set[str]] = {}
+    group_active_member_counts: dict[int, int] = {}
     for group in groups:
-        countries = {
-            member.teacher.country
+        active_members = [
+            member
             for member in group.members
             if member.active and member.teacher and not member.teacher.is_absent
-        }
+        ]
+        countries = {member.teacher.country for member in active_members}
         group_teacher_countries[group.id] = countries
+        group_active_member_counts[group.id] = len(active_members)
 
     group_assignment_counts: dict[int, int] = defaultdict(int)
     for assignment in batch.assignments:
@@ -4675,24 +4920,14 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
 
         candidate_groups = []
         for group in groups:
-            if group.language != student.essay_language:
+            if not _group_supports_student_language(group, student, batch):
                 continue
             if group.locked:
                 continue
-            active_members = [
-                member
-                for member in group.members
-                if member.active and member.teacher and not member.teacher.is_absent
-            ]
-            if len(active_members) < min_active_members:
+            active_count = group_active_member_counts.get(group.id, 0)
+            if active_count < min_active_members:
                 continue
-            current_load = group_assignment_counts.get(group.id, 0)
-            if current_load >= group.target_essay_load:
-                continue
-            countries = group_teacher_countries.get(group.id, set())
-            if not group.allow_same_country and student.country in countries:
-                continue
-            if _teacher_has_active_group_conflict(group, student.country):
+            if not group.allow_same_country and student.country in group_teacher_countries.get(group.id, set()):
                 continue
             candidate_groups.append(group)
 
@@ -4700,13 +4935,21 @@ def _auto_assign_essays(batch: AssignmentBatch) -> tuple[int, list[Student]]:
             skipped.append(student)
             continue
 
-        candidate_groups.sort(
-            key=lambda grp: (
-                group_assignment_counts.get(grp.id, 0),
-                grp.target_essay_load,
+        def assignment_load_key(grp: ReadingGroup) -> tuple[float, int, int, int, int, int]:
+            current_load = group_assignment_counts.get(grp.id, 0)
+            target_load = max(grp.target_essay_load or 0, 1)
+            active_count = group_active_member_counts.get(grp.id, 0)
+            cross_language_penalty = 0 if grp.language == student.essay_language else 1
+            return (
+                current_load / target_load,
+                max(current_load - target_load, 0),
+                cross_language_penalty,
+                -active_count,
+                current_load,
                 grp.id,
             )
-        )
+
+        candidate_groups.sort(key=assignment_load_key)
         chosen_group = candidate_groups[0]
         assignment = EssayAssignment(
             student_id=student.id,
@@ -12925,6 +13168,8 @@ def admin_planner():
             planner_algorithm=PlannerAlgorithm(
                 form.planner_algorithm.data or PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value
             ),
+            planner_group_soft_max=int(form.planner_group_soft_max.data or 5),
+            planner_allow_cross_language_assignments=bool(form.planner_allow_cross_language_assignments.data),
             notes=form.notes.data.strip() if form.notes.data else None,
         )
         db.session.add(batch)
@@ -12934,7 +13179,11 @@ def admin_planner():
             f"Created assignment batch {batch.name}",
             object_type="assignment_batch",
             object_id=batch.id,
-            details={"stage": batch.stage.value},
+            details={
+                "stage": batch.stage.value,
+                "planner_group_soft_max": batch.planner_group_soft_max,
+                "planner_allow_cross_language_assignments": batch.planner_allow_cross_language_assignments,
+            },
         )
         db.session.commit()
         flash("Assignment batch created.", "success")
@@ -12942,6 +13191,8 @@ def admin_planner():
             fresh_form = AssignmentBatchForm()
             fresh_form.stage.data = Stage.STAGE_1.value
             fresh_form.planner_algorithm.data = PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value
+            fresh_form.planner_group_soft_max.data = "5"
+            fresh_form.planner_allow_cross_language_assignments.data = False
             return _render_planner_overview(fresh_form)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
@@ -12975,22 +13226,28 @@ def admin_planner_batch(batch_id: int):
         group.members.sort(key=lambda member: (0 if member.role == GroupMemberRole.LEADER else 1, member.id))
 
     students_by_language: dict[str, list[Student]] = defaultdict(list)
-    for student in Student.query.order_by(Student.essay_language.asc(), Student.country.asc(), Student.last_name.asc()).all():
+    unassigned_students: list[Student] = []
+    for student in (
+        Student.query.filter_by(is_absent=False)
+        .order_by(Student.essay_language.asc(), Student.country.asc(), Student.last_name.asc())
+        .all()
+    ):
         if student.id in assigned_student_ids:
             continue
+        unassigned_students.append(student)
         students_by_language[student.essay_language].append(student)
 
     eligible_students_map: dict[int, list[Student]] = {}
     for group in groups:
-        active_countries = {
-            member.teacher.country
-            for member in group.members
-            if member.active and member.teacher
-        }
+        candidate_pool = (
+            unassigned_students
+            if _planner_cross_language_assignments_enabled(batch)
+            else students_by_language.get(group.language, [])
+        )
         candidates = [
             student
-            for student in students_by_language.get(group.language, [])
-            if group.allow_same_country or student.country not in active_countries
+            for student in candidate_pool
+            if _group_can_receive_student(group, student, batch)
         ]
         eligible_students_map[group.id] = candidates[:100]
 
@@ -13070,6 +13327,7 @@ def admin_planner_batch(batch_id: int):
         "PlannerStatus": PlannerStatus,
         "PlannerAlgorithm": PlannerAlgorithm,
         "planner_algorithm_choices": _planner_algorithm_choices(),
+        "planner_group_soft_max_choices": _planner_group_soft_max_choices(),
         "is_htmx": is_htmx,
     }
     if not is_htmx:
@@ -13088,6 +13346,8 @@ def admin_planner_update_algorithm(batch_id: int):
         return guard_response
 
     algorithm_value = request.form.get("planner_algorithm")
+    soft_max_value = request.form.get("planner_group_soft_max")
+    cross_language_enabled = bool(request.form.get("planner_allow_cross_language_assignments"))
     try:
         algorithm = PlannerAlgorithm(algorithm_value)
     except Exception:
@@ -13095,17 +13355,29 @@ def admin_planner_update_algorithm(batch_id: int):
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+    try:
+        soft_max = int(soft_max_value or _planner_group_soft_max_for_batch(batch))
+    except (TypeError, ValueError):
+        soft_max = _planner_group_soft_max_for_batch(batch)
+    soft_max = min(max(soft_max, 5), 6)
 
     batch.planner_algorithm = algorithm
+    batch.planner_group_soft_max = soft_max
+    batch.planner_allow_cross_language_assignments = cross_language_enabled
+    _recalculate_group_targets(batch)
     log_activity(
-        "planner_algorithm_updated",
-        f"Planner algorithm updated for batch {batch.name}",
+        "planner_settings_updated",
+        f"Planner settings updated for batch {batch.name}",
         object_type="assignment_batch",
         object_id=batch.id,
-        details={"planner_algorithm": algorithm.value},
+        details={
+            "planner_algorithm": algorithm.value,
+            "planner_group_soft_max": soft_max,
+            "planner_allow_cross_language_assignments": cross_language_enabled,
+        },
     )
     db.session.commit()
-    flash("Planner algorithm updated.", "success")
+    flash("Planner settings updated.", "success")
     if _is_htmx_request():
         return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
@@ -13410,6 +13682,11 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+    if student.is_absent:
+        flash("Absent students cannot be assigned to reading groups.", "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
     existing_assignment = EssayAssignment.query.filter_by(batch_id=batch.id, student_id=student.id).first()
     if existing_assignment:
@@ -13418,18 +13695,13 @@ def admin_planner_assign_manual(batch_id: int, group_id: int):
             return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
-    if student.essay_language != group.language:
-        flash("Student language does not match the group language.", "error")
+    if not _group_supports_student_language(group, student, batch):
+        flash("Group readers are not all eligible for this student's essay language.", "error")
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
         return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
 
-    active_countries = {
-        member.teacher.country
-        for member in group.members
-        if member.active and member.teacher and not member.teacher.is_absent
-    }
-    if not group.allow_same_country and student.country in active_countries:
+    if not group.allow_same_country and _teacher_has_active_group_conflict(group, student.country):
         flash("Group cannot read students from the same country.", "error")
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
@@ -13708,6 +13980,7 @@ def admin_planner_auto_generate(batch_id: int):
                 "teachers_assigned",
                 "underfilled",
                 "no_student_language_groups",
+                "country_repairs",
             }
             and isinstance(count, int)
         )
@@ -13740,6 +14013,11 @@ def admin_planner_auto_generate(batch_id: int):
                 f"{summary['no_student_language_groups']} generated group(s) have no matching student essays yet.",
                 "warning",
             )
+        if summary.get("country_repairs"):
+            flash(
+                f"Adjusted {summary['country_repairs']} generated reader placement(s) to avoid country dead ends.",
+                "info",
+            )
         if summary.get("shortfall"):
             shortfall_items = ", ".join(f"{language}: {value}" for language, value in summary["shortfall"].items())
             flash(f"Not enough teachers in: {shortfall_items}. Some language coverage targets were reduced.", "warning")
@@ -13761,6 +14039,8 @@ def admin_planner_auto_assign(batch_id: int):
         "assigned": assigned,
         "skipped": [student.id for student in skipped],
         "planner_algorithm": _planner_algorithm_for_batch(batch).value,
+        "planner_group_soft_max": _planner_group_soft_max_for_batch(batch),
+        "planner_allow_cross_language_assignments": _planner_cross_language_assignments_enabled(batch),
     }
     log_activity(
         "essays_auto_assigned",

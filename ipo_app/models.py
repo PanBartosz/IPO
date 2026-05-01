@@ -525,6 +525,8 @@ class AssignmentBatch(db.Model, TimestampMixin):
         nullable=False,
         default=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
     )
+    planner_group_soft_max = db.Column(db.Integer, nullable=False, default=5)
+    planner_allow_cross_language_assignments = db.Column(db.Boolean, nullable=False, default=False)
     name = db.Column(db.String(120), nullable=False)
     notes = db.Column(db.Text)
     created_by = db.Column(db.String(120))

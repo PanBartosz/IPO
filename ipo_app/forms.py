@@ -329,6 +329,16 @@ class AssignmentBatchForm(FlaskForm):
         ],
         default=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value,
     )
+    planner_group_soft_max = SelectField(
+        "Soft max essays per group",
+        validators=[Optional()],
+        choices=[("5", "5 essays"), ("6", "6 essays")],
+        default="5",
+    )
+    planner_allow_cross_language_assignments = BooleanField(
+        "Allow compatible cross-language auto-assignment",
+        default=False,
+    )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
     submit = SubmitField("Create batch")
 

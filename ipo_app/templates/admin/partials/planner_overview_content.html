@@ -21,6 +21,22 @@
         <div class="field-error">{{ error }}</div>
       {% endfor %}
     </div>
+    <div class="form-field">
+      {{ form.planner_group_soft_max.label }}
+      {{ form.planner_group_soft_max() }}
+      {% for error in form.planner_group_soft_max.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
+    <div class="form-field full-width">
+      <label class="checkbox-label">
+        {{ form.planner_allow_cross_language_assignments() }}
+        {{ form.planner_allow_cross_language_assignments.label.text }}
+      </label>
+      {% for error in form.planner_allow_cross_language_assignments.errors %}
+        <div class="field-error">{{ error }}</div>
+      {% endfor %}
+    </div>
     <div class="form-field full-width">
       {{ form.notes.label }}
       {{ form.notes(rows=3) }}
@@ -41,6 +57,8 @@
         <th>Name</th>
         <th>Status</th>
         <th>Algorithm</th>
+        <th>Soft max</th>
+        <th>Cross-language</th>
         <th>Created</th>
         <th>Updated</th>
         <th>Groups</th>
@@ -60,6 +78,8 @@
               Strict 4 + backups
             {% endif %}
           </td>
+          <td>{{ batch.planner_group_soft_max or 5 }}</td>
+          <td>{{ 'On' if batch.planner_allow_cross_language_assignments else 'Off' }}</td>
           <td>{{ batch.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td>{{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else '—' }}</td>
           <td>{{ batch.groups|length }}</td>

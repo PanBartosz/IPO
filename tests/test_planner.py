@@ -125,6 +125,8 @@ def test_admin_planner_create_batch_creates_row_and_log(client, csrf_token):
             "csrf_token": token,
             "name": "Batch 1",
             "stage": Stage.STAGE_1.value,
+            "planner_group_soft_max": "6",
+            "planner_allow_cross_language_assignments": "y",
             "notes": "",
             "submit": "Create batch",
         },
@@ -139,6 +141,8 @@ def test_admin_planner_create_batch_creates_row_and_log(client, csrf_token):
         assert batch is not None
         assert batch.stage == Stage.STAGE_1
         assert batch.status == PlannerStatus.DRAFT
+        assert batch.planner_group_soft_max == 6
+        assert batch.planner_allow_cross_language_assignments is True
 
         log = ActivityLog.query.filter_by(
             action="batch_created",
@@ -146,6 +150,8 @@ def test_admin_planner_create_batch_creates_row_and_log(client, csrf_token):
             object_id=str(batch.id),
         ).first()
         assert log is not None
+        assert log.details["planner_group_soft_max"] == 6
+        assert log.details["planner_allow_cross_language_assignments"] is True
 
 
 def test_admin_planner_add_group_creates_row_and_log(client, csrf_token):
@@ -191,6 +197,174 @@ def test_admin_planner_add_group_creates_row_and_log(client, csrf_token):
             object_id=str(group.id),
         ).first()
         assert log is not None
+
+
+def test_admin_planner_updates_algorithm_and_group_soft_max(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Settings Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
+            planner_group_soft_max=5,
+        )
+        group = ReadingGroup(
+            name="Existing Group",
+            language="English",
+            target_essay_load=12,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        readers = [_create_assessor(index) for index in range(10, 14)]
+        student = _create_student(10)
+        db.session.add_all([batch, group, student, *readers])
+        db.session.flush()
+        for reader in readers:
+            _add_reader(group, reader)
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/algorithm",
+        data={
+            "csrf_token": token,
+            "planner_algorithm": PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS.value,
+            "planner_group_soft_max": "6",
+            "planner_allow_cross_language_assignments": "y",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+
+    with client.application.app_context():
+        batch = db.session.get(AssignmentBatch, batch_id)
+        assert batch.planner_algorithm == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS
+        assert batch.planner_group_soft_max == 6
+        assert batch.planner_allow_cross_language_assignments is True
+        group = db.session.get(ReadingGroup, group_id)
+        assert group.target_essay_load == 6
+
+        log = ActivityLog.query.filter_by(
+            action="planner_settings_updated",
+            object_type="assignment_batch",
+            object_id=str(batch.id),
+        ).first()
+        assert log is not None
+        assert log.details["planner_group_soft_max"] == 6
+        assert log.details["planner_allow_cross_language_assignments"] is True
+
+
+def test_admin_planner_manual_assignment_allows_compatible_cross_language_group(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Manual Cross Language Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_allow_cross_language_assignments=True,
+        )
+        group = ReadingGroup(
+            name="English Group",
+            language="English",
+            target_essay_load=5,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        readers = [
+            _create_assessor(index, languages=("English", "French"))
+            for index in range(20, 24)
+        ]
+        student = _create_student(20, language="French")
+        db.session.add_all([batch, group, student, *readers])
+        db.session.flush()
+        for reader in readers:
+            _add_reader(group, reader)
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        student_id = student.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/groups/{group_id}/assign",
+        data={
+            "csrf_token": token,
+            "student_id": str(student_id),
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    with client.application.app_context():
+        assignment = EssayAssignment.query.filter_by(batch_id=batch_id, student_id=student_id).first()
+        assert assignment is not None
+        assert assignment.group_id == group_id
+        assert assignment.manual_override is True
+
+
+def test_admin_planner_assignment_controls_exclude_absent_students(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Absent Student Assignment Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+        )
+        group = ReadingGroup(
+            name="English Group",
+            language="English",
+            target_essay_load=5,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        readers = [_create_assessor(index) for index in range(30, 34)]
+        present_student = _create_student(30)
+        present_student.first_name = "PresentTarget"
+        present_student.last_name = "Visible"
+        absent_student = _create_student(31)
+        absent_student.first_name = "AbsentTarget"
+        absent_student.last_name = "Hidden"
+        absent_student.is_absent = True
+        db.session.add_all([batch, group, present_student, absent_student, *readers])
+        db.session.flush()
+        for reader in readers:
+            _add_reader(group, reader)
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_student_id = absent_student.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/planner/batches/{batch_id}")
+    html = response.get_data(as_text=True)
+    assert "PresentTarget Visible" in html
+    assert "AbsentTarget Hidden" not in html
+
+    token = csrf_token(response)
+    post_response = client.post(
+        f"/admin/planner/batches/{batch_id}/groups/{group_id}/assign",
+        data={
+            "csrf_token": token,
+            "student_id": str(absent_student_id),
+        },
+        follow_redirects=False,
+    )
+
+    assert post_response.status_code == 302
+    with client.application.app_context():
+        assert EssayAssignment.query.filter_by(batch_id=batch_id, student_id=absent_student_id).first() is None
 
 
 def test_planner_teacher_choices_and_batch_view_exclude_non_assessors(client):
@@ -384,8 +558,8 @@ def test_all_assessors_auto_generate_uses_every_teacher_without_backups_and_assi
             planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
         )
         db.session.add(batch)
-        db.session.add_all(_create_assessor(index) for index in range(6))
-        db.session.add_all(_create_student(index) for index in range(8))
+        db.session.add_all(_create_assessor(index) for index in range(7))
+        db.session.add_all(_create_student(index) for index in range(9))
         db.session.commit()
 
         summary = views._auto_generate_groups_for_batch(batch)
@@ -393,7 +567,7 @@ def test_all_assessors_auto_generate_uses_every_teacher_without_backups_and_assi
 
         assert summary["created"] == {"English": 2}
         assert summary["backups"] == 0
-        assert summary["teachers_assigned"] == 6
+        assert summary["teachers_assigned"] == 7
         assert summary["underfilled"] == 1
 
         groups = ReadingGroup.query.filter_by(batch_id=batch.id).order_by(ReadingGroup.id.asc()).all()
@@ -401,16 +575,337 @@ def test_all_assessors_auto_generate_uses_every_teacher_without_backups_and_assi
             sum(1 for member in group.members if member.active and member.role != GroupMemberRole.BACKUP)
             for group in groups
         )
-        assert active_counts == [2, 4]
+        assert active_counts == [3, 4]
         assert not any(member.role == GroupMemberRole.BACKUP for group in groups for member in group.members)
 
         assigned, skipped = views._auto_assign_essays(batch)
         db.session.commit()
 
-        assert assigned == 8
+        assert assigned == 9
         assert skipped == []
-        underfilled_group = next(group for group in groups if len([member for member in group.members if member.active]) == 2)
-        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=underfilled_group.id).count() > 0
+        underfilled_group = next(
+            group for group in groups if len([member for member in group.members if member.active]) == 3
+        )
+        full_group = next(
+            group for group in groups if len([member for member in group.members if member.active]) == 4
+        )
+        underfilled_count = EssayAssignment.query.filter_by(batch_id=batch.id, group_id=underfilled_group.id).count()
+        full_count = EssayAssignment.query.filter_by(batch_id=batch.id, group_id=full_group.id).count()
+        assert full_count > underfilled_count > 0
+
+
+def test_all_assessors_auto_generate_uses_batch_soft_group_max_for_group_count(client):
+    with client.application.app_context():
+        batch_max_5 = AssignmentBatch(
+            name="Soft Max 5 Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+            planner_group_soft_max=5,
+        )
+        db.session.add(batch_max_5)
+        db.session.add_all(_create_assessor(index) for index in range(50, 58))
+        db.session.add_all(_create_student(index) for index in range(50, 62))
+        db.session.commit()
+
+        summary_max_5 = views._auto_generate_groups_for_batch(batch_max_5)
+        db.session.commit()
+
+        assert summary_max_5["created"] == {"English": 3}
+        groups_max_5 = ReadingGroup.query.filter_by(batch_id=batch_max_5.id).all()
+        assert sorted(
+            sum(1 for member in group.members if member.active)
+            for group in groups_max_5
+        ) == [2, 3, 3]
+
+        db.session.query(ReadingGroupMember).delete()
+        db.session.query(ReadingGroup).delete()
+        db.session.query(AssignmentBatch).delete()
+        db.session.query(TeacherLanguage).delete()
+        db.session.query(Teacher).delete()
+        db.session.query(Student).delete()
+        db.session.commit()
+
+        batch_max_6 = AssignmentBatch(
+            name="Soft Max 6 Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+            planner_group_soft_max=6,
+        )
+        db.session.add(batch_max_6)
+        db.session.add_all(_create_assessor(index) for index in range(60, 68))
+        db.session.add_all(_create_student(index) for index in range(70, 82))
+        db.session.commit()
+
+        summary_max_6 = views._auto_generate_groups_for_batch(batch_max_6)
+        db.session.commit()
+
+        assert summary_max_6["created"] == {"English": 2}
+        groups_max_6 = ReadingGroup.query.filter_by(batch_id=batch_max_6.id).all()
+        assert sorted(
+            sum(1 for member in group.members if member.active)
+            for group in groups_max_6
+        ) == [4, 4]
+
+
+def test_auto_assign_soft_target_overflows_when_only_eligible_group_is_at_target(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Soft Target Overflow Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        valid_group = ReadingGroup(
+            name="Valid",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        conflict_group = ReadingGroup(
+            name="Conflict",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        valid_reader = _create_assessor(31, country="Readerland")
+        conflict_reader = _create_assessor(32, country="Conflictland")
+        students = [_create_student(31 + offset, country="Conflictland") for offset in range(4)]
+        db.session.add_all([batch, valid_group, conflict_group, valid_reader, conflict_reader, *students])
+        db.session.flush()
+        _add_reader(valid_group, valid_reader, role=GroupMemberRole.LEADER)
+        _add_reader(conflict_group, conflict_reader, role=GroupMemberRole.LEADER)
+        db.session.commit()
+
+        assigned, skipped = views._auto_assign_essays(batch)
+        db.session.commit()
+
+        assert assigned == 4
+        assert skipped == []
+        assert valid_group.target_essay_load == 2
+        assert conflict_group.target_essay_load == 2
+        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=valid_group.id).count() == 4
+        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=conflict_group.id).count() == 0
+
+
+def test_auto_assign_repairs_generated_group_country_dead_end_before_assigning(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Country Coverage Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        french_group = ReadingGroup(
+            name="French",
+            language="French",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+            auto_generated=True,
+        )
+        english_group = ReadingGroup(
+            name="English",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+            auto_generated=True,
+        )
+        uk_reader = _create_assessor(41, country="United Kingdom", languages=("English", "French"))
+        bulgaria_reader = _create_assessor(42, country="Bulgaria", languages=("French",))
+        montenegro_reader = _create_assessor(43, country="Montenegro", languages=("French",))
+        romania_reader = _create_assessor(44, country="Romania", languages=("English", "French"))
+        french_students = [
+            _create_student(41, country="United Kingdom", language="French"),
+            _create_student(42, country="United Kingdom", language="French"),
+            _create_student(43, country="USA", language="French"),
+        ]
+        english_student = _create_student(44, country="USA", language="English")
+        db.session.add_all(
+            [
+                batch,
+                french_group,
+                english_group,
+                uk_reader,
+                bulgaria_reader,
+                montenegro_reader,
+                romania_reader,
+                *french_students,
+                english_student,
+            ]
+        )
+        db.session.flush()
+        _add_reader(french_group, uk_reader, role=GroupMemberRole.LEADER)
+        _add_reader(french_group, bulgaria_reader)
+        _add_reader(french_group, montenegro_reader)
+        _add_reader(english_group, romania_reader, role=GroupMemberRole.LEADER)
+        db.session.commit()
+
+        assigned, skipped = views._auto_assign_essays(batch)
+        db.session.commit()
+
+        assert assigned == 4
+        assert skipped == []
+        db.session.refresh(french_group)
+        french_reader_countries = {
+            member.teacher.country
+            for member in french_group.members
+            if member.active and member.teacher
+        }
+        assert "United Kingdom" not in french_reader_countries
+        assert "Romania" in french_reader_countries
+        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=french_group.id).count() == 3
+        assert ActivityLog.query.filter_by(action="planner_country_coverage_repaired").count() == 1
+
+
+def test_auto_assign_keeps_languages_separate_without_cross_language_toggle(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Separate Language Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+            planner_allow_cross_language_assignments=False,
+        )
+        english_group = ReadingGroup(
+            name="English",
+            language="English",
+            target_essay_load=6,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        french_group = ReadingGroup(
+            name="French",
+            language="French",
+            target_essay_load=6,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        english_readers = [
+            _create_assessor(index, languages=("English", "French"))
+            for index in range(90, 94)
+        ]
+        french_readers = [
+            _create_assessor(index, languages=("French",))
+            for index in range(94, 98)
+        ]
+        students = [_create_student(index, language="French") for index in range(90, 96)]
+        db.session.add_all([batch, english_group, french_group, *english_readers, *french_readers, *students])
+        db.session.flush()
+        for reader in english_readers:
+            _add_reader(english_group, reader)
+        for reader in french_readers:
+            _add_reader(french_group, reader)
+        db.session.commit()
+
+        assigned, skipped = views._auto_assign_essays(batch)
+        db.session.commit()
+
+        assert assigned == 6
+        assert skipped == []
+        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=english_group.id).count() == 0
+        assert EssayAssignment.query.filter_by(batch_id=batch.id, group_id=french_group.id).count() == 6
+
+
+def test_auto_assign_uses_compatible_cross_language_groups_to_balance_load(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Cross Language Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+            planner_allow_cross_language_assignments=True,
+        )
+        english_group = ReadingGroup(
+            name="English",
+            language="English",
+            target_essay_load=6,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        french_group = ReadingGroup(
+            name="French",
+            language="French",
+            target_essay_load=6,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        english_readers = [
+            _create_assessor(index, languages=("English", "French"))
+            for index in range(110, 114)
+        ]
+        french_readers = [
+            _create_assessor(index, languages=("French",))
+            for index in range(114, 118)
+        ]
+        students = [_create_student(index, language="French") for index in range(110, 116)]
+        db.session.add_all([batch, english_group, french_group, *english_readers, *french_readers, *students])
+        db.session.flush()
+        for reader in english_readers:
+            _add_reader(english_group, reader)
+        for reader in french_readers:
+            _add_reader(french_group, reader)
+        db.session.commit()
+
+        assigned, skipped = views._auto_assign_essays(batch)
+        db.session.commit()
+
+        assert assigned == 6
+        assert skipped == []
+        english_count = EssayAssignment.query.filter_by(batch_id=batch.id, group_id=english_group.id).count()
+        french_count = EssayAssignment.query.filter_by(batch_id=batch.id, group_id=french_group.id).count()
+        assert english_count > 0
+        assert french_count > 0
+        assert abs(english_count - french_count) <= 1
+
+        diagnostics = views._planner_batch_diagnostics(batch, [english_group, french_group])
+        assert diagnostics.cross_language_assignments == english_count
+        assert diagnostics.language_conflicts == 0
+
+
+def test_auto_assign_rejects_cross_language_group_when_any_active_reader_lacks_language(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Cross Language Incompatible Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+            planner_allow_cross_language_assignments=True,
+        )
+        english_group = ReadingGroup(
+            name="English",
+            language="English",
+            target_essay_load=6,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+        )
+        bilingual_reader = _create_assessor(130, languages=("English", "French"))
+        english_only_reader = _create_assessor(131, languages=("English",))
+        students = [_create_student(index, language="French") for index in range(130, 132)]
+        db.session.add_all([batch, english_group, bilingual_reader, english_only_reader, *students])
+        db.session.flush()
+        _add_reader(english_group, bilingual_reader)
+        _add_reader(english_group, english_only_reader)
+        db.session.commit()
+
+        assigned, skipped = views._auto_assign_essays(batch)
+        db.session.commit()
+
+        assert assigned == 0
+        assert [student.id for student in skipped] == [student.id for student in students]
 
 
 def test_auto_generate_removes_manual_assignments_from_replaced_generated_groups(client):

@@ -1,30 +1,25 @@
 <div id="planner-batch-content" data-preserve-scroll="true">
   {% set current_algorithm = batch.planner_algorithm.value if batch.planner_algorithm else PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS.value %}
   {% set batch_is_published = batch.status == PlannerStatus.PUBLISHED %}
-  <div class="table-card table-card-wide">
-    <div class="table-header">
-      <h2>{{ batch.name }}</h2>
-      <div class="table-actions">
-        <span>Status: <strong>{{ batch.status.value.title() }}</strong></span>
-        <form method="post" action="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" class="planner-algorithm-form" hx-post="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <label for="planner_algorithm">Algorithm</label>
-          <select name="planner_algorithm" id="planner_algorithm" {% if batch_is_published %}disabled{% endif %}>
-            {% for value, label in planner_algorithm_choices %}
-              <option value="{{ value }}" {% if value == current_algorithm %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Apply</button>
-        </form>
-        <a class="button-link" href="{{ url_for('web.admin_planner') }}">Back to batches</a>
-        <form method="post" action="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-generate groups</button>
-        </form>
-        <form method="post" action="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-assign essays</button>
-        </form>
+  <div class="table-card table-card-wide planner-batch-card">
+    <div class="planner-batch-top">
+      <div class="planner-batch-title">
+        <div class="planner-title-row">
+          <h2>{{ batch.name }}</h2>
+          <span class="status-tag {% if batch_is_published %}success{% else %}warning{% endif %}">
+            {{ batch.status.value.title() }}
+          </span>
+        </div>
+        <div class="planner-metric-row" aria-label="Batch summary">
+          <span>{{ batch.stage.value.replace('_', ' ').title() }}</span>
+          <span>{{ batch.groups|length }} groups</span>
+          <span>{{ batch.assignments|length }} assignments</span>
+          <span>Soft max {{ batch.planner_group_soft_max or 5 }}</span>
+          <span>Cross-language {{ 'on' if batch.planner_allow_cross_language_assignments else 'off' }}</span>
+        </div>
+      </div>
+      <div class="planner-top-actions">
+        <a class="button-link secondary" href="{{ url_for('web.admin_planner') }}">Back to batches</a>
         {% if batch_is_published %}
           <form method="post" action="{{ url_for('web.admin_planner_unpublish', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_unpublish', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -36,19 +31,70 @@
             <button type="submit" class="button-link">Publish</button>
           </form>
         {% endif %}
-        <a class="button-link" href="{{ url_for('web.admin_planner_export_groups_pdf', batch_id=batch.id) }}">Groups PDF</a>
-        <a class="button-link" href="{{ url_for('web.admin_planner_export_teachers_pdf', batch_id=batch.id) }}">Teachers PDF</a>
       </div>
     </div>
-    <div class="batch-summary">
-      <p><strong>Stage:</strong> {{ batch.stage.value.replace('_', ' ').title() }}</p>
-      <p><strong>Algorithm:</strong> {% if batch.planner_algorithm == PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS %}All assessors, no backups{% else %}Strict 4 + backups{% endif %}</p>
-      <p><strong>Groups:</strong> {{ batch.groups|length }}</p>
-      <p><strong>Assignments:</strong> {{ batch.assignments|length }}</p>
-      {% if batch.notes %}
-        <p><strong>Notes:</strong> {{ batch.notes }}</p>
-      {% endif %}
+
+    <form method="post" action="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" class="planner-settings-form" hx-post="{{ url_for('web.admin_planner_update_algorithm', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="planner-setting">
+        <label for="planner_algorithm">Algorithm</label>
+        <select name="planner_algorithm" id="planner_algorithm" {% if batch_is_published %}disabled{% endif %}>
+          {% for value, label in planner_algorithm_choices %}
+            <option value="{{ value }}" {% if value == current_algorithm %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <p>Controls how generated groups use available assessors: strict groups with backups, or every eligible assessor without backups.</p>
+      </div>
+      <div class="planner-setting">
+        <label for="planner_group_soft_max">Soft max essays per group</label>
+        <select name="planner_group_soft_max" id="planner_group_soft_max" {% if batch_is_published %}disabled{% endif %}>
+          {% for value, label in planner_group_soft_max_choices %}
+            <option value="{{ value }}" {% if value|int == (batch.planner_group_soft_max or 5) %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <p>Used during group generation and load balancing; assignments may exceed it when compatibility requires that.</p>
+      </div>
+      <label class="planner-setting planner-setting-toggle" for="planner_allow_cross_language_assignments">
+        <span class="planner-toggle-row">
+          <input
+            type="checkbox"
+            name="planner_allow_cross_language_assignments"
+            id="planner_allow_cross_language_assignments"
+            value="1"
+            {% if batch.planner_allow_cross_language_assignments %}checked{% endif %}
+            {% if batch_is_published %}disabled{% endif %}
+          >
+          <span>Compatible cross-language assignment</span>
+        </span>
+        <p>Allows a group to receive another essay language only when every active reader in that group supports that language.</p>
+      </label>
+      <div class="planner-settings-submit">
+        <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Apply settings</button>
+      </div>
+    </form>
+
+    <div class="planner-action-strip" aria-label="Planner actions">
+      <div class="planner-action-group">
+        <span class="planner-action-label">Plan</span>
+        <form method="post" action="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_generate', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-generate groups</button>
+        </form>
+        <form method="post" action="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-post="{{ url_for('web.admin_planner_auto_assign', batch_id=batch.id) }}" hx-target="#planner-batch-content" hx-swap="outerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="button-link" {% if batch_is_published %}disabled{% endif %}>Auto-assign essays</button>
+        </form>
+      </div>
+      <div class="planner-action-group">
+        <span class="planner-action-label">PDF</span>
+        <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_groups_pdf', batch_id=batch.id) }}">Groups PDF</a>
+        <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_teachers_pdf', batch_id=batch.id) }}">Teachers PDF</a>
+      </div>
     </div>
+
+    {% if batch.notes %}
+      <p class="planner-batch-notes"><strong>Notes:</strong> {{ batch.notes }}</p>
+    {% endif %}
   </div>
 
   <details class="planner-diagnostics" {% if planner_diagnostics.issue_count %}open{% endif %}>
@@ -159,6 +205,10 @@
               <tr>
                 <th>Language conflicts</th>
                 <td>{{ planner_diagnostics.language_conflicts }}</td>
+              </tr>
+              <tr>
+                <th>Cross-language assignments</th>
+                <td>{{ planner_diagnostics.cross_language_assignments }}</td>
               </tr>
             </tbody>
           </table>
