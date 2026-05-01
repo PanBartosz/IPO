@@ -44,7 +44,7 @@
         <th>Stage 1 avg</th>
         <th>Stage 1 spread</th>
         <th>Stage 1 status</th>
-        <th>Extra reader</th>
+        <th>Additional readers</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -96,7 +96,7 @@
             {% if status.stage_two %}
               <span class="status-tag">Stage 2</span>
             {% elif status.needs_extra %}
-              <span class="status-tag warning">Needs extra reader</span>
+              <span class="status-tag warning">Needs extra readers</span>
             {% elif status.completed %}
               <span class="status-tag">Stage 1 complete</span>
             {% else %}

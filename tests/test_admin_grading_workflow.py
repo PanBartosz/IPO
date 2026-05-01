@@ -312,6 +312,8 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
         base_d = _create_teacher("extra-base-d")
         extra_a = _create_teacher("extra-assigned-a")
         extra_b = _create_teacher("extra-assigned-b")
+        extra_d = _create_teacher("extra-assigned-d")
+        extra_e = _create_teacher("extra-assigned-e")
         extra_c = _create_teacher("extra-resolved")
 
         needs_assignment_student = _create_student("extra-needs-assignment", client.application)
@@ -337,6 +339,7 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=extra_a)
+        _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=extra_d)
         db.session.get(EssayAssignment, awaiting_id).needs_additional_reading = True
 
         review_student = _create_student("extra-review-spread", client.application)
@@ -350,7 +353,9 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=review_id, teacher_id=extra_b)
+        _add_stage1_extra_reader(assignment_id=review_id, teacher_id=extra_e)
         _add_score(assignment_id=review_id, student_id=review_student, teacher_id=extra_b, stage=Stage.STAGE_1, score=9)
+        _add_score(assignment_id=review_id, student_id=review_student, teacher_id=extra_e, stage=Stage.STAGE_1, score=8)
         db.session.get(EssayAssignment, review_id).needs_additional_reading = True
 
         resolved_student = _create_student("extra-resolved-student", client.application)
@@ -375,12 +380,12 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
     assert "Additional Assessors" in html
     assert "3" in html
     assert "1 need assignment" in html
-    assert "1 awaiting extra score" in html
+    assert "1 awaiting extra scores" in html
     assert "1 need spread review" in html
     assert "1 resolved after extra reading" in html
-    assert "Needs extra reader assignment" in html
-    assert "Extra reader assigned; awaiting score" in html
-    assert "Extra score entered; review spread" in html
+    assert "Needs 2 additional reader assignments" in html
+    assert "Additional reader assigned; awaiting score" in html
+    assert "Additional scores entered; review spread" in html
     assert "/admin/uploads?status=needs_extra" in html
 
 
@@ -600,6 +605,7 @@ def test_stage1_extra_reader_filters_limit_overview_rows(client):
         base_c = _create_teacher("filter-base-c")
         base_d = _create_teacher("filter-base-d")
         extra_reader = _create_teacher("filter-extra-reader")
+        second_extra_reader = _create_teacher("filter-second-extra-reader")
 
         needs_assignment_student = _create_student("filter-needs-assignment", client.application)
         needs_assignment_id = _create_stage1_assignment(
@@ -624,6 +630,7 @@ def test_stage1_extra_reader_filters_limit_overview_rows(client):
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_c, stage=Stage.STAGE_1, score=5)
         _add_score(assignment_id=awaiting_id, student_id=awaiting_student, teacher_id=base_d, stage=Stage.STAGE_1, score=9)
         _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=extra_reader)
+        _add_stage1_extra_reader(assignment_id=awaiting_id, teacher_id=second_extra_reader)
         db.session.get(EssayAssignment, awaiting_id).needs_additional_reading = True
         db.session.commit()
 

@@ -19,7 +19,7 @@
         <li><strong>Survey assignment</strong> — an individual student/teacher’s survey entry; shows progress in their portal and on Surveys dashboards.</li>
         <li><strong>Finalized essay</strong> — a student upload locked by the student; cannot be replaced without admin help.</li>
         <li><strong>Finalized score</strong> — a teacher-submitted score locked for the portal until an admin clicks <em>Unlock</em> on the scoring page.</li>
-        <li><strong>Extra reader</strong> — an additional evaluator assigned when Stage 1 scores are far apart.</li>
+        <li><strong>Additional readers</strong> — two extra evaluators assigned when Stage 1 scores are far apart.</li>
         <li><strong>Admin override</strong> — a score saved by staff (status tags show “Admin entered” or “Admin override”).</li>
         <li><strong>Grading lock</strong> — an admin toggle that pauses score editing for a single student or an entire stage until reopened.</li>
         <li><strong>Reset link</strong> — an email link that a participant or teacher uses to generate a new portal password. Links expire automatically after 24 hours.</li>
@@ -58,7 +58,7 @@
             <li><span class="status-tag">Uploaded</span> — a file exists but is editable.</li>
             <li><span class="status-tag success">Finished</span> — student locked the essay.</li>
             <li><code>Scores</code> column shows the number of Stage 1 readers who have submitted out of the expected total.</li>
-            <li><code>Avg</code> / <code>Spread</code> columns reflect the real-time Stage 1 statistics (averages rounded to two decimals, spread highlights essays needing extra readers).</li>
+            <li><code>Avg</code> / <code>Spread</code> columns reflect the real-time Stage 1 statistics (averages rounded to two decimals, spread highlights essays needing additional readers).</li>
           </ul>
         </li>
         <li>Remind students near the deadline using Messages; the Dashboard alerts list will include “students without uploads”.</li>
@@ -80,7 +80,7 @@
     <section class="help-section">
       <h3>5. Stage 1 scoring</h3>
       <ol>
-        <li>From the <strong>Stage 1</strong> overview, choose a student and click “Scores”. Enter or edit each reader’s score. If the spread exceeds 3 points, the app recommends an extra reader; assign one via the same page.</li>
+        <li>From the <strong>Stage 1</strong> overview, choose a student and click “Scores”. Enter or edit each reader’s score. If the spread exceeds 3 points, the app requires two additional readers; assign them via the same page.</li>
         <li>Status tags highlight progress: <span class="status-tag">Draft saved</span>, <span class="status-tag success">Teacher finalized</span>, <span class="status-tag">Admin entered</span>, <span class="status-tag warning">Admin override</span>, or <span class="status-tag warning">Locked by admin</span>. Click <em>Unlock</em> next to a reader to reopen a finalized score.</li>
         <li>The “Lock assignment grading” button pauses edits for that student; the Dashboard provides global Stage 1/Stage 2 locks when you need a freeze across the board.</li>
         <li>While a stage lock is active, teachers cannot download essays or submit scores for that stage. Unlock when you are ready for jurors to resume work.</li>
@@ -162,7 +162,7 @@
       <ul class="help-list">
         <li><strong>Head organizer</strong> — keeps Settings current, monitors Dashboard alerts, approves packet publication.</li>
         <li><strong>Registration desk</strong> — watches Students/Teachers tabs, corrects data, checks for missing essays, triggers password resets for participants on request.</li>
-        <li><strong>Scoring supervisor</strong> — enters reader scores, schedules extra readers, promotes Stage 2 candidates.</li>
+        <li><strong>Scoring supervisor</strong> — enters reader scores, schedules additional readers, promotes Stage 2 candidates.</li>
         <li><strong>Communications lead</strong> — posts Messages, assembles Communication campaigns (with SendGrid previews), schedules survey announcements/reminders, confirms deliveries, coordinates teacher acknowledgments.</li>
         <li><strong>If SendGrid fails</strong> — disable automatic emails in Settings, resend instructions manually; Logs confirm what was attempted.</li>
         <li><strong>If duplex printing misaligns</strong> — verify packet print mode is set appropriately; regenerate packets after changing the setting.</li>

@@ -487,6 +487,143 @@ def test_stage1_status_requires_four_readings_for_underfilled_assignment(client)
         assert "additional reader assignment" in status.recommendation
 
 
+def test_stage1_status_requires_two_spread_readers_after_large_spread(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Spread Requirement Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Spread Requirement",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        readers = [_create_assessor(111 + offset, country=f"Readerland {offset}") for offset in range(4)]
+        student = _create_student(111, country="Studentland")
+        db.session.add_all([batch, group, *readers, student])
+        db.session.flush()
+        for offset, reader in enumerate(readers):
+            _add_reader(group, reader, role=GroupMemberRole.LEADER if offset == 0 else GroupMemberRole.READER)
+        assignment = EssayAssignment(
+            student_id=student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add(assignment)
+        db.session.flush()
+        for reader, score in zip(readers, [5, 9, 5, 9], strict=True):
+            _add_stage1_score(assignment, reader, score)
+        db.session.commit()
+
+        status = views._compute_stage_one_status(assignment)
+        views._apply_stage_one_rules(assignment)
+
+        assert status.base_completed is True
+        assert status.assigned_readers == 4
+        assert status.required_readers == 6
+        assert status.expected_scores == 6
+        assert status.missing_reader_assignments == 2
+        assert status.base_missing_reader_assignments == 0
+        assert status.missing_spread_reader_assignments == 2
+        assert status.needs_extra is True
+        assert status.completed is False
+        assert status.recommendation == "Score disparity >3: assign 2 additional readers."
+        assert assignment.needs_additional_reading is True
+        assert assignment.stage_two_candidate is False
+
+
+def test_stage1_extra_reader_state_requires_second_spread_reader_before_awaiting_scores(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Second Spread Reader Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Second Spread Reader",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        readers = [_create_assessor(121 + offset, country=f"Readerland {offset}") for offset in range(4)]
+        extra_a = _create_assessor(126, country="Extra A")
+        extra_b = _create_assessor(127, country="Extra B")
+        student = _create_student(121, country="Studentland")
+        db.session.add_all([batch, group, *readers, extra_a, extra_b, student])
+        db.session.flush()
+        for offset, reader in enumerate(readers):
+            _add_reader(group, reader, role=GroupMemberRole.LEADER if offset == 0 else GroupMemberRole.READER)
+        assignment = EssayAssignment(
+            student_id=student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            needs_additional_reading=True,
+        )
+        db.session.add(assignment)
+        db.session.flush()
+        for reader, score in zip(readers, [5, 9, 5, 9], strict=True):
+            _add_stage1_score(assignment, reader, score)
+        db.session.add(
+            EssayAssignmentExtraReader(
+                assignment_id=assignment.id,
+                teacher_id=extra_a.id,
+                stage=Stage.STAGE_1.value,
+            )
+        )
+        db.session.commit()
+
+        status = views._compute_stage_one_status(assignment)
+        extra_state = views._stage_one_extra_reader_state(assignment, status)
+
+        assert status.assigned_readers == 5
+        assert status.required_readers == 6
+        assert status.missing_spread_reader_assignments == 1
+        assert extra_state.bucket == "needs_assignment"
+        assert extra_state.label == "Needs 1 additional reader assignment"
+
+        db.session.add(
+            EssayAssignmentExtraReader(
+                assignment_id=assignment.id,
+                teacher_id=extra_b.id,
+                stage=Stage.STAGE_1.value,
+            )
+        )
+        db.session.commit()
+
+        status = views._compute_stage_one_status(assignment)
+        extra_state = views._stage_one_extra_reader_state(assignment, status)
+
+        assert status.assigned_readers == 6
+        assert status.missing_spread_reader_assignments == 0
+        assert status.missing_scores == 2
+        assert extra_state.bucket == "awaiting_score"
+        assert extra_state.missing_extra_scores == 2
+
+        _add_stage1_score(assignment, extra_a, 7)
+        _add_stage1_score(assignment, extra_b, 8)
+        db.session.commit()
+
+        status = views._compute_stage_one_status(assignment)
+        extra_state = views._stage_one_extra_reader_state(assignment, status)
+
+        assert status.entered_scores == 6
+        assert status.expected_scores == 6
+        assert status.recommendation == "Additional scores entered; review spread."
+        assert extra_state.bucket == "review_spread"
+
+
 def test_planner_batch_diagnostics_summarize_assignment_risks(client):
     with client.application.app_context():
         batch = AssignmentBatch(
@@ -1294,7 +1431,10 @@ def test_stage1_default_average_still_requires_extra_reader_on_large_spread(clie
 
         assert status.average_is_trimmed is False
         assert abs(status.average_score - (40 / 6)) < 0.0001
-        assert status.recommendation == "Score disparity >3: assign additional reader."
+        assert status.required_readers == 6
+        assert status.expected_scores == 6
+        assert status.missing_spread_reader_assignments == 0
+        assert status.recommendation == "Additional scores entered; review spread."
         assert assignment.needs_additional_reading is True
         assert assignment.stage_two_candidate is False
 

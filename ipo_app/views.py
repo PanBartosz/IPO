@@ -1609,11 +1609,13 @@ def _stage_assessors(assignment: EssayAssignment | None, stage: Stage, include_g
 
 
 GRADE_STAGE_SLOTS = {
-    Stage.STAGE_1.value: 5,
+    Stage.STAGE_1.value: 6,
     Stage.STAGE_2.value: 2,
 }
 
 STAGE_1_REQUIRED_READINGS = 4
+STAGE_1_SPREAD_EXTRA_READINGS = 2
+STAGE_1_SPREAD_REQUIRED_READINGS = STAGE_1_REQUIRED_READINGS + STAGE_1_SPREAD_EXTRA_READINGS
 
 
 def _score_stats(
@@ -2062,10 +2064,7 @@ def _grades_export_pdf(students: list[dict], options: dict) -> Any:
         "include_timestamps": options.get("include_timestamps", True),
         "stage_order": stage_order_labels,
         "generated_at": datetime.utcnow(),
-        "stage_slots": {
-            Stage.STAGE_1.value: 5,
-            Stage.STAGE_2.value: 2,
-        },
+        "stage_slots": GRADE_STAGE_SLOTS,
     }
     template = "admin/grades/pdf/report_compact.html" if options.get("compact_view") else "admin/grades/pdf/report.html"
     return _render_pdf(template, "grades-report.pdf", **context)
@@ -2074,15 +2073,21 @@ def _grades_export_pdf(students: list[dict], options: dict) -> Any:
 def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNamespace:
     assessors = _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
     assigned_readers = len(assessors)
-    expected = max(assigned_readers, STAGE_1_REQUIRED_READINGS) if assignment else 0
-    missing_reader_assignments = max(STAGE_1_REQUIRED_READINGS - assigned_readers, 0) if assignment else 0
+    base_required_readers = STAGE_1_REQUIRED_READINGS
+    base_expected = max(assigned_readers, base_required_readers) if assignment else 0
+    base_missing_reader_assignments = max(base_required_readers - assigned_readers, 0) if assignment else 0
     if not assignment:
         return SimpleNamespace(
             entered_scores=0,
-            expected_scores=expected,
+            expected_scores=base_expected,
             assigned_readers=assigned_readers,
-            required_readers=STAGE_1_REQUIRED_READINGS,
-            missing_reader_assignments=missing_reader_assignments,
+            required_readers=base_required_readers,
+            base_required_readers=base_required_readers,
+            spread_required_readers=STAGE_1_SPREAD_REQUIRED_READINGS,
+            missing_reader_assignments=base_missing_reader_assignments,
+            base_missing_reader_assignments=base_missing_reader_assignments,
+            missing_spread_reader_assignments=0,
+            spread_extra_required_readers=0,
             missing_scores=0,
             average_score=None,
             raw_average_score=None,
@@ -2094,6 +2099,8 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
             score_range=None,
             recommendation="No published Stage 1 batch.",
             needs_extra=False,
+            spread_requires_extra=False,
+            base_completed=False,
             stage_two=False,
             completed=False,
         )
@@ -2108,20 +2115,41 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
     score_stats = _stage_one_score_stats(values)
     average = score_stats.average
     score_range = score_stats.spread if entered else None
+    base_completed = base_missing_reader_assignments == 0 and base_expected > 0 and entered >= base_expected
+    spread_over_threshold = score_range is not None and score_range > 3
+    spread_requires_extra = bool(
+        assignment.needs_additional_reading
+        or (base_completed and spread_over_threshold and not score_stats.trimmed)
+    )
+    required_readers = STAGE_1_SPREAD_REQUIRED_READINGS if spread_requires_extra else base_required_readers
+    spread_extra_required_readers = STAGE_1_SPREAD_EXTRA_READINGS if spread_requires_extra else 0
+    spread_extra_assigned_readers = max(assigned_readers - base_required_readers, 0)
+    missing_spread_reader_assignments = (
+        max(spread_extra_required_readers - spread_extra_assigned_readers, 0)
+        if spread_requires_extra
+        else 0
+    )
+    missing_reader_assignments = base_missing_reader_assignments + missing_spread_reader_assignments
+    expected = max(assigned_readers, required_readers) if assignment else 0
 
     if expected == 0:
         recommendation = "No active readers assigned."
-    elif missing_reader_assignments > 0:
+    elif base_missing_reader_assignments > 0:
         recommendation = (
-            f"Needs {missing_reader_assignments} additional reader assignment"
-            f"{'s' if missing_reader_assignments != 1 else ''} to reach "
-            f"{STAGE_1_REQUIRED_READINGS} Stage 1 readings."
+            f"Needs {base_missing_reader_assignments} additional reader assignment"
+            f"{'s' if base_missing_reader_assignments != 1 else ''} to reach "
+            f"{base_required_readers} Stage 1 readings."
+        )
+    elif spread_requires_extra and missing_spread_reader_assignments > 0:
+        recommendation = (
+            f"Score disparity >3: assign {missing_spread_reader_assignments} additional reader"
+            f"{'s' if missing_spread_reader_assignments != 1 else ''}."
         )
     elif entered < expected:
         missing = expected - entered
         recommendation = f"Awaiting {missing} reader score{'s' if missing != 1 else ''}."
-    elif score_range is not None and score_range > 3 and not score_stats.trimmed:
-        recommendation = "Score disparity >3: assign additional reader."
+    elif spread_requires_extra and not score_stats.trimmed:
+        recommendation = "Additional scores entered; review spread."
     elif average is not None and average >= 7:
         recommendation = "Qualifies for Stage 2."
     else:
@@ -2131,8 +2159,13 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
         entered_scores=entered,
         expected_scores=expected,
         assigned_readers=assigned_readers,
-        required_readers=STAGE_1_REQUIRED_READINGS,
+        required_readers=required_readers,
+        base_required_readers=base_required_readers,
+        spread_required_readers=STAGE_1_SPREAD_REQUIRED_READINGS,
         missing_reader_assignments=missing_reader_assignments,
+        base_missing_reader_assignments=base_missing_reader_assignments,
+        missing_spread_reader_assignments=missing_spread_reader_assignments,
+        spread_extra_required_readers=spread_extra_required_readers,
         missing_scores=max(expected - entered, 0),
         average_score=average,
         raw_average_score=score_stats.raw_average,
@@ -2143,7 +2176,9 @@ def _compute_stage_one_status(assignment: EssayAssignment | None) -> SimpleNames
         trimmed_high_score=score_stats.dropped_high,
         score_range=score_range,
         recommendation=recommendation,
-        needs_extra=assignment.needs_additional_reading,
+        needs_extra=spread_requires_extra,
+        spread_requires_extra=spread_requires_extra,
+        base_completed=base_completed,
         stage_two=assignment.stage_two_candidate,
         completed=missing_reader_assignments == 0 and expected > 0 and entered >= expected,
     )
@@ -2162,6 +2197,9 @@ def _stage_one_extra_reader_state(
             extra_scores=0,
             missing_extra_scores=0,
             missing_reader_assignments=0,
+            base_missing_reader_assignments=0,
+            missing_spread_reader_assignments=0,
+            required_extra_readers=0,
         )
 
     status = status or _compute_stage_one_status(assignment)
@@ -2183,26 +2221,36 @@ def _stage_one_extra_reader_state(
     missing_extra_scores = max(extra_count - extra_scores, 0)
     needs_extra = bool(status.needs_extra or assignment.needs_additional_reading)
     missing_reader_assignments = getattr(status, "missing_reader_assignments", 0)
+    base_missing_reader_assignments = getattr(status, "base_missing_reader_assignments", missing_reader_assignments)
+    missing_spread_reader_assignments = getattr(status, "missing_spread_reader_assignments", 0)
+    required_extra_readers = getattr(status, "spread_extra_required_readers", 0)
 
-    if missing_reader_assignments > 0:
+    if base_missing_reader_assignments > 0 and not needs_extra:
         bucket = "needs_assignment"
         label = "Needs extra reader assignment"
+        needs_action = True
+    elif needs_extra and missing_spread_reader_assignments > 0:
+        bucket = "needs_assignment"
+        label = (
+            f"Needs {missing_spread_reader_assignments} additional reader assignment"
+            f"{'s' if missing_spread_reader_assignments != 1 else ''}"
+        )
         needs_action = True
     elif extra_count > 0 and getattr(status, "missing_scores", 0) > 0 and missing_extra_scores > 0:
         bucket = "awaiting_score"
-        label = "Extra reader assigned; awaiting score"
+        label = "Additional reader assigned; awaiting score"
         needs_action = True
-    elif needs_extra and extra_count == 0:
-        bucket = "needs_assignment"
-        label = "Needs extra reader assignment"
+    elif needs_extra and getattr(status, "missing_scores", 0) > 0:
+        bucket = "awaiting_score"
+        label = "Additional reader assigned; awaiting score"
         needs_action = True
     elif needs_extra and missing_extra_scores > 0:
         bucket = "awaiting_score"
-        label = "Extra reader assigned; awaiting score"
+        label = "Additional reader assigned; awaiting score"
         needs_action = True
     elif needs_extra:
         bucket = "review_spread"
-        label = "Extra score entered; review spread"
+        label = "Additional scores entered; review spread"
         needs_action = True
     elif extra_count > 0:
         bucket = "resolved"
@@ -2221,6 +2269,9 @@ def _stage_one_extra_reader_state(
         extra_scores=extra_scores,
         missing_extra_scores=missing_extra_scores,
         missing_reader_assignments=missing_reader_assignments,
+        base_missing_reader_assignments=base_missing_reader_assignments,
+        missing_spread_reader_assignments=missing_spread_reader_assignments,
+        required_extra_readers=required_extra_readers,
     )
 
 
@@ -2283,7 +2334,7 @@ def _compute_combined_status(assignment: EssayAssignment | None) -> SimpleNamesp
 
 def _apply_stage_one_rules(assignment: EssayAssignment) -> None:
     status = _compute_stage_one_status(assignment)
-    if not status.completed:
+    if not status.base_completed:
         return
     if status.score_range is not None and status.score_range > 3 and not status.average_is_trimmed:
         assignment.needs_additional_reading = True
@@ -3144,9 +3195,9 @@ def _supplemental_reader_context(
             if assignment.stage != Stage.STAGE_1:
                 continue
             status = _compute_stage_one_status(assignment)
-            if status.missing_reader_assignments > 0:
+            if status.base_missing_reader_assignments > 0:
                 assignments_needing_readers += 1
-                missing_slots += status.missing_reader_assignments
+                missing_slots += status.base_missing_reader_assignments
             for assessor in _stage_assessors(assignment, Stage.STAGE_1, include_group=True):
                 if not assessor.is_extra:
                     continue
@@ -3348,9 +3399,9 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
     if batch.stage == Stage.STAGE_1:
         for assignment in grouped_assignments:
             status = _compute_stage_one_status(assignment)
-            if status.missing_reader_assignments > 0:
+            if status.base_missing_reader_assignments > 0:
                 under_read_assignments += 1
-                missing_reader_slots += status.missing_reader_assignments
+                missing_reader_slots += status.base_missing_reader_assignments
 
     supplemental_teacher_ids = {
         extra.teacher_id
@@ -6130,7 +6181,11 @@ def _dashboard_action_queue(
         extra_state = extra_state_map.get(assignment.id)
         if not status or not extra_state or not extra_state.needs_action:
             continue
-        if extra_state.bucket == "needs_assignment" and extra_state.missing_reader_assignments > 0:
+        if (
+            extra_state.bucket == "needs_assignment"
+            and extra_state.base_missing_reader_assignments > 0
+            and extra_state.missing_spread_reader_assignments == 0
+        ):
             continue
         assigned_extra_readers = _dashboard_extra_reader_rows(assignment)
         candidates = (
