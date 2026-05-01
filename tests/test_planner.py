@@ -237,6 +237,80 @@ def test_planner_teacher_choices_and_batch_view_exclude_non_assessors(client):
     assert "Hidden NonAssessor" not in html
 
 
+def test_planner_add_member_rejects_teacher_country_conflict(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Manual Conflict Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Manual Conflict Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.DRAFT,
+            batch=batch,
+            allow_same_country=False,
+        )
+        base_reader = _create_assessor(51, country="Base Readerland")
+        conflict_teacher = _create_assessor(52, country="Studentland")
+        compatible_teacher = _create_assessor(53, country="Compatibleland")
+        student = _create_student(51, country="Studentland")
+        db.session.add_all([batch, group, base_reader, conflict_teacher, compatible_teacher, student])
+        db.session.flush()
+        _add_reader(group, base_reader, role=GroupMemberRole.LEADER)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.DRAFT,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        conflict_teacher_id = conflict_teacher.id
+        compatible_label = f"{compatible_teacher.first_name} {compatible_teacher.last_name}"
+        conflict_label = f"{conflict_teacher.first_name} {conflict_teacher.last_name}"
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    quick_add_start = html.index("<h4>Add teacher</h4>")
+    quick_add_end = html.index("</form>", quick_add_start)
+    quick_add_html = html[quick_add_start:quick_add_end]
+    assert compatible_label in quick_add_html
+    assert conflict_label not in quick_add_html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/members",
+        data={
+            "csrf_token": token,
+            "teacher_id": str(conflict_teacher_id),
+            "group_id": str(group_id),
+            "role": GroupMemberRole.READER.value,
+            "active": "y",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Teacher is not eligible for this group" in response.get_data(as_text=True)
+    with client.application.app_context():
+        assert (
+            ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=conflict_teacher_id).first()
+            is None
+        )
+
+
 def test_teacher_can_grade_rejects_non_assessor_even_with_language_and_country_match_rules(client):
     with client.application.app_context():
         student = Student(
@@ -1048,6 +1122,117 @@ def test_planner_absence_repair_filters_free_teachers_by_language_and_country(cl
         assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=country_conflict_id).first() is None
 
 
+def test_planner_absence_repair_does_not_add_only_country_conflicting_free_teacher(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Conflict Free Teacher Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Conflict Free Teacher Repair",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+            allow_same_country=False,
+        )
+        readers = [_create_assessor(951 + offset, country=f"Readerland {offset}") for offset in range(3)]
+        absent_reader = _create_assessor(955, country="Absentland")
+        absent_reader.is_absent = True
+        conflict_teacher = _create_assessor(956, country="Studentland")
+        student = _create_student(951, country="Studentland")
+        db.session.add_all([batch, group, *readers, absent_reader, conflict_teacher, student])
+        db.session.flush()
+        for index, reader in enumerate(readers):
+            _add_reader(group, reader, role=GroupMemberRole.LEADER if index == 0 else GroupMemberRole.READER)
+        _add_reader(group, absent_reader)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_reader_id = absent_reader.id
+        conflict_teacher_id = conflict_teacher.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    html = page.get_data(as_text=True)
+    assert "Remove absent teacher" in html
+    assert "Add available teacher Teacher956 Assessor956" not in html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with client.application.app_context():
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=absent_reader_id).first() is None
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=conflict_teacher_id).first() is None
+
+
+def test_planner_absence_repair_flags_projected_country_conflict(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Projected Conflict Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Projected Conflict Repair",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+            allow_same_country=False,
+        )
+        conflict_reader = _create_assessor(886, country="Studentland")
+        absent_reader = _create_assessor(887, country="Absentland")
+        absent_reader.is_absent = True
+        student = _create_student(886, country="Studentland")
+        db.session.add_all([batch, group, conflict_reader, absent_reader, student])
+        db.session.flush()
+        _add_reader(group, conflict_reader, role=GroupMemberRole.LEADER)
+        _add_reader(group, absent_reader)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/planner/batches/{batch_id}")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Projected Conflict Repair would still have country conflict after repair" in html
+    assert "Teacher886 Assessor886 (Studentland)" in html
+
+
 def test_planner_absence_repair_moves_reader_only_when_group_falls_below_three(client, csrf_token):
     with client.application.app_context():
         batch = AssignmentBatch(
@@ -1143,6 +1328,119 @@ def test_planner_absence_repair_moves_reader_only_when_group_falls_below_three(c
         assert len(donor_members) == 3
         moved_ids = {member.teacher_id for member in target_members}.intersection(donor_reader_ids)
         assert len(moved_ids) == 1
+
+
+def test_planner_absence_repair_does_not_move_country_conflicting_reader(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Conflict Move Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        target = ReadingGroup(
+            name="Conflict Move Target",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+            allow_same_country=False,
+        )
+        donor = ReadingGroup(
+            name="Conflict Move Donor",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+            allow_same_country=False,
+        )
+        target_active = [_create_assessor(891 + offset, country=f"Targetland {offset}") for offset in range(2)]
+        target_absent = [_create_assessor(895 + offset, country=f"Absentland {offset}") for offset in range(2)]
+        for teacher in target_absent:
+            teacher.is_absent = True
+        donor_leader = _create_assessor(899, country="Leaderland")
+        conflicting_donor_readers = [
+            _create_assessor(900 + offset, country="Studentland") for offset in range(3)
+        ]
+        target_student = _create_student(891, country="Studentland")
+        donor_student = _create_student(892, country="Donor Studentland")
+        db.session.add_all(
+            [
+                batch,
+                target,
+                donor,
+                *target_active,
+                *target_absent,
+                donor_leader,
+                *conflicting_donor_readers,
+                target_student,
+                donor_student,
+            ]
+        )
+        db.session.flush()
+        _add_reader(target, target_active[0], role=GroupMemberRole.LEADER)
+        _add_reader(target, target_active[1])
+        for teacher in target_absent:
+            _add_reader(target, teacher)
+        _add_reader(donor, donor_leader, role=GroupMemberRole.LEADER)
+        for teacher in conflicting_donor_readers:
+            _add_reader(donor, teacher)
+        db.session.add_all([
+            EssayAssignment(
+                student_id=target_student.id,
+                group_id=target.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+            EssayAssignment(
+                student_id=donor_student.id,
+                group_id=donor.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+        ])
+        db.session.commit()
+        batch_id = batch.id
+        target_id = target.id
+        donor_id = donor.id
+        conflicting_reader_ids = {teacher.id for teacher in conflicting_donor_readers}
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    html = page.get_data(as_text=True)
+    assert "Move Teacher900 Assessor900" not in html
+    assert "Move Teacher901 Assessor901" not in html
+    assert "Move Teacher902 Assessor902" not in html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "would still have only 2 active teachers after repair" in html
+    with client.application.app_context():
+        target_teacher_ids = {
+            member.teacher_id
+            for member in ReadingGroupMember.query.filter_by(group_id=target_id, active=True).all()
+            if not member.teacher.is_absent
+        }
+        donor_teacher_ids = {
+            member.teacher_id
+            for member in ReadingGroupMember.query.filter_by(group_id=donor_id, active=True).all()
+            if not member.teacher.is_absent
+        }
+        assert target_teacher_ids.isdisjoint(conflicting_reader_ids)
+        assert conflicting_reader_ids.issubset(donor_teacher_ids)
 
 
 def test_planner_absence_repair_does_not_move_from_three_reader_donor(client, csrf_token):

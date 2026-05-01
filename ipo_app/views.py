@@ -3566,7 +3566,24 @@ def _planner_batch_score_count(batch: AssignmentBatch) -> int:
     )
 
 
-def _teacher_can_join_repaired_group(
+def _country_key(value: str | None) -> str:
+    return (value or "").strip().casefold()
+
+
+def _teacher_country_conflicts_with_assignments(
+    teacher: Teacher,
+    assignments: list[EssayAssignment],
+) -> bool:
+    teacher_country = _country_key(teacher.country if teacher else None)
+    if not teacher_country:
+        return False
+    return any(
+        _country_key(assignment.student.country if assignment.student else None) == teacher_country
+        for assignment in assignments
+    )
+
+
+def _teacher_can_join_group(
     teacher: Teacher,
     group: ReadingGroup,
     assignments: list[EssayAssignment],
@@ -3577,10 +3594,15 @@ def _teacher_can_join_repaired_group(
         return False
     if group.allow_same_country:
         return True
-    return all(
-        not assignment.student or assignment.student.country != teacher.country
-        for assignment in assignments
-    )
+    return not _teacher_country_conflicts_with_assignments(teacher, assignments)
+
+
+def _teacher_can_join_repaired_group(
+    teacher: Teacher,
+    group: ReadingGroup,
+    assignments: list[EssayAssignment],
+) -> bool:
+    return _teacher_can_join_group(teacher, group, assignments)
 
 
 def _planner_absence_repair_context(
@@ -3878,6 +3900,30 @@ def _planner_absence_repair_context(
                     ),
                 )
             )
+        if not group.allow_same_country:
+            conflict_labels: set[str] = set()
+            for member in planned_members[group.id]:
+                teacher = member.teacher
+                if not teacher or not _teacher_country_conflicts_with_assignments(
+                    teacher,
+                    group_assignments.get(group.id, []),
+                ):
+                    continue
+                conflict_labels.add(
+                    f"{teacher.first_name} {teacher.last_name} ({teacher.country})"
+                )
+            if conflict_labels:
+                unresolved.append(
+                    SimpleNamespace(
+                        severity="danger",
+                        label=(
+                            f"{group.name} would still have country conflict"
+                            f"{'s' if len(conflict_labels) != 1 else ''} after repair: "
+                            + ", ".join(sorted(conflict_labels))
+                            + "."
+                        ),
+                    )
+                )
 
     action_counts: dict[str, int] = defaultdict(int)
     for action in actions:
@@ -12967,6 +13013,11 @@ def admin_planner_batch(batch_id: int):
 
     for group in groups:
         group_teacher_ids = {member.teacher_id for member in group.members if member.teacher}
+        group_stage_assignments = [
+            assignment
+            for assignment in group.assignments
+            if assignment.stage == batch.stage and assignment.student
+        ]
         active_count = sum(
             1
             for member in group.members
@@ -12987,6 +13038,8 @@ def admin_planner_batch(batch_id: int):
                 continue
             languages_spoken = teacher_languages_map.get(teacher.id, set())
             if group.language not in languages_spoken:
+                continue
+            if not _teacher_can_join_group(teacher, group, group_stage_assignments):
                 continue
             available_teachers.append(teacher)
         available_teachers_map[group.id] = available_teachers
@@ -13187,11 +13240,26 @@ def admin_planner_add_member(batch_id: int):
             if already_member:
                 flash("Teacher is already part of this group.", "error")
             else:
+                teacher = db.session.get(Teacher, teacher_id)
+                group_stage_assignments = [
+                    assignment
+                    for assignment in group.assignments
+                    if assignment.stage == batch.stage and assignment.student
+                ]
+                active = bool(form.active.data)
+                if active and not _teacher_can_join_group(teacher, group, group_stage_assignments):
+                    flash(
+                        "Teacher is not eligible for this group because of language, country, or availability rules.",
+                        "error",
+                    )
+                    if _is_htmx_request():
+                        return admin_planner_batch(batch.id)
+                    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
                 member = ReadingGroupMember(
                     group=group,
                     teacher_id=teacher_id,
                     role=GroupMemberRole(form.role.data),
-                    active=bool(form.active.data),
+                    active=active,
                 )
                 db.session.add(member)
                 db.session.flush()
