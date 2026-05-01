@@ -170,6 +170,112 @@
     </div>
   </details>
 
+  {% if absence_repair.visible %}
+    <details class="planner-diagnostics planner-absence-repair" open>
+      <summary>
+        <span>Repair for absences</span>
+        <span class="status-tag {% if absence_repair.hard_blockers %}danger{% elif absence_repair.actions %}warning{% else %}success{% endif %}">
+          {{ absence_repair.summary_label }}
+        </span>
+      </summary>
+      <div class="planner-diagnostics-panel">
+        <div class="planner-diagnostics-grid" aria-label="Absence repair summary">
+          <article class="planner-diagnostic-card">
+            <span class="planner-diagnostic-label">Absent teachers in groups</span>
+            <strong>{{ absence_repair.absent_teacher_members }}</strong>
+            <p>Main group memberships that will be removed from the plan.</p>
+          </article>
+          <article class="planner-diagnostic-card">
+            <span class="planner-diagnostic-label">Absent students assigned</span>
+            <strong>{{ absence_repair.absent_student_assignments }}</strong>
+            <p>Essay assignments that will be removed if no scores exist.</p>
+          </article>
+          <article class="planner-diagnostic-card">
+            <span class="planner-diagnostic-label">Planned changes</span>
+            <strong>{{ absence_repair.actions|length }}</strong>
+            <p>Minimal changes to keep this batch usable.</p>
+          </article>
+          <article class="planner-diagnostic-card">
+            <span class="planner-diagnostic-label">After repair</span>
+            <strong>{{ absence_repair.projected_below_three }}</strong>
+            <p>{{ absence_repair.projected_below_four }} group(s) still below four readers.</p>
+          </article>
+        </div>
+
+        <div class="planner-diagnostics-body">
+          <section>
+            <h3>Proposed changes</h3>
+            {% if absence_repair.actions %}
+              <ul class="planner-issue-list">
+                {% for action in absence_repair.actions[:12] %}
+                  <li class="planner-issue planner-issue-warning">
+                    <span class="status-tag warning">{{ loop.index }}</span>
+                    <div>
+                      <strong>{{ action.kind.replace('_', ' ').title() }}</strong>
+                      <span>{{ action.label }}</span>
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+              {% if absence_repair.actions|length > 12 %}
+                <p class="fine-print">Showing 12 of {{ absence_repair.actions|length }} proposed changes.</p>
+              {% endif %}
+            {% else %}
+              <p class="fine-print">No automatic changes are currently proposed.</p>
+            {% endif %}
+          </section>
+
+          <section>
+            <h3>Apply repair</h3>
+            {% if absence_repair.hard_blockers %}
+              <ul class="planner-issue-list">
+                {% for blocker in absence_repair.hard_blockers %}
+                  <li class="planner-issue planner-issue-danger">
+                    <span class="status-tag danger">!</span>
+                    <div>
+                      <strong>Blocked</strong>
+                      <span>{{ blocker.label }}</span>
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if absence_repair.unresolved %}
+              <ul class="planner-issue-list">
+                {% for item in absence_repair.unresolved[:5] %}
+                  <li class="planner-issue planner-issue-{{ item.severity }}">
+                    <span class="status-tag {% if item.severity == 'danger' %}danger{% else %}warning{% endif %}">!</span>
+                    <div>
+                      <strong>Manual attention</strong>
+                      <span>{{ item.label }}</span>
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            <form
+              method="post"
+              action="{{ url_for('web.admin_planner_repair_absences', batch_id=batch.id) }}"
+              hx-post="{{ url_for('web.admin_planner_repair_absences', batch_id=batch.id) }}"
+              hx-target="#planner-batch-content"
+              hx-swap="outerHTML"
+              onsubmit="return confirm('Apply the proposed absence repair changes to this batch?');"
+            >
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="button-link" {% if not absence_repair.can_apply %}disabled{% endif %}>
+                Apply absence repair
+              </button>
+            </form>
+            <p class="fine-print">
+              This repair keeps the current batch structure, removes absent people from main assignments,
+              adds available eligible teachers first, and only moves teachers when a group would otherwise fall below three.
+            </p>
+          </section>
+        </div>
+      </div>
+    </details>
+  {% endif %}
+
   <section class="planner-grid">
     <div class="table-card">
       <h3>Create reading group</h3>

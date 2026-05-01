@@ -3507,6 +3507,464 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
     )
 
 
+def _planner_batch_score_count(batch: AssignmentBatch) -> int:
+    return (
+        EssayScore.query.join(EssayAssignment, EssayScore.assignment_id == EssayAssignment.id)
+        .filter(EssayAssignment.batch_id == batch.id)
+        .count()
+    )
+
+
+def _teacher_can_join_repaired_group(
+    teacher: Teacher,
+    group: ReadingGroup,
+    assignments: list[EssayAssignment],
+) -> bool:
+    if not teacher or teacher.is_absent or not teacher.declared_assessor_competence:
+        return False
+    if _normalize_language(group.language) not in _teacher_languages(teacher):
+        return False
+    if group.allow_same_country:
+        return True
+    return all(
+        not assignment.student or assignment.student.country != teacher.country
+        for assignment in assignments
+    )
+
+
+def _planner_absence_repair_context(
+    batch: AssignmentBatch,
+    groups: list[ReadingGroup] | None = None,
+) -> SimpleNamespace:
+    groups = groups or _load_batch_groups(batch)
+    score_count = _planner_batch_score_count(batch)
+
+    actions: list[SimpleNamespace] = []
+    unresolved: list[SimpleNamespace] = []
+    warnings: list[SimpleNamespace] = []
+
+    removed_assignment_ids: set[int] = set()
+    group_assignments: dict[int, list[EssayAssignment]] = {}
+    planned_members: dict[int, list[SimpleNamespace]] = {}
+    absent_teacher_members = 0
+    absent_student_assignments = 0
+
+    for group in groups:
+        planned_members[group.id] = []
+        for member in group.members:
+            teacher = member.teacher
+            if not member.active or not teacher:
+                continue
+            if teacher.is_absent:
+                absent_teacher_members += 1
+                actions.append(
+                    SimpleNamespace(
+                        kind="remove_absent_teacher",
+                        member_id=member.id,
+                        group_id=group.id,
+                        teacher_id=teacher.id,
+                        group=group,
+                        teacher=teacher,
+                        label=(
+                            f"Remove absent teacher {teacher.first_name} {teacher.last_name} "
+                            f"from {group.name}."
+                        ),
+                    )
+                )
+                continue
+            planned_members[group.id].append(
+                SimpleNamespace(
+                    member_id=member.id,
+                    teacher_id=teacher.id,
+                    teacher=teacher,
+                    role=member.role,
+                    origin_group_id=group.id,
+                )
+            )
+
+        present_assignments: list[EssayAssignment] = []
+        for assignment in group.assignments:
+            if assignment.stage != batch.stage or not assignment.student:
+                continue
+            if assignment.student.is_absent:
+                absent_student_assignments += 1
+                if assignment.scores:
+                    unresolved.append(
+                        SimpleNamespace(
+                            severity="danger",
+                            label=(
+                                f"Essay {assignment.student.id} belongs to an absent student "
+                                "but already has score records."
+                            ),
+                        )
+                    )
+                else:
+                    removed_assignment_ids.add(assignment.id)
+                    actions.append(
+                        SimpleNamespace(
+                            kind="remove_absent_student_assignment",
+                            assignment_id=assignment.id,
+                            group_id=group.id,
+                            student_id=assignment.student.id,
+                            group=group,
+                            student=assignment.student,
+                            label=(
+                                f"Remove absent student {assignment.student.first_name} "
+                                f"{assignment.student.last_name} from {group.name}."
+                            ),
+                        )
+                    )
+                continue
+            present_assignments.append(assignment)
+        group_assignments[group.id] = present_assignments
+
+    for group in groups:
+        members = planned_members[group.id]
+        if members and not any(member.role == GroupMemberRole.LEADER for member in members):
+            promote = sorted(
+                members,
+                key=lambda entry: (
+                    entry.teacher.last_name,
+                    entry.teacher.first_name,
+                    entry.teacher.id,
+                ),
+            )[0]
+            promote.role = GroupMemberRole.LEADER
+            actions.append(
+                SimpleNamespace(
+                    kind="promote_leader",
+                    member_id=promote.member_id,
+                    group_id=group.id,
+                    teacher_id=promote.teacher_id,
+                    group=group,
+                    teacher=promote.teacher,
+                    label=(
+                        f"Make {promote.teacher.first_name} {promote.teacher.last_name} "
+                        f"leader of {group.name}."
+                    ),
+                )
+            )
+
+    active_teacher_ids = {
+        member.teacher_id
+        for members in planned_members.values()
+        for member in members
+    }
+    outside_active_teacher_ids = {
+        teacher_id
+        for (teacher_id,) in (
+            db.session.query(ReadingGroupMember.teacher_id)
+            .join(ReadingGroup, ReadingGroupMember.group_id == ReadingGroup.id)
+            .filter(
+                ReadingGroup.stage == batch.stage,
+                ReadingGroup.batch_id != batch.id,
+                ReadingGroupMember.active.is_(True),
+            )
+            .all()
+        )
+    }
+    free_teachers = [
+        teacher
+        for teacher in _assessment_eligible_teachers_query()
+        .order_by(Teacher.last_name.asc(), Teacher.first_name.asc(), Teacher.id.asc())
+        .all()
+        if teacher.id not in active_teacher_ids
+        and teacher.id not in outside_active_teacher_ids
+    ]
+
+    def group_sort_key(group: ReadingGroup) -> tuple[int, int, str, int]:
+        return (
+            len(planned_members[group.id]),
+            -len(group_assignments.get(group.id, [])),
+            group.language,
+            group.id,
+        )
+
+    def group_has_leader(group_id: int) -> bool:
+        return any(member.role == GroupMemberRole.LEADER for member in planned_members[group_id])
+
+    target_groups = [
+        group
+        for group in sorted(groups, key=group_sort_key)
+        if group.stage == batch.stage
+        and group_assignments.get(group.id)
+        and len(planned_members[group.id]) < STAGE_1_REQUIRED_READINGS
+    ]
+    for group in target_groups:
+        while len(planned_members[group.id]) < STAGE_1_REQUIRED_READINGS:
+            compatible = [
+                teacher
+                for teacher in free_teachers
+                if _teacher_can_join_repaired_group(teacher, group, group_assignments.get(group.id, []))
+            ]
+            if not compatible:
+                break
+            compatible.sort(
+                key=lambda teacher: (
+                    len(_teacher_languages(teacher)),
+                    teacher.last_name,
+                    teacher.first_name,
+                    teacher.id,
+                )
+            )
+            teacher = compatible[0]
+            free_teachers.remove(teacher)
+            role = GroupMemberRole.LEADER if not group_has_leader(group.id) else GroupMemberRole.READER
+            planned_members[group.id].append(
+                SimpleNamespace(
+                    member_id=None,
+                    teacher_id=teacher.id,
+                    teacher=teacher,
+                    role=role,
+                    origin_group_id=None,
+                )
+            )
+            active_teacher_ids.add(teacher.id)
+            actions.append(
+                SimpleNamespace(
+                    kind="add_free_teacher",
+                    group_id=group.id,
+                    teacher_id=teacher.id,
+                    role=role.value,
+                    group=group,
+                    teacher=teacher,
+                    label=(
+                        f"Add available teacher {teacher.first_name} {teacher.last_name} "
+                        f"to {group.name}."
+                    ),
+                )
+            )
+
+    critical_groups = [
+        group
+        for group in sorted(groups, key=group_sort_key)
+        if group.stage == batch.stage
+        and group_assignments.get(group.id)
+        and len(planned_members[group.id]) < 3
+    ]
+    for target in critical_groups:
+        while len(planned_members[target.id]) < 3:
+            move_candidates: list[tuple[tuple, ReadingGroup, SimpleNamespace]] = []
+            for donor in groups:
+                if donor.id == target.id or len(planned_members[donor.id]) <= 3:
+                    continue
+                for member in planned_members[donor.id]:
+                    if member.member_id is None:
+                        continue
+                    if member.role == GroupMemberRole.LEADER:
+                        continue
+                    if not _teacher_can_join_repaired_group(
+                        member.teacher,
+                        target,
+                        group_assignments.get(target.id, []),
+                    ):
+                        continue
+                    move_candidates.append(
+                        (
+                            (
+                                0 if donor.language == target.language else 1,
+                                -len(planned_members[donor.id]),
+                                donor.language,
+                                donor.id,
+                                member.teacher.last_name,
+                                member.teacher.first_name,
+                                member.teacher.id,
+                            ),
+                            donor,
+                            member,
+                        )
+                    )
+            if not move_candidates:
+                break
+            _sort_key, donor, member = sorted(move_candidates, key=lambda item: item[0])[0]
+            planned_members[donor.id].remove(member)
+            role = GroupMemberRole.LEADER if not group_has_leader(target.id) else GroupMemberRole.READER
+            member.role = role
+            planned_members[target.id].append(member)
+            actions.append(
+                SimpleNamespace(
+                    kind="move_teacher",
+                    member_id=member.member_id,
+                    teacher_id=member.teacher_id,
+                    from_group_id=donor.id,
+                    to_group_id=target.id,
+                    role=role.value,
+                    from_group=donor,
+                    group=target,
+                    teacher=member.teacher,
+                    label=(
+                        f"Move {member.teacher.first_name} {member.teacher.last_name} "
+                        f"from {donor.name} to {target.name}."
+                    ),
+                )
+            )
+
+    projected_below_three = 0
+    projected_below_four = 0
+    for group in groups:
+        if group.stage != batch.stage or not group_assignments.get(group.id):
+            continue
+        active_count = len(planned_members[group.id])
+        if active_count < 3:
+            projected_below_three += 1
+            unresolved.append(
+                SimpleNamespace(
+                    severity="danger",
+                    label=(
+                        f"{group.name} would still have only {active_count} active teacher"
+                        f"{'s' if active_count != 1 else ''} after repair."
+                    ),
+                )
+            )
+        if active_count < STAGE_1_REQUIRED_READINGS:
+            projected_below_four += 1
+            warnings.append(
+                SimpleNamespace(
+                    severity="warning",
+                    label=(
+                        f"{group.name} remains below the preferred four-reader target "
+                        f"({active_count}/4)."
+                    ),
+                )
+            )
+
+    action_counts: dict[str, int] = defaultdict(int)
+    for action in actions:
+        action_counts[action.kind] += 1
+
+    has_repair_need = bool(absent_teacher_members or absent_student_assignments or actions or unresolved)
+
+    hard_blockers: list[SimpleNamespace] = []
+    if batch.stage != Stage.STAGE_1 and has_repair_need:
+        hard_blockers.append(SimpleNamespace(label="Absence repair is currently supported for Stage 1 batches only."))
+    if score_count and has_repair_need:
+        hard_blockers.append(
+            SimpleNamespace(
+                label=(
+                    f"This batch already has {score_count} score record"
+                    f"{'s' if score_count != 1 else ''}; repair must be handled manually."
+                )
+            )
+        )
+
+    return SimpleNamespace(
+        visible=bool(has_repair_need or hard_blockers),
+        actions=actions,
+        action_counts=dict(action_counts),
+        unresolved=unresolved,
+        warnings=warnings,
+        hard_blockers=hard_blockers,
+        can_apply=bool(actions) and not hard_blockers,
+        absent_teacher_members=absent_teacher_members,
+        absent_student_assignments=absent_student_assignments,
+        projected_below_three=projected_below_three,
+        projected_below_four=projected_below_four,
+        score_count=score_count,
+        summary_label="Ready to apply" if actions and not hard_blockers else ("Blocked" if hard_blockers else "No changes"),
+    )
+
+
+def _apply_planner_absence_repair(batch: AssignmentBatch, context: SimpleNamespace) -> dict[str, Any]:
+    applied: dict[str, int] = defaultdict(int)
+    applied_actions: list[dict[str, Any]] = []
+
+    def record(action: SimpleNamespace) -> None:
+        applied[action.kind] += 1
+        entry = {
+            "kind": action.kind,
+            "group_id": getattr(action, "group_id", None),
+            "teacher_id": getattr(action, "teacher_id", None),
+            "student_id": getattr(action, "student_id", None),
+            "assignment_id": getattr(action, "assignment_id", None),
+            "member_id": getattr(action, "member_id", None),
+            "from_group_id": getattr(action, "from_group_id", None),
+            "to_group_id": getattr(action, "to_group_id", None),
+        }
+        applied_actions.append({key: value for key, value in entry.items() if value is not None})
+
+    for action in context.actions:
+        if action.kind == "remove_absent_teacher":
+            member = db.session.get(ReadingGroupMember, action.member_id)
+            if member and member.group and member.group.batch_id == batch.id:
+                db.session.delete(member)
+                record(action)
+        elif action.kind == "remove_absent_student_assignment":
+            assignment = db.session.get(EssayAssignment, action.assignment_id)
+            if assignment and assignment.batch_id == batch.id and not assignment.scores:
+                db.session.delete(assignment)
+                record(action)
+
+    db.session.flush()
+
+    for action in context.actions:
+        if action.kind == "promote_leader":
+            member = db.session.get(ReadingGroupMember, action.member_id)
+            if not member or not member.group or member.group.batch_id != batch.id:
+                continue
+            (
+                ReadingGroupMember.query.filter(
+                    ReadingGroupMember.group_id == member.group_id,
+                    ReadingGroupMember.id != member.id,
+                    ReadingGroupMember.active.is_(True),
+                    ReadingGroupMember.role == GroupMemberRole.LEADER,
+                ).update({ReadingGroupMember.role: GroupMemberRole.READER}, synchronize_session=False)
+            )
+            member.role = GroupMemberRole.LEADER
+            member.active = True
+            record(action)
+        elif action.kind == "add_free_teacher":
+            group = ReadingGroup.query.filter_by(id=action.group_id, batch_id=batch.id).first()
+            teacher = db.session.get(Teacher, action.teacher_id)
+            if not group or not teacher or teacher.is_absent:
+                continue
+            role = GroupMemberRole(action.role)
+            existing = ReadingGroupMember.query.filter_by(group_id=group.id, teacher_id=teacher.id).first()
+            if existing:
+                existing.active = True
+                existing.role = role
+            else:
+                db.session.add(
+                    ReadingGroupMember(
+                        group_id=group.id,
+                        teacher_id=teacher.id,
+                        role=role,
+                        active=True,
+                    )
+                )
+            record(action)
+        elif action.kind == "move_teacher":
+            member = db.session.get(ReadingGroupMember, action.member_id)
+            target = ReadingGroup.query.filter_by(id=action.to_group_id, batch_id=batch.id).first()
+            if not member or not target or not member.teacher or member.teacher.is_absent:
+                continue
+            existing_target = ReadingGroupMember.query.filter_by(
+                group_id=target.id,
+                teacher_id=member.teacher_id,
+            ).first()
+            if existing_target and existing_target.id != member.id:
+                db.session.delete(existing_target)
+                db.session.flush()
+            member.group_id = target.id
+            member.role = GroupMemberRole(action.role)
+            member.active = True
+            record(action)
+
+    _recalculate_group_targets(batch)
+    log_activity(
+        "planner_absence_repair_applied",
+        f"Applied absence repair to batch {batch.name}",
+        object_type="assignment_batch",
+        object_id=batch.id,
+        details={
+            "batch_id": batch.id,
+            "actions": applied_actions,
+            "action_counts": dict(applied),
+            "unresolved": [item.label for item in context.unresolved],
+        },
+    )
+    return {"action_counts": dict(applied), "actions": applied_actions}
+
+
 def _remove_auto_generated_groups(batch: AssignmentBatch) -> tuple[int, int]:
     removed_groups = 0
     removed_assignments = 0
@@ -12486,6 +12944,7 @@ def admin_planner_batch(batch_id: int):
         if assignment.stage == Stage.STAGE_1
     }
     planner_diagnostics = _planner_batch_diagnostics(batch, groups)
+    absence_repair = _planner_absence_repair_context(batch, groups)
 
     template_name = "admin/partials/planner_batch_content.html" if is_htmx else "admin/planner/batch_detail.html"
     context = {
@@ -12499,6 +12958,7 @@ def admin_planner_batch(batch_id: int):
         "assignment_stage1_status_map": assignment_stage1_status_map,
         "group_status_map": group_status_map,
         "planner_diagnostics": planner_diagnostics,
+        "absence_repair": absence_repair,
         "PlannerStatus": PlannerStatus,
         "PlannerAlgorithm": PlannerAlgorithm,
         "planner_algorithm_choices": _planner_algorithm_choices(),
@@ -13030,6 +13490,45 @@ def admin_planner_remove_supplemental_reader(batch_id: int, group_id: int, teach
         f"{'s' if len(assignment_ids) != 1 else ''}.",
         "success",
     )
+    if _is_htmx_request():
+        return admin_planner_batch(batch.id)
+    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+
+@web_bp.route("/admin/planner/batches/<int:batch_id>/absence-repair", methods=["POST"])
+def admin_planner_repair_absences(batch_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+
+    context = _planner_absence_repair_context(batch)
+    if context.hard_blockers:
+        for blocker in context.hard_blockers:
+            flash(blocker.label, "error")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    if not context.actions:
+        flash("No absence repair changes are currently needed.", "info")
+        if _is_htmx_request():
+            return admin_planner_batch(batch.id)
+        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    summary = _apply_planner_absence_repair(batch, context)
+    db.session.commit()
+    applied_count = len(summary["actions"])
+    flash(
+        f"Applied {applied_count} absence repair change"
+        f"{'s' if applied_count != 1 else ''}.",
+        "success",
+    )
+    if context.unresolved:
+        flash(
+            f"{len(context.unresolved)} issue"
+            f"{'s' if len(context.unresolved) != 1 else ''} still need manual attention.",
+            "warning",
+        )
     if _is_htmx_request():
         return admin_planner_batch(batch.id)
     return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))

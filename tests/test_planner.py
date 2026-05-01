@@ -642,6 +642,583 @@ def test_planner_batch_view_renders_diagnostics_dashboard(client):
     assert "Eligible assessors without group" in html
     assert "Groups with absent teachers" in html
     assert "Missing Stage 1 reader slots" in html
+    assert "Repair for absences" in html
+
+
+def test_planner_absence_repair_removes_absences_and_adds_free_teacher(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Absence Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Repair Group",
+            language="English",
+            target_essay_load=2,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        readers = [_create_assessor(801 + offset, country=f"Readerland {offset}") for offset in range(3)]
+        absent_reader = _create_assessor(805, country="Absentland")
+        absent_reader.is_absent = True
+        free_reader = _create_assessor(806, country="Freeland")
+        present_student = _create_student(801, country="Studentland")
+        absent_student = _create_student(802, country="Absent Studentland")
+        absent_student.is_absent = True
+        db.session.add_all([batch, group, *readers, absent_reader, free_reader, present_student, absent_student])
+        db.session.flush()
+        _add_reader(group, readers[0], role=GroupMemberRole.LEADER)
+        _add_reader(group, readers[1])
+        _add_reader(group, readers[2])
+        _add_reader(group, absent_reader)
+        present_assignment = EssayAssignment(
+            student_id=present_student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        absent_assignment = EssayAssignment(
+            student_id=absent_student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add_all([present_assignment, absent_assignment])
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_reader_id = absent_reader.id
+        free_reader_id = free_reader.id
+        present_assignment_id = present_assignment.id
+        absent_assignment_id = absent_assignment.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    token = csrf_token(page)
+    html = page.get_data(as_text=True)
+    assert "Remove absent teacher" in html
+    assert "Remove absent student" in html
+    assert "Add available teacher" in html
+
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with client.application.app_context():
+        assert db.session.get(EssayAssignment, present_assignment_id) is not None
+        assert db.session.get(EssayAssignment, absent_assignment_id) is None
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=absent_reader_id).first() is None
+        free_member = ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=free_reader_id).first()
+        assert free_member is not None
+        assert free_member.active is True
+        assert ActivityLog.query.filter_by(action="planner_absence_repair_applied").first() is not None
+
+
+def test_planner_absence_repair_is_noop_when_batch_has_no_absences(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="No Absence Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Stable Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        readers = [_create_assessor(901 + offset, country=f"Stableland {offset}") for offset in range(4)]
+        student = _create_student(901, country="Studentland")
+        db.session.add_all([batch, group, *readers, student])
+        db.session.flush()
+        for index, reader in enumerate(readers):
+            _add_reader(group, reader, role=GroupMemberRole.LEADER if index == 0 else GroupMemberRole.READER)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    token = csrf_token(page)
+    assert "Repair for absences" not in page.get_data(as_text=True)
+
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "No absence repair changes are currently needed." in response.get_data(as_text=True)
+    with client.application.app_context():
+        assert ActivityLog.query.filter_by(action="planner_absence_repair_applied").first() is None
+
+
+def test_planner_absence_repair_promotes_reader_when_absent_teacher_was_leader(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Absent Leader Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Leader Repair Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        absent_leader = _create_assessor(921, country="Absentland")
+        absent_leader.is_absent = True
+        readers = [_create_assessor(922 + offset, country=f"Readerland {offset}") for offset in range(3)]
+        student = _create_student(921, country="Studentland")
+        db.session.add_all([batch, group, absent_leader, *readers, student])
+        db.session.flush()
+        _add_reader(group, absent_leader, role=GroupMemberRole.LEADER)
+        for reader in readers:
+            _add_reader(group, reader)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_leader_id = absent_leader.id
+        promoted_reader_id = readers[0].id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    html = page.get_data(as_text=True)
+    assert "Remove absent teacher" in html
+    assert "Make Teacher922 Assessor922 leader" in html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with client.application.app_context():
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=absent_leader_id).first() is None
+        active_members = ReadingGroupMember.query.filter_by(group_id=group_id, active=True).all()
+        assert len(active_members) == 3
+        leaders = [member for member in active_members if member.role == GroupMemberRole.LEADER]
+        assert len(leaders) == 1
+        assert leaders[0].teacher_id == promoted_reader_id
+
+
+def test_planner_absence_repair_filters_free_teachers_by_language_and_country(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Eligibility Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Eligibility Repair Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        readers = [_create_assessor(941 + offset, country=f"Readerland {offset}") for offset in range(3)]
+        absent_reader = _create_assessor(945, country="Absentland")
+        absent_reader.is_absent = True
+        wrong_language = _create_assessor(946, country="Freeland", languages=("Spanish",))
+        country_conflict = _create_assessor(947, country="Studentland")
+        eligible = _create_assessor(948, country="Otherland")
+        student = _create_student(941, country="Studentland")
+        db.session.add_all(
+            [batch, group, *readers, absent_reader, wrong_language, country_conflict, eligible, student]
+        )
+        db.session.flush()
+        for index, reader in enumerate(readers):
+            _add_reader(group, reader, role=GroupMemberRole.LEADER if index == 0 else GroupMemberRole.READER)
+        _add_reader(group, absent_reader)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        wrong_language_id = wrong_language.id
+        country_conflict_id = country_conflict.id
+        eligible_id = eligible.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get(f"/admin/planner/batches/{batch_id}")
+    html = page.get_data(as_text=True)
+    assert "Add available teacher Teacher948 Assessor948" in html
+    assert "Add available teacher Teacher946 Assessor946" not in html
+    assert "Add available teacher Teacher947 Assessor947" not in html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with client.application.app_context():
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=eligible_id).first() is not None
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=wrong_language_id).first() is None
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=country_conflict_id).first() is None
+
+
+def test_planner_absence_repair_moves_reader_only_when_group_falls_below_three(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Absence Move Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        target = ReadingGroup(
+            name="Target Repair",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        donor = ReadingGroup(
+            name="Donor Repair",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        target_active = [_create_assessor(821 + offset, country=f"Targetland {offset}") for offset in range(2)]
+        target_absent = [_create_assessor(831 + offset, country=f"Absentland {offset}") for offset in range(2)]
+        for teacher in target_absent:
+            teacher.is_absent = True
+        donor_readers = [_create_assessor(841 + offset, country=f"Donorland {offset}") for offset in range(4)]
+        target_student = _create_student(821, country="Target Studentland")
+        donor_student = _create_student(822, country="Donor Studentland")
+        db.session.add_all([batch, target, donor, *target_active, *target_absent, *donor_readers, target_student, donor_student])
+        db.session.flush()
+        _add_reader(target, target_active[0], role=GroupMemberRole.LEADER)
+        _add_reader(target, target_active[1])
+        for teacher in target_absent:
+            _add_reader(target, teacher)
+        for index, teacher in enumerate(donor_readers):
+            _add_reader(donor, teacher, role=GroupMemberRole.LEADER if index == 0 else GroupMemberRole.READER)
+        db.session.add_all([
+            EssayAssignment(
+                student_id=target_student.id,
+                group_id=target.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+            EssayAssignment(
+                student_id=donor_student.id,
+                group_id=donor.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+        ])
+        db.session.commit()
+        batch_id = batch.id
+        target_id = target.id
+        donor_id = donor.id
+        donor_reader_ids = {teacher.id for teacher in donor_readers}
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    with client.application.app_context():
+        target_members = (
+            ReadingGroupMember.query.join(Teacher)
+            .filter(
+                ReadingGroupMember.group_id == target_id,
+                ReadingGroupMember.active.is_(True),
+                Teacher.is_absent.is_(False),
+            )
+            .all()
+        )
+        donor_members = (
+            ReadingGroupMember.query.join(Teacher)
+            .filter(
+                ReadingGroupMember.group_id == donor_id,
+                ReadingGroupMember.active.is_(True),
+                Teacher.is_absent.is_(False),
+            )
+            .all()
+        )
+        assert len(target_members) == 3
+        assert len(donor_members) == 3
+        moved_ids = {member.teacher_id for member in target_members}.intersection(donor_reader_ids)
+        assert len(moved_ids) == 1
+
+
+def test_planner_absence_repair_does_not_move_from_three_reader_donor(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Donor Floor Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        target = ReadingGroup(
+            name="Target Below Three",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        donor = ReadingGroup(
+            name="Donor At Floor",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        target_active = [_create_assessor(961 + offset, country=f"Targetland {offset}") for offset in range(2)]
+        target_absent = [_create_assessor(971 + offset, country=f"Absentland {offset}") for offset in range(2)]
+        for teacher in target_absent:
+            teacher.is_absent = True
+        donor_readers = [_create_assessor(981 + offset, country=f"Donorland {offset}") for offset in range(3)]
+        target_student = _create_student(961, country="Target Studentland")
+        donor_student = _create_student(962, country="Donor Studentland")
+        db.session.add_all(
+            [batch, target, donor, *target_active, *target_absent, *donor_readers, target_student, donor_student]
+        )
+        db.session.flush()
+        _add_reader(target, target_active[0], role=GroupMemberRole.LEADER)
+        _add_reader(target, target_active[1])
+        for teacher in target_absent:
+            _add_reader(target, teacher)
+        for index, teacher in enumerate(donor_readers):
+            _add_reader(donor, teacher, role=GroupMemberRole.LEADER if index == 0 else GroupMemberRole.READER)
+        db.session.add_all([
+            EssayAssignment(
+                student_id=target_student.id,
+                group_id=target.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+            EssayAssignment(
+                student_id=donor_student.id,
+                group_id=donor.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+            ),
+        ])
+        db.session.commit()
+        batch_id = batch.id
+        target_id = target.id
+        donor_id = donor.id
+        donor_reader_ids = {teacher.id for teacher in donor_readers}
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "would still have only 2 active teachers after repair" in html
+    with client.application.app_context():
+        target_members = (
+            ReadingGroupMember.query.join(Teacher)
+            .filter(
+                ReadingGroupMember.group_id == target_id,
+                ReadingGroupMember.active.is_(True),
+                Teacher.is_absent.is_(False),
+            )
+            .all()
+        )
+        donor_members = (
+            ReadingGroupMember.query.join(Teacher)
+            .filter(
+                ReadingGroupMember.group_id == donor_id,
+                ReadingGroupMember.active.is_(True),
+                Teacher.is_absent.is_(False),
+            )
+            .all()
+        )
+        assert len(target_members) == 2
+        assert len(donor_members) == 3
+        assert {member.teacher_id for member in target_members}.isdisjoint(donor_reader_ids)
+
+
+def test_planner_absence_repair_refuses_when_scores_exist(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Scored Absence Repair Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Scored Repair Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        reader = _create_assessor(861, country="Readerland")
+        absent_reader = _create_assessor(862, country="Absentland")
+        absent_reader.is_absent = True
+        free_reader = _create_assessor(863, country="Freeland")
+        student = _create_student(861, country="Studentland")
+        db.session.add_all([batch, group, reader, absent_reader, free_reader, student])
+        db.session.flush()
+        _add_reader(group, reader, role=GroupMemberRole.LEADER)
+        _add_reader(group, absent_reader)
+        assignment = EssayAssignment(
+            student_id=student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add(assignment)
+        db.session.flush()
+        _add_stage1_score(assignment, reader, 6.0)
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_reader_id = absent_reader.id
+        free_reader_id = free_reader.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "repair must be handled manually" in html
+    with client.application.app_context():
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=absent_reader_id).first() is not None
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=free_reader_id).first() is None
+
+
+def test_planner_absence_repair_refuses_for_stage_two_batches(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Stage Two Absence Repair Batch",
+            stage=Stage.STAGE_2,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Stage Two Repair Group",
+            language="English",
+            target_essay_load=1,
+            stage=Stage.STAGE_2,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        reader = _create_assessor(1001, country="Readerland")
+        absent_reader = _create_assessor(1002, country="Absentland")
+        absent_reader.is_absent = True
+        student = _create_student(1001, country="Studentland")
+        db.session.add_all([batch, group, reader, absent_reader, student])
+        db.session.flush()
+        _add_reader(group, reader, role=GroupMemberRole.LEADER)
+        _add_reader(group, absent_reader)
+        db.session.add(
+            EssayAssignment(
+                student_id=student.id,
+                group_id=group.id,
+                batch_id=batch.id,
+                stage=Stage.STAGE_2,
+                status=PlannerStatus.PUBLISHED,
+            )
+        )
+        db.session.commit()
+        batch_id = batch.id
+        group_id = group.id
+        absent_reader_id = absent_reader.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    token = csrf_token(client.get(f"/admin/planner/batches/{batch_id}"))
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/absence-repair",
+        data={"csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "supported for Stage 1 batches only" in response.get_data(as_text=True)
+    with client.application.app_context():
+        assert ReadingGroupMember.query.filter_by(group_id=group_id, teacher_id=absent_reader_id).first() is not None
 
 
 def _create_six_score_stage1_assignment(index: int) -> tuple[EssayAssignment, list[Teacher]]:
