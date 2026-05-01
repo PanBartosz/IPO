@@ -3262,6 +3262,8 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
     groups_without_assignments: list[ReadingGroup] = []
     groups_over_target: list[ReadingGroup] = []
     groups_without_matching_students: list[ReadingGroup] = []
+    groups_with_absent_teachers: list[ReadingGroup] = []
+    absent_group_members = 0
 
     student_language_counts: dict[str, int] = defaultdict(int)
     for student in present_students:
@@ -3276,6 +3278,14 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
             for member in group.members
             if member.active and member.teacher and not member.teacher.is_absent
         ]
+        active_absent_members = [
+            member
+            for member in group.members
+            if member.active and member.teacher and member.teacher.is_absent
+        ]
+        if active_absent_members:
+            groups_with_absent_teachers.append(group)
+            absent_group_members += len(active_absent_members)
         for member in group.members:
             if member.teacher_id:
                 all_main_teacher_ids.add(member.teacher_id)
@@ -3388,6 +3398,12 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
         "These groups are below the preferred Stage 1 reading team size.",
         len(groups_below_four),
     )
+    add_issue(
+        "warning",
+        "Groups with absent teachers",
+        "Active group membership includes teachers currently marked absent.",
+        len(groups_with_absent_teachers),
+    )
     if all_assessors_required:
         add_issue(
             "warning",
@@ -3461,6 +3477,8 @@ def _planner_batch_diagnostics(batch: AssignmentBatch, groups: list[ReadingGroup
         supplemental_only_assessors=len(supplemental_only_teacher_ids),
         groups_below_three=len(groups_below_three),
         groups_below_four=len(groups_below_four),
+        groups_with_absent_teachers=len(groups_with_absent_teachers),
+        absent_group_members=absent_group_members,
         groups_without_assignments=len(groups_without_assignments),
         groups_without_leader=len(groups_without_leader),
         total_target_essays=total_target_essays,

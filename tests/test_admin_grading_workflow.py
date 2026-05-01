@@ -633,6 +633,6 @@ def test_stage1_extra_reader_filters_limit_overview_rows(client):
     html = response.get_data(as_text=True)
 
     assert "filter-needs-assignment" in html
-    assert "Needs extra reader assignment" in html
+    assert "Needs reader" in html
     assert "filter-awaiting-score" not in html
-    assert "Extra reader assigned; awaiting score" not in html
+    assert "Awaiting score" not in html

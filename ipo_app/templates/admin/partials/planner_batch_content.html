@@ -73,7 +73,11 @@
         <article class="planner-diagnostic-card">
           <span class="planner-diagnostic-label">Groups</span>
           <strong>{{ planner_diagnostics.group_count }}</strong>
-          <p>{{ planner_diagnostics.groups_below_three }} below 3 · {{ planner_diagnostics.groups_below_four }} below 4</p>
+          <p>
+            {{ planner_diagnostics.groups_below_three }} below 3 ·
+            {{ planner_diagnostics.groups_below_four }} below 4 ·
+            {{ planner_diagnostics.groups_with_absent_teachers }} with absent teachers
+          </p>
         </article>
         <article class="planner-diagnostic-card">
           <span class="planner-diagnostic-label">Assignments</span>
@@ -131,6 +135,14 @@
               <tr>
                 <th>Supplemental-only assessors</th>
                 <td>{{ planner_diagnostics.supplemental_only_assessors }}</td>
+              </tr>
+              <tr>
+                <th>Groups with absent teachers</th>
+                <td>{{ planner_diagnostics.groups_with_absent_teachers }}</td>
+              </tr>
+              <tr>
+                <th>Absent teachers in groups</th>
+                <td>{{ planner_diagnostics.absent_group_members }}</td>
               </tr>
               <tr>
                 <th>Groups without assignments</th>

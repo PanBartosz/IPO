@@ -104,6 +104,12 @@ a:hover {
   padding: 1.5rem;
 }
 
+.container-dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
 .site-header {
   background: var(--brand-black);
   color: var(--brand-white);
@@ -3309,8 +3315,8 @@ body.modal-open {
 
 .dashboard-candidate,
 .dashboard-assigned-readers li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.7rem;
   padding: 0.55rem 0;
@@ -3329,6 +3335,20 @@ body.modal-open {
 .dashboard-candidate small {
   color: var(--text-muted);
   font-size: 0.78rem;
+}
+
+.dashboard-candidate .dashboard-inline-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.dashboard-candidate .button-link {
+  padding: 0.35rem 0.55rem;
+}
+
+.dashboard-candidate .icon-button {
+  white-space: nowrap;
 }
 
 .dashboard-assigned-readers ul {
@@ -3406,6 +3426,22 @@ body.modal-open {
   min-width: 0;
 }
 
+.stage1-extra-cell {
+  min-width: 8rem;
+}
+
+.stage1-extra-cell .status-tag {
+  white-space: nowrap;
+}
+
+.stage1-extra-cell .fine-print {
+  max-width: 9rem;
+}
+
+.stage1-action-cell {
+  min-width: 8rem;
+}
+
 .dashboard-filters {
   margin-bottom: 1.5rem;
 }
@@ -3438,6 +3474,12 @@ body.modal-open {
   align-items: center;
 }
 
+@media (min-width: 1080px) {
+  .container-dashboard .dashboard-cards {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .dashboard-header,
   .dashboard-active-batch,
@@ -3457,8 +3499,12 @@ body.modal-open {
 
   .dashboard-candidate,
   .dashboard-assigned-readers li {
+    grid-template-columns: 1fr;
     align-items: flex-start;
-    flex-direction: column;
+  }
+
+  .dashboard-candidate .dashboard-inline-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -3474,6 +3520,13 @@ body.modal-open {
   .filter-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dashboard-candidate .dashboard-inline-actions,
+  .dashboard-assigned-readers .dashboard-inline-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
   }
 
   .dashboard-action-meta {

@@ -539,6 +539,7 @@ def test_planner_batch_diagnostics_summarize_assignment_risks(client):
         db.session.flush()
         _add_reader(group, reader_a, role=GroupMemberRole.LEADER)
         _add_reader(group, reader_b)
+        _add_reader(group, absent_assessor)
         db.session.add_all([
             EssayAssignment(
                 student_id=assigned_student.id,
@@ -571,6 +572,8 @@ def test_planner_batch_diagnostics_summarize_assignment_risks(client):
         assert diagnostics.unassigned_students == 1
         assert diagnostics.groups_below_three == 1
         assert diagnostics.groups_below_four == 1
+        assert diagnostics.groups_with_absent_teachers == 1
+        assert diagnostics.absent_group_members == 1
         assert diagnostics.eligible_assessors_without_group == 1
         assert diagnostics.missing_reader_slots == 4
         assert diagnostics.under_read_assignments == 2
@@ -582,6 +585,7 @@ def test_planner_batch_diagnostics_summarize_assignment_risks(client):
         assert {issue.title for issue in diagnostics.issues} >= {
             "Students not assigned",
             "Groups below 3 assessors",
+            "Groups with absent teachers",
             "Eligible assessors without group",
             "Country conflicts",
             "Assigned absent students",
@@ -605,10 +609,13 @@ def test_planner_batch_view_renders_diagnostics_dashboard(client):
             batch=batch,
         )
         reader = _create_assessor(306)
+        absent_reader = _create_assessor(307)
+        absent_reader.is_absent = True
         student = _create_student(306)
-        db.session.add_all([batch, group, reader, student])
+        db.session.add_all([batch, group, reader, absent_reader, student])
         db.session.flush()
         _add_reader(group, reader, role=GroupMemberRole.LEADER)
+        _add_reader(group, absent_reader)
         db.session.add(
             EssayAssignment(
                 student_id=student.id,
@@ -633,6 +640,7 @@ def test_planner_batch_view_renders_diagnostics_dashboard(client):
     assert "Teachers" in html
     assert "Students" in html
     assert "Eligible assessors without group" in html
+    assert "Groups with absent teachers" in html
     assert "Missing Stage 1 reader slots" in html
 
 

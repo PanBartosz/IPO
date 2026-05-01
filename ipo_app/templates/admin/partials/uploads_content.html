@@ -103,28 +103,62 @@
               <span class="status-tag warning">Incomplete</span>
             {% endif %}
           </td>
-          <td>
+          <td class="stage1-extra-cell">
             {% if extra.bucket == "needs_assignment" %}
-              <span class="status-tag warning">{{ extra.label }}</span>
+              <span class="status-tag warning" title="{{ extra.label }}">Needs reader</span>
             {% elif extra.bucket == "awaiting_score" %}
-              <span class="status-tag warning">{{ extra.label }}</span>
+              <span class="status-tag warning" title="{{ extra.label }}">Awaiting score</span>
             {% elif extra.bucket == "review_spread" %}
-              <span class="status-tag warning">{{ extra.label }}</span>
+              <span class="status-tag warning" title="{{ extra.label }}">Review spread</span>
             {% elif extra.bucket == "resolved" %}
-              <span class="status-tag success">{{ extra.label }}</span>
+              <span class="status-tag success" title="{{ extra.label }}">Resolved</span>
             {% else %}
               —
             {% endif %}
             {% if extra.extra_readers %}
-              <div class="fine-print">{{ extra.extra_scores }}/{{ extra.extra_readers }} extra scores entered</div>
+              <div class="fine-print">{{ extra.extra_scores }}/{{ extra.extra_readers }} extra scores</div>
             {% endif %}
           </td>
-          <td class="table-actions">
-            <a class="button-link" href="{{ url_for('web.admin_score_student', student_id=student.id) }}">Scores</a>
-            <a class="button-link secondary" href="{{ url_for('web.admin_essay_override', student_id=student.id) }}">Override upload</a>
-            {% if student.uploaded_filename %}
-              <a class="button-link" href="{{ url_for('web.admin_download_essay', student_id=student.id) }}">Download</a>
-            {% endif %}
+          <td class="table-actions stage1-action-cell">
+            <div class="action-menu" data-action-menu>
+              <button
+                type="button"
+                class="button-link action-menu__toggle"
+                data-action-menu-toggle
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                Actions
+              </button>
+              <div class="action-menu__panel" role="menu">
+                <a
+                  class="action-menu__item"
+                  data-action-menu-item
+                  href="{{ url_for('web.admin_score_student', student_id=student.id) }}"
+                  role="menuitem"
+                >
+                  Scores
+                </a>
+                <a
+                  class="action-menu__item"
+                  data-action-menu-item
+                  href="{{ url_for('web.admin_essay_override', student_id=student.id) }}"
+                  role="menuitem"
+                >
+                  Override upload
+                </a>
+                {% if student.uploaded_filename %}
+                  <a
+                    class="action-menu__item"
+                    data-action-menu-item
+                    href="{{ url_for('web.admin_download_essay', student_id=student.id) }}"
+                    role="menuitem"
+                  >
+                    Download
+                  </a>
+                {% endif %}
+              </div>
+            </div>
           </td>
         </tr>
       {% endfor %}

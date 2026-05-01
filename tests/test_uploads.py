@@ -490,6 +490,8 @@ def test_admin_uploads_links_to_override_page(client):
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert f"/admin/uploads/{student_id}/override" in html
+    assert "action-menu" in html
+    assert "Actions" in html
     assert "Override upload" in html
 
 
