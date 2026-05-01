@@ -384,6 +384,211 @@ def test_dashboard_surfaces_additional_assessor_queue(client):
     assert "/admin/uploads?status=needs_extra" in html
 
 
+def test_dashboard_stage_metrics_are_scoped_to_active_published_batch(client):
+    with client.application.app_context():
+        active_batch = AssignmentBatch(name="Active Dashboard Batch", stage=Stage.STAGE_1, status=PlannerStatus.PUBLISHED)
+        draft_batch = AssignmentBatch(name="Draft Dashboard Batch", stage=Stage.STAGE_1, status=PlannerStatus.DRAFT)
+        db.session.add_all([active_batch, draft_batch])
+        db.session.flush()
+
+        active_reader = _create_teacher("dashboard-active-reader")
+        draft_reader = _create_teacher("dashboard-draft-reader")
+        active_student = _create_student("dashboard-active-student", client.application)
+        draft_student = _create_student("dashboard-draft-student", client.application)
+        _create_stage1_assignment(
+            student_id=active_student,
+            reader_ids=[active_reader],
+            batch_id=active_batch.id,
+        )
+        _create_stage1_assignment(
+            student_id=draft_student,
+            reader_ids=[draft_reader],
+            batch_id=draft_batch.id,
+        )
+        db.session.commit()
+
+    _login_admin(client)
+    response = client.get("/admin")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+
+    assert "Active Dashboard Batch" in html
+    assert "1 assigned essays" in html
+    assert "dashboard-active-student" in html
+    assert "dashboard-draft-student" not in html
+
+
+def test_dashboard_action_queue_surfaces_group_coverage_and_can_assign_supplemental_reader(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(name="Coverage Dashboard Batch", stage=Stage.STAGE_1, status=PlannerStatus.PUBLISHED)
+        target_group = ReadingGroup(
+            name="Coverage Target",
+            stage=Stage.STAGE_1,
+            language="English",
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        source_group = ReadingGroup(
+            name="Coverage Source",
+            stage=Stage.STAGE_1,
+            language="English",
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        db.session.add_all([batch, target_group, source_group])
+        db.session.flush()
+
+        base_a = _create_teacher("coverage-base-a", country="Base A")
+        base_b = _create_teacher("coverage-base-b", country="Base B")
+        free_teacher = _create_teacher("coverage-free-reader", country="Free Country")
+        target_student_a = _create_student("coverage-target-a", client.application)
+        target_student_b = _create_student("coverage-target-b", client.application)
+        source_student = _create_student("coverage-source", client.application)
+
+        db.session.add_all(
+            [
+                ReadingGroupMember(group_id=target_group.id, teacher_id=base_a, role=GroupMemberRole.LEADER, active=True),
+                ReadingGroupMember(group_id=target_group.id, teacher_id=base_b, role=GroupMemberRole.READER, active=True),
+                ReadingGroupMember(group_id=source_group.id, teacher_id=free_teacher, role=GroupMemberRole.LEADER, active=True),
+            ]
+        )
+        target_assignment_a = EssayAssignment(
+            student_id=target_student_a,
+            group_id=target_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        target_assignment_b = EssayAssignment(
+            student_id=target_student_b,
+            group_id=target_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        source_assignment = EssayAssignment(
+            student_id=source_student,
+            group_id=source_group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add_all([target_assignment_a, target_assignment_b, source_assignment])
+        db.session.flush()
+        _add_score(
+            assignment_id=source_assignment.id,
+            student_id=source_student,
+            teacher_id=free_teacher,
+            stage=Stage.STAGE_1,
+            score=8,
+        )
+        source_score = EssayScore.query.filter_by(
+            assignment_id=source_assignment.id,
+            teacher_id=free_teacher,
+            stage=Stage.STAGE_1,
+        ).first()
+        source_score.teacher_finalized = True
+        source_score.teacher_finalized_at = datetime.utcnow()
+        db.session.commit()
+
+        batch_id = batch.id
+        target_group_id = target_group.id
+        free_teacher_id = free_teacher
+        target_assignment_ids = {target_assignment_a.id, target_assignment_b.id}
+
+    _login_admin(client)
+    page = client.get("/admin")
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+
+    assert "Action queue" in html
+    assert "Coverage Target: reader coverage below four" in html
+    assert "2 essays affected; 4 reader assignments missing." in html
+    assert "coverage-free-reader" in html
+
+    token = csrf_token(page)
+    response = client.post(
+        f"/admin/planner/batches/{batch_id}/groups/{target_group_id}/supplemental-readers",
+        data={
+            "csrf_token": token,
+            "teacher_id": str(free_teacher_id),
+            "redirect": "/admin",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin")
+    with client.application.app_context():
+        assigned = EssayAssignmentExtraReader.query.filter(
+            EssayAssignmentExtraReader.assignment_id.in_(target_assignment_ids),
+            EssayAssignmentExtraReader.teacher_id == free_teacher_id,
+            EssayAssignmentExtraReader.stage == Stage.STAGE_1.value,
+        ).count()
+        assert assigned == 2
+
+
+def test_dashboard_upload_rescue_includes_unfinalized_and_missing_files(client):
+    with client.application.app_context():
+        missing_upload = Student(
+            country="Studentland",
+            first_name="Upload",
+            last_name="Missing",
+            email="upload-missing@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+        )
+        unfinalized = Student(
+            country="Studentland",
+            first_name="Upload",
+            last_name="Unfinalized",
+            email="upload-unfinalized@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            uploaded_filename="upload-unfinalized.pdf",
+            uploaded_at=datetime.utcnow(),
+            essay_finalized=False,
+        )
+        missing_file = Student(
+            country="Studentland",
+            first_name="Upload",
+            last_name="FileMissing",
+            email="upload-file-missing@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            uploaded_filename="upload-file-missing.pdf",
+            uploaded_at=datetime.utcnow(),
+            essay_finalized=True,
+            essay_finalized_at=datetime.utcnow(),
+        )
+        db.session.add_all([missing_upload, unfinalized, missing_file])
+        db.session.commit()
+
+        upload_folder = Path(client.application.config["UPLOAD_FOLDER"])
+        upload_folder.mkdir(parents=True, exist_ok=True)
+        (upload_folder / "upload-unfinalized.pdf").write_bytes(b"%PDF-1.4\n% unfinalized\n%%EOF\n")
+
+    _login_admin(client)
+    response = client.get("/admin")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+
+    assert "Upload rescue" in html
+    assert "Missing upload" in html
+    assert "Not finalized" in html
+    assert "File missing" in html
+    assert "Upload Unfinalized" in html
+
+
 def test_stage1_extra_reader_filters_limit_overview_rows(client):
     with client.application.app_context():
         batch = AssignmentBatch(name="Extra Reader Filter Batch", stage=Stage.STAGE_1, status=PlannerStatus.PUBLISHED)

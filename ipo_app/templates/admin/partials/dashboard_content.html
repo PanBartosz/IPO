@@ -3,10 +3,39 @@
     <h2>Logistics Dashboard</h2>
     <p class="fine-print">Last refreshed {{ last_refreshed.strftime('%Y-%m-%d %H:%M UTC') }}</p>
   </div>
-  <form method="get" hx-get="{{ url_for('web.admin_dashboard') }}" hx-target="#dashboard-content" hx-push-url="true">
+  <form method="get" hx-get="{{ dashboard_refresh_url }}" hx-target="#dashboard-content" hx-push-url="true">
     <button type="submit" class="button secondary">Refresh</button>
   </form>
 </div>
+
+{% set active_batch = metrics.active_batch %}
+<section class="dashboard-active-batch{% if not active_batch %} dashboard-active-batch-warning{% endif %}">
+  {% if active_batch %}
+    <div>
+      <span class="dashboard-kicker">Active Stage 1 batch</span>
+      <h3>{{ active_batch.name }}</h3>
+      <p class="fine-print">
+        {{ active_batch.groups }} groups &middot; {{ active_batch.assignments }} assigned essays
+        {% if active_batch.published_at %}&middot; published {{ active_batch.published_at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}
+      </p>
+    </div>
+    <div class="dashboard-active-actions">
+      <a class="button-link" href="{{ url_for('web.admin_planner_batch', batch_id=active_batch.id) }}">Planner</a>
+      <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_groups_pdf', batch_id=active_batch.id) }}">Groups PDF</a>
+      <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_teachers_pdf', batch_id=active_batch.id) }}">Teachers PDF</a>
+      <a class="button-link" href="{{ url_for('web.admin_uploads') }}">Stage 1</a>
+    </div>
+  {% else %}
+    <div>
+      <span class="dashboard-kicker">Active Stage 1 batch</span>
+      <h3>No published batch</h3>
+      <p class="fine-print">Publish a Stage 1 batch before grading and group coverage metrics can be used.</p>
+    </div>
+    <div class="dashboard-active-actions">
+      <a class="button-link" href="{{ url_for('web.admin_planner') }}">Open planner</a>
+    </div>
+  {% endif %}
+</section>
 
 <div class="dashboard-filters">
   <form method="get" class="filter-form" hx-get="{{ url_for('web.admin_dashboard') }}" hx-target="#dashboard-content" hx-push-url="true">
@@ -38,11 +67,12 @@
 
 <section class="dashboard-cards">
   <article class="dashboard-card">
-    <h3>Students</h3>
-    <p class="metric-large">{{ metrics.students.total }}</p>
+    <h3>Essays</h3>
+    <p class="metric-large">{{ metrics.students.printable }}/{{ metrics.students.total - metrics.students.absent }}</p>
     <ul>
-      <li>{{ metrics.students.uploads_pending }} pending uploads</li>
-      <li>{{ metrics.students.uploads_complete }} uploaded</li>
+      <li>{{ metrics.students.uploads_pending }} missing upload</li>
+      <li>{{ metrics.students.uploads_unfinalized }} uploaded, not finalized</li>
+      <li>{{ metrics.students.printable }} printable</li>
       <li>{{ metrics.students.absent }} marked absent</li>
     </ul>
     <p>
@@ -69,22 +99,24 @@
       </button>
     </form>
   </article>
+
   <article class="dashboard-card">
     <h3>Teachers</h3>
     <p class="metric-large">{{ metrics.teachers.active }}</p>
     <ul>
-      <li>{{ metrics.teachers.pending_scores }} awaiting scores</li>
+      <li>{{ metrics.teachers.pending_scores }} with pending scores</li>
+      <li>{{ metrics.groups.understaffed }} groups below four readers</li>
       <li>{{ metrics.teachers.absent }} absent</li>
-      <li>{{ metrics.groups.understaffed }} understaffed groups</li>
     </ul>
   </article>
+
   <article class="dashboard-card">
     <h3>Stage 1</h3>
     <p class="metric-large">{{ metrics.stage.stage1.completed }}/{{ metrics.stage.stage1.total }}</p>
     <ul>
       <li>{{ metrics.stage.stage1.pending }} essays pending</li>
       <li>Scores entered: {{ metrics.stage.stage1.entered_scores }}/{{ metrics.stage.stage1.expected_scores }}</li>
-      <li>Completion: {{ metrics.stage.stage1.completion_rate|round(1) }}%</li>
+      <li>{{ metrics.stage.stage1.action_queue_total }} queue actions</li>
     </ul>
     <p>
       <strong>Grading:</strong>
@@ -103,6 +135,7 @@
       </button>
     </form>
   </article>
+
   <article class="dashboard-card">
     <h3>Additional Assessors</h3>
     <p class="metric-large">{{ metrics.stage.stage1.extra_readers.action_total }}</p>
@@ -112,8 +145,9 @@
       <li>{{ metrics.stage.stage1.extra_readers.review_spread }} need spread review</li>
       <li>{{ metrics.stage.stage1.extra_readers.resolved }} resolved after extra reading</li>
     </ul>
-    <p><a class="button-link" href="{{ url_for('web.admin_uploads', status='needs_extra') }}">Open queue</a></p>
+    <p><a class="button-link" href="{{ url_for('web.admin_uploads', status='needs_extra') }}">Open Stage 1 queue</a></p>
   </article>
+
   <article class="dashboard-card">
     <h3>Stage 2</h3>
     <p class="metric-large">{{ metrics.stage.stage2.completed }}/{{ metrics.stage.stage2.candidates }}</p>
@@ -141,45 +175,170 @@
   </article>
 </section>
 
-<section class="dashboard-panel">
-  <h3>Additional assessor queue</h3>
-  {% if tables.stage1_extra_reader_queue %}
-    <table class="compact-table">
-      <thead>
-        <tr>
-          <th>Essay ID</th>
-          <th>Student</th>
-          <th>Status</th>
-          <th>Extra scores</th>
-          <th>Spread</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in tables.stage1_extra_reader_queue %}
-          <tr>
-            <td>#{{ item.student.id }}</td>
-            <td>{{ item.student.first_name }} {{ item.student.last_name }}</td>
-            <td>{{ item.state.label }}</td>
-            <td>{{ item.state.extra_scores }}/{{ item.state.extra_readers }}</td>
-            <td>
-              {% if item.score_range is not none %}
-                {{ "%.2f"|format(item.score_range) }}
-              {% else %}
-                —
+<section class="dashboard-panel dashboard-action-queue">
+  <div class="dashboard-panel-header">
+    <div>
+      <h3>Action queue</h3>
+      <p class="fine-print">Coverage gaps, spread-triggered additional readers, and pending extra scores for the active batch.</p>
+    </div>
+    <span class="status-tag {% if tables.action_queue_total %}warning{% else %}success{% endif %}">
+      {{ tables.action_queue_total }} open
+    </span>
+  </div>
+  {% if tables.action_queue %}
+    <div class="dashboard-action-list">
+      {% for item in tables.action_queue %}
+        <article class="dashboard-action-item dashboard-action-{{ item.severity }}">
+          <div class="dashboard-action-main">
+            <div class="dashboard-action-title">
+              <span class="status-tag {% if item.severity == 'danger' %}danger{% else %}warning{% endif %}">{{ item.label }}</span>
+              <h4>{{ item.title }}</h4>
+            </div>
+            <p>{{ item.detail }}</p>
+            <div class="dashboard-action-meta">
+              <span>{{ item.language }}</span>
+              {% if item.group %}
+                <span>{{ item.group.name }}</span>
               {% endif %}
-            </td>
-            <td><a class="button-link" href="{{ url_for('web.admin_score_student', student_id=item.student.id) }}">Open</a></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+              <span>Readers {{ item.current_readers }}/{{ item.required_readers }}</span>
+              {% if item.average_score is not none %}
+                <span>Average {{ "%.2f"|format(item.average_score) }}</span>
+              {% endif %}
+            </div>
+            {% if item.assigned_extra_readers %}
+              <div class="dashboard-assigned-readers">
+                <strong>Assigned extra readers</strong>
+                <ul>
+                  {% for reader in item.assigned_extra_readers %}
+                    <li>
+                      <span>
+                        {{ reader.teacher.first_name }} {{ reader.teacher.last_name }}
+                        {% if reader.score_entered %}
+                          <span class="status-tag success">Score entered</span>
+                        {% else %}
+                          <span class="status-tag warning">Awaiting score</span>
+                        {% endif %}
+                      </span>
+                      <span class="dashboard-inline-actions">
+                        {% if active_batch %}
+                          <a class="button-link secondary" href="{{ url_for('web.admin_teacher_reader_packet', batch_id=active_batch.id, teacher_id=reader.teacher.id) }}">PDF</a>
+                        {% endif %}
+                        <button
+                          type="button"
+                          class="icon-button message-launch"
+                          data-teacher-id="{{ reader.teacher.id }}"
+                          data-teacher-name="{{ reader.teacher.first_name }} {{ reader.teacher.last_name }}"
+                          aria-label="Message {{ reader.teacher.first_name }} {{ reader.teacher.last_name }}"
+                        >
+                          Message
+                        </button>
+                      </span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="dashboard-action-side">
+            {% if item.candidates %}
+              <div class="dashboard-candidates">
+                <strong>Free eligible assessors</strong>
+                {% for candidate in item.candidates %}
+                  <div class="dashboard-candidate">
+                    <div>
+                      <span>{{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }}</span>
+                      <small>{{ candidate.teacher.country }} &middot; {{ candidate.eligible_count }} eligible essay{% if candidate.eligible_count != 1 %}s{% endif %}</small>
+                    </div>
+                    <div class="dashboard-inline-actions">
+                      <form method="post" action="{{ item.assign_url }}" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="teacher_id" value="{{ candidate.teacher.id }}">
+                        <input type="hidden" name="redirect" value="{{ item.redirect_url }}">
+                        {% if item.kind == "extra_reader" %}
+                          <input type="hidden" name="action" value="add_reader">
+                        {% endif %}
+                        <button type="submit" class="button-link">Assign</button>
+                      </form>
+                      <button
+                        type="button"
+                        class="icon-button message-launch"
+                        data-teacher-id="{{ candidate.teacher.id }}"
+                        data-teacher-name="{{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }}"
+                        aria-label="Message {{ candidate.teacher.first_name }} {{ candidate.teacher.last_name }}"
+                      >
+                        Message
+                      </button>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% elif item.kind == "coverage" or (item.extra_state and item.extra_state.bucket == "needs_assignment") %}
+              <p class="fine-print">No free eligible assessors right now.</p>
+            {% endif %}
+            <div class="dashboard-action-buttons">
+              <a class="button-link" href="{{ item.open_url }}">Open</a>
+              {% if item.packet_url %}
+                <a class="button-link secondary" href="{{ item.packet_url }}">PDF</a>
+              {% endif %}
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+    {% if tables.action_queue_total > tables.action_queue|length %}
+      <p class="fine-print">Showing {{ tables.action_queue|length }} of {{ tables.action_queue_total }} open actions. Use the Stage 1 overview for the full list.</p>
+    {% endif %}
   {% else %}
-    <p class="fine-print">No Stage 1 essays currently need additional assessor action.</p>
+    <p class="fine-print">No coverage or additional-assessor actions are currently open for the active batch.</p>
   {% endif %}
 </section>
 
 <section class="dashboard-grid">
+  <div class="dashboard-panel">
+    <div class="dashboard-panel-header">
+      <h3>Upload rescue</h3>
+      <span class="status-tag {% if metrics.students.upload_rescue %}warning{% else %}success{% endif %}">
+        {{ metrics.students.upload_rescue }} open
+      </span>
+    </div>
+    {% if tables.upload_rescue %}
+      <table class="compact-table dashboard-responsive-table">
+        <thead>
+          <tr>
+            <th>Essay ID</th>
+            <th>Student</th>
+            <th>Status</th>
+            <th>Uploaded</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in tables.upload_rescue %}
+            <tr>
+              <td data-label="Essay ID">#{{ row.student.id }}</td>
+              <td data-label="Student">{{ row.student.first_name }} {{ row.student.last_name }}</td>
+              <td data-label="Status">
+                <span class="status-tag {% if row.severity == 'danger' %}danger{% else %}warning{% endif %}">{{ row.status_label }}</span>
+                <div class="fine-print">{{ row.detail }}</div>
+              </td>
+              <td data-label="Uploaded">
+                {% if row.student.uploaded_at %}
+                  {{ row.student.uploaded_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                  &mdash;
+                {% endif %}
+              </td>
+              <td class="dashboard-table-action"><a class="button-link" href="{{ url_for('web.admin_essay_override', student_id=row.student.id) }}">Override</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">All present students have printable finalized essays.</p>
+    {% endif %}
+  </div>
+
   <div class="dashboard-panel">
     <h3>Alerts</h3>
     {% if alerts %}
@@ -197,6 +356,50 @@
       <p class="fine-print">Everything looks good. No outstanding alerts.</p>
     {% endif %}
   </div>
+</section>
+
+<section class="dashboard-grid">
+  <div class="dashboard-panel">
+    <h3>Teachers needing attention</h3>
+    {% if tables.teacher_workload %}
+      <table class="compact-table dashboard-responsive-table">
+        <thead>
+          <tr>
+            <th>Teacher</th>
+            <th>Pending</th>
+            <th>Assigned</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in tables.teacher_workload %}
+            <tr>
+              <td data-label="Teacher">
+                <span class="teacher-name-cell">
+                  {{ item.teacher.first_name }} {{ item.teacher.last_name }} ({{ item.teacher.country }})
+                  <button
+                    type="button"
+                    class="icon-button message-launch"
+                    data-teacher-id="{{ item.teacher.id }}"
+                    data-teacher-name="{{ item.teacher.first_name }} {{ item.teacher.last_name }}"
+                    aria-label="Message {{ item.teacher.first_name }} {{ item.teacher.last_name }}"
+                  >
+                    Message
+                  </button>
+                </span>
+              </td>
+              <td data-label="Pending">{{ item.pending }}</td>
+              <td data-label="Assigned">{{ item.assigned }}</td>
+              <td data-label="Completed">{{ item.completed }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No outstanding workloads.</p>
+    {% endif %}
+  </div>
+
   <div class="dashboard-panel">
     <h3>Deadlines & SLAs</h3>
     <ul class="fine-list">
@@ -217,99 +420,27 @@
   </div>
 </section>
 
-<section class="dashboard-grid">
-  <div class="dashboard-panel">
-    <h3>Teachers needing attention</h3>
-    {% if tables.teacher_workload %}
-      <table class="compact-table">
-        <thead>
-          <tr>
-            <th>Teacher</th>
-            <th>Pending</th>
-            <th>Assigned</th>
-            <th>Completed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in tables.teacher_workload %}
-            <tr>
-              <td>
-                <span class="teacher-name-cell">
-                  {{ item.teacher.first_name }} {{ item.teacher.last_name }} ({{ item.teacher.country }})
-                  <button
-                    type="button"
-                    class="icon-button message-launch"
-                    data-teacher-id="{{ item.teacher.id }}"
-                    data-teacher-name="{{ item.teacher.first_name }} {{ item.teacher.last_name }}"
-                    aria-label="Message {{ item.teacher.first_name }} {{ item.teacher.last_name }}"
-                  >
-                    Message
-                  </button>
-                </span>
-              </td>
-              <td>{{ item.pending }}</td>
-              <td>{{ item.assigned }}</td>
-              <td>{{ item.completed }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="fine-print">No outstanding workloads.</p>
-    {% endif %}
-  </div>
-  <div class="dashboard-panel">
-    <h3>Students without essay uploads</h3>
-    {% if tables.students_without_uploads %}
-      <table class="compact-table">
-        <thead>
-          <tr>
-            <th>Student</th>
-            <th>Country</th>
-            <th>Registered</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for student in tables.students_without_uploads %}
-            <tr>
-              <td>{{ student.first_name }} {{ student.last_name }}</td>
-              <td>{{ student.country }}</td>
-              <td>
-                {% if student.created_at %}
-                  {{ student.created_at.strftime('%Y-%m-%d %H:%M') }}
-                {% else %}
-                  &mdash;
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="fine-print">All registered students have uploaded their essays.</p>
-    {% endif %}
-  </div>
-</section>
-
 <section class="dashboard-panel">
   <h3>Stage 1 essays needing scores</h3>
   {% if tables.stage1_pending %}
-    <table class="compact-table">
+    <table class="compact-table dashboard-responsive-table">
       <thead>
         <tr>
           <th>Essay ID</th>
           <th>Student</th>
           <th>Missing scores</th>
           <th>Language</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for item in tables.stage1_pending %}
           <tr>
-            <td>#{{ item.student.id }}</td>
-            <td>{{ item.student.first_name }} {{ item.student.last_name }}</td>
-            <td>{{ item.missing }}</td>
-            <td>{{ item.student.essay_language }}</td>
+            <td data-label="Essay ID">#{{ item.student.id }}</td>
+            <td data-label="Student">{{ item.student.first_name }} {{ item.student.last_name }}</td>
+            <td data-label="Missing scores">{{ item.missing }}</td>
+            <td data-label="Language">{{ item.student.essay_language }}</td>
+            <td class="dashboard-table-action"><a class="button-link" href="{{ url_for('web.admin_score_student', student_id=item.student.id) }}">Open</a></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -318,3 +449,10 @@
     <p class="fine-print">No essays are waiting for Stage 1 scoring.</p>
   {% endif %}
 </section>
+
+<div
+  aria-hidden="true"
+  hx-get="{{ dashboard_refresh_url }}"
+  hx-trigger="every 60s"
+  hx-target="#dashboard-content"
+></div>

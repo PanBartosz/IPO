@@ -5341,6 +5341,7 @@ def admin_dashboard():
     upload_module_enabled = _is_upload_module_enabled()
     upload_locked = _is_upload_locked()
     upload_state = SimpleNamespace(enabled=upload_module_enabled, locked=upload_locked)
+    refresh_args = {key: value for key, value in filters.items() if value}
 
     is_htmx = _is_htmx_request()
     template_name = "admin/partials/dashboard_content.html" if is_htmx else "admin/dashboard.html"
@@ -5360,6 +5361,7 @@ def admin_dashboard():
         "upload_state": upload_state,
         "Stage": Stage,
         "last_refreshed": datetime.utcnow(),
+        "dashboard_refresh_url": url_for("web.admin_dashboard", **refresh_args),
     }
     if not is_htmx:
         context.update(_quick_message_context())
@@ -5457,40 +5459,289 @@ def _render_htmx_template(template_name: str, **context):
 
 
 
+def _dashboard_upload_rescue_rows(students: list[Student]) -> list[SimpleNamespace]:
+    rows: list[SimpleNamespace] = []
+    for student in students:
+        if not student.uploaded_filename:
+            rows.append(
+                SimpleNamespace(
+                    student=student,
+                    severity="warning",
+                    status_label="Missing upload",
+                    detail="No essay file is recorded.",
+                    sort_key=(0, student.last_name, student.first_name, student.id),
+                )
+            )
+            continue
+
+        file_exists = _essay_pdf_path(student) is not None
+        if not file_exists:
+            rows.append(
+                SimpleNamespace(
+                    student=student,
+                    severity="danger",
+                    status_label="File missing",
+                    detail="Upload record exists, but the PDF file is not available.",
+                    sort_key=(1, student.last_name, student.first_name, student.id),
+                )
+            )
+            continue
+
+        if not student.essay_finalized:
+            rows.append(
+                SimpleNamespace(
+                    student=student,
+                    severity="warning",
+                    status_label="Not finalized",
+                    detail="Essay is uploaded, but the student did not finalize it.",
+                    sort_key=(2, student.last_name, student.first_name, student.id),
+                )
+            )
+
+    rows.sort(key=lambda row: row.sort_key)
+    return rows
+
+
+def _dashboard_extra_reader_candidates(
+    batch: AssignmentBatch,
+    assignment: EssayAssignment,
+    teachers: list[Teacher],
+    workload_map: dict[int, SimpleNamespace],
+    *,
+    limit: int = 3,
+) -> list[SimpleNamespace]:
+    student = assignment.student
+    if not student:
+        return []
+
+    assigned_teacher_ids = {
+        assessor.teacher_id
+        for assessor in _stage_assessors(assignment, Stage.STAGE_1, include_group=True)
+    }
+    stage2_teacher_ids = {
+        assessor.teacher_id
+        for assessor in _stage_assessors(assignment, Stage.STAGE_2, include_group=False)
+    }
+    excluded_teacher_ids = assigned_teacher_ids.union(stage2_teacher_ids)
+
+    candidates: list[SimpleNamespace] = []
+    for teacher in teachers:
+        if teacher.id in excluded_teacher_ids:
+            continue
+        if not _teacher_can_grade(student, teacher, student.essay_language):
+            continue
+        workload = workload_map.get(teacher.id)
+        if workload is None:
+            workload = _teacher_stage_one_workload(batch, teacher)
+            workload_map[teacher.id] = workload
+        if not workload.is_free:
+            continue
+        candidates.append(
+            SimpleNamespace(
+                teacher=teacher,
+                workload=workload,
+                eligible_count=1,
+            )
+        )
+
+    candidates.sort(
+        key=lambda entry: (
+            -entry.workload.completed_count,
+            entry.teacher.last_name,
+            entry.teacher.first_name,
+            entry.teacher.id,
+        )
+    )
+    return candidates[:limit]
+
+
+def _dashboard_extra_reader_rows(assignment: EssayAssignment) -> list[SimpleNamespace]:
+    score_teacher_ids = {
+        score.teacher_id
+        for score in assignment.scores
+        if score.stage == Stage.STAGE_1 and score.score is not None
+    }
+    rows: list[SimpleNamespace] = []
+    for assessor in _stage_assessors(assignment, Stage.STAGE_1, include_group=False):
+        if not assessor.is_extra:
+            continue
+        rows.append(
+            SimpleNamespace(
+                teacher=assessor.teacher,
+                teacher_id=assessor.teacher_id,
+                score_entered=assessor.teacher_id in score_teacher_ids,
+            )
+        )
+    rows.sort(key=lambda row: (row.teacher.last_name, row.teacher.first_name, row.teacher.id))
+    return rows
+
+
+def _dashboard_action_queue(
+    *,
+    batch: AssignmentBatch | None,
+    groups: list[ReadingGroup],
+    assignments: list[EssayAssignment],
+    teachers: list[Teacher],
+    supplemental_reader_map: dict[int, SimpleNamespace],
+    status_map: dict[int, SimpleNamespace],
+    extra_state_map: dict[int, SimpleNamespace],
+    workload_map: dict[int, SimpleNamespace],
+) -> list[SimpleNamespace]:
+    if not batch:
+        return []
+
+    queue: list[SimpleNamespace] = []
+
+    for group in groups:
+        supplemental = supplemental_reader_map.get(group.id)
+        if not supplemental or not supplemental.missing_slots:
+            continue
+        active_count = sum(
+            1
+            for member in group.members
+            if member.active and member.teacher and not member.teacher.is_absent
+        )
+        queue.append(
+            SimpleNamespace(
+                kind="coverage",
+                priority=10,
+                severity="danger" if active_count < 3 else "warning",
+                label="Coverage",
+                title=f"{group.name}: reader coverage below four",
+                detail=(
+                    f"{supplemental.assignments_needing_readers} essay"
+                    f"{'s' if supplemental.assignments_needing_readers != 1 else ''} affected; "
+                    f"{supplemental.missing_slots} reader assignment"
+                    f"{'s' if supplemental.missing_slots != 1 else ''} missing."
+                ),
+                group=group,
+                assignment=None,
+                student=None,
+                language=group.language,
+                current_readers=active_count,
+                required_readers=STAGE_1_REQUIRED_READINGS,
+                score_range=None,
+                average_score=None,
+                extra_state=None,
+                assigned_extra_readers=[],
+                candidates=supplemental.candidates[:3],
+                assign_url=url_for(
+                    "web.admin_planner_assign_supplemental_reader",
+                    batch_id=batch.id,
+                    group_id=group.id,
+                ),
+                open_url=url_for("web.admin_planner_batch", batch_id=batch.id),
+                packet_url=url_for("web.admin_group_reader_packet", group_id=group.id),
+                redirect_url=url_for("web.admin_dashboard"),
+            )
+        )
+
+    extra_priority = {
+        "needs_assignment": 20,
+        "awaiting_score": 30,
+        "review_spread": 40,
+    }
+    extra_label = {
+        "needs_assignment": "Spread",
+        "awaiting_score": "Awaiting score",
+        "review_spread": "Review",
+    }
+    for assignment in assignments:
+        student = assignment.student
+        if not student:
+            continue
+        status = status_map.get(assignment.id)
+        extra_state = extra_state_map.get(assignment.id)
+        if not status or not extra_state or not extra_state.needs_action:
+            continue
+        if extra_state.bucket == "needs_assignment" and extra_state.missing_reader_assignments > 0:
+            continue
+        assigned_extra_readers = _dashboard_extra_reader_rows(assignment)
+        candidates = (
+            _dashboard_extra_reader_candidates(batch, assignment, teachers, workload_map)
+            if extra_state.bucket == "needs_assignment"
+            else []
+        )
+        queue.append(
+            SimpleNamespace(
+                kind="extra_reader",
+                priority=extra_priority.get(extra_state.bucket, 50),
+                severity="warning",
+                label=extra_label.get(extra_state.bucket, "Additional reader"),
+                title=f"Essay {student.id}: {extra_state.label}",
+                detail=(
+                    f"{status.entered_scores}/{status.expected_scores} scores entered"
+                    f"{'; spread ' + format(status.score_range, '.2f') if status.score_range is not None else ''}."
+                ),
+                group=assignment.group,
+                assignment=assignment,
+                student=student,
+                language=student.essay_language,
+                current_readers=status.assigned_readers,
+                required_readers=status.required_readers,
+                score_range=status.score_range,
+                average_score=status.average_score,
+                extra_state=extra_state,
+                assigned_extra_readers=assigned_extra_readers,
+                candidates=candidates,
+                assign_url=url_for("web.admin_score_student", student_id=student.id),
+                open_url=url_for("web.admin_score_student", student_id=student.id),
+                packet_url=(
+                    url_for("web.admin_extra_reader_packet", assignment_id=assignment.id)
+                    if assigned_extra_readers
+                    else None
+                ),
+                redirect_url=url_for("web.admin_dashboard"),
+            )
+        )
+
+    queue.sort(
+        key=lambda item: (
+            item.priority,
+            item.language or "",
+            item.group.name if item.group else "",
+            item.student.id if item.student else 0,
+        )
+    )
+    return queue
+
+
 def _collect_dashboard_data(filters: dict | None = None):
     filters = filters or {}
     essay_language_filter = filters.get("essay_language") or None
     alert_level_filter = filters.get("alert_level") or None
 
     now = datetime.utcnow()
+    active_batch = _get_active_batch(Stage.STAGE_1)
 
-    # Student metrics
     total_students = Student.query.count()
-    uploads_complete = Student.query.filter(Student.uploaded_filename.isnot(None)).count()
-    uploads_pending = Student.query.filter(
-        Student.uploaded_filename.is_(None),
-        Student.is_absent.is_(False),
-    ).count()
-    absent_students = Student.query.filter_by(is_absent=True).count()
-    students_without_uploads = (
-        Student.query.filter(
-            Student.uploaded_filename.is_(None),
-            Student.is_absent.is_(False),
-        )
-        .order_by(Student.created_at.asc())
+    present_students = (
+        Student.query.filter(Student.is_absent.is_(False))
+        .order_by(Student.last_name.asc(), Student.first_name.asc(), Student.id.asc())
         .all()
     )
+    absent_students = Student.query.filter_by(is_absent=True).count()
+    uploads_complete = sum(1 for student in present_students if student.uploaded_filename)
+    uploads_pending = sum(1 for student in present_students if not student.uploaded_filename)
+    uploads_unfinalized = sum(
+        1
+        for student in present_students
+        if student.uploaded_filename and not student.essay_finalized
+    )
+    printable_essays = sum(
+        1
+        for student in present_students
+        if student.essay_finalized and _essay_pdf_path(student) is not None
+    )
+    upload_rescue_rows = _dashboard_upload_rescue_rows(present_students)
 
-    # Teacher metrics and language map
     teachers = Teacher.query.order_by(Teacher.last_name.asc(), Teacher.first_name.asc()).all()
-    teacher_languages: dict[int, set[str]] = {}
     teacher_load: dict[int, dict] = {}
     active_teachers = 0
     absent_teachers = 0
+    eligible_teachers: list[Teacher] = []
     for teacher in teachers:
         _ensure_language_entries(teacher)
-        languages = {entry.language for entry in teacher.language_entries if entry.language}
-        teacher_languages[teacher.id] = languages
         teacher_load[teacher.id] = {
             "teacher": teacher,
             "assigned": 0,
@@ -5502,23 +5753,17 @@ def _collect_dashboard_data(filters: dict | None = None):
             absent_teachers += 1
         else:
             active_teachers += 1
+            if teacher.declared_assessor_competence:
+                eligible_teachers.append(teacher)
 
-    # Group staffing metrics
-    groups = (
-        ReadingGroup.query.options(
-            joinedload(ReadingGroup.members).joinedload(ReadingGroupMember.teacher)
-        ).all()
-    )
+    groups = _load_batch_groups(active_batch) if active_batch else []
     understaffed_groups = []
-    active_teacher_ids = set()
     for group in groups:
         active_members = [
             member
             for member in group.members
             if member.active and member.teacher and not member.teacher.is_absent
         ]
-        for member in active_members:
-            active_teacher_ids.add(member.teacher_id)
         if len(active_members) < 4:
             understaffed_groups.append(
                 {
@@ -5528,19 +5773,24 @@ def _collect_dashboard_data(filters: dict | None = None):
                 }
             )
 
-    # Stage metrics
-    stage1_assignments = (
-        EssayAssignment.query.options(
-            joinedload(EssayAssignment.scores),
-            joinedload(EssayAssignment.extra_readers),
-            joinedload(EssayAssignment.student),
-            joinedload(EssayAssignment.group)
-            .joinedload(ReadingGroup.members)
-            .joinedload(ReadingGroupMember.teacher),
+    if active_batch:
+        stage1_assignments = (
+            EssayAssignment.query.options(
+                joinedload(EssayAssignment.scores),
+                joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
+                joinedload(EssayAssignment.student),
+                joinedload(EssayAssignment.group)
+                .joinedload(ReadingGroup.members)
+                .joinedload(ReadingGroupMember.teacher),
+            )
+            .filter(
+                EssayAssignment.stage == Stage.STAGE_1,
+                EssayAssignment.batch_id == active_batch.id,
+            )
+            .all()
         )
-        .filter(EssayAssignment.stage == Stage.STAGE_1)
-        .all()
-    )
+    else:
+        stage1_assignments = []
 
     stage1_total = len(stage1_assignments)
     stage1_completed = 0
@@ -5557,6 +5807,8 @@ def _collect_dashboard_data(filters: dict | None = None):
         "action_total": 0,
     }
     stage1_extra_reader_queue = []
+    stage1_status_map: dict[int, SimpleNamespace] = {}
+    stage1_extra_state_map: dict[int, SimpleNamespace] = {}
 
     stage2_candidates = []
     stage2_completed = 0
@@ -5569,6 +5821,8 @@ def _collect_dashboard_data(filters: dict | None = None):
     for assignment in stage1_assignments:
         status = _compute_stage_one_status(assignment)
         extra_state = _stage_one_extra_reader_state(assignment, status)
+        stage1_status_map[assignment.id] = status
+        stage1_extra_state_map[assignment.id] = extra_state
         expected = status.expected_scores or 0
         entered = status.entered_scores or 0
         stage1_expected_scores += expected
@@ -5647,6 +5901,25 @@ def _collect_dashboard_data(filters: dict | None = None):
     teacher_workload = teacher_workload[:8]
 
     teacher_pending_count = sum(1 for info in teacher_load.values() if info["pending"] > 0 and not info["is_absent"])
+    supplemental_reader_map = (
+        _supplemental_reader_context(active_batch, groups, eligible_teachers)
+        if active_batch
+        else {}
+    )
+    workload_snapshot = {
+        teacher.id: _teacher_stage_one_workload(active_batch, teacher)
+        for teacher in eligible_teachers
+    } if active_batch else {}
+    action_queue = _dashboard_action_queue(
+        batch=active_batch,
+        groups=groups,
+        assignments=stage1_assignments,
+        teachers=eligible_teachers,
+        supplemental_reader_map=supplemental_reader_map,
+        status_map=stage1_status_map,
+        extra_state_map=stage1_extra_state_map,
+        workload_map=workload_snapshot,
+    )
 
     stage1_completion_rate = (stage1_completed / stage1_total * 100) if stage1_total else 100
     stage1_score_rate = (stage1_entered_scores / stage1_expected_scores * 100) if stage1_expected_scores else 100
@@ -5658,6 +5931,9 @@ def _collect_dashboard_data(filters: dict | None = None):
             "total": total_students,
             "uploads_pending": uploads_pending,
             "uploads_complete": uploads_complete,
+            "uploads_unfinalized": uploads_unfinalized,
+            "printable": printable_essays,
+            "upload_rescue": len(upload_rescue_rows),
             "absent": absent_students,
         },
         "teachers": {
@@ -5678,6 +5954,8 @@ def _collect_dashboard_data(filters: dict | None = None):
                 "entered_scores": stage1_entered_scores,
                 "tie_break": tie_break_needed,
                 "extra_readers": extra_reader_summary,
+                "action_queue_total": len(action_queue),
+                "coverage_groups": sum(1 for item in action_queue if item.kind == "coverage"),
                 "completion_rate": stage1_completion_rate,
                 "score_rate": stage1_score_rate,
             },
@@ -5694,23 +5972,35 @@ def _collect_dashboard_data(filters: dict | None = None):
                 "recommended": stage3_recommended,
             },
         },
+        "active_batch": (
+            {
+                "id": active_batch.id,
+                "name": active_batch.name,
+                "status": active_batch.status.value,
+                "published_at": active_batch.published_at,
+                "groups": len(groups),
+                "assignments": stage1_total,
+            }
+            if active_batch
+            else None
+        ),
     }
 
     alerts = []
-    if uploads_pending:
+    if upload_rescue_rows:
         alerts.append(
             {
-                "message": f"{uploads_pending} students have not uploaded their essays.",
+                "message": f"{len(upload_rescue_rows)} student essay upload(s) need rescue before printing.",
                 "level": "warning",
-                "link": url_for("web.admin_students"),
+                "link": url_for("web.admin_uploads"),
             }
         )
     if len(understaffed_groups):
         alerts.append(
             {
-                "message": f"{len(understaffed_groups)} reading group(s) have fewer than four active teachers.",
+                "message": f"{len(understaffed_groups)} active batch group(s) are below the preferred four-reader team.",
                 "level": "warning",
-                "link": url_for("web.admin_planner"),
+                "link": url_for("web.admin_planner_batch", batch_id=active_batch.id) if active_batch else url_for("web.admin_planner"),
             }
         )
     if stage1_pending_count:
@@ -5726,7 +6016,15 @@ def _collect_dashboard_data(filters: dict | None = None):
             {
                 "message": f"{extra_reader_summary['action_total']} Stage 1 essay(s) need additional assessor action.",
                 "level": "warning",
-                "link": url_for("web.admin_uploads", status="needs_extra"),
+                "link": url_for("web.admin_dashboard"),
+            }
+        )
+    if not active_batch:
+        alerts.append(
+            {
+                "message": "No Stage 1 batch is currently published; grading and group metrics are inactive.",
+                "level": "warning",
+                "link": url_for("web.admin_planner"),
             }
         )
     if stage2_pending_count:
@@ -5747,10 +6045,10 @@ def _collect_dashboard_data(filters: dict | None = None):
         )
 
     if essay_language_filter:
-        students_filtered = [
-            student
-            for student in students_without_uploads
-            if student.essay_language == essay_language_filter
+        upload_rescue_filtered = [
+            row
+            for row in upload_rescue_rows
+            if row.student.essay_language == essay_language_filter
         ]
         stage1_filtered = [
             item
@@ -5762,10 +6060,16 @@ def _collect_dashboard_data(filters: dict | None = None):
             for item in stage1_extra_reader_queue
             if item["student"] and item["student"].essay_language == essay_language_filter
         ]
+        action_queue_filtered = [
+            item
+            for item in action_queue
+            if item.language == essay_language_filter
+        ]
     else:
-        students_filtered = students_without_uploads
+        upload_rescue_filtered = upload_rescue_rows
         stage1_filtered = stage1_pending_list
         extra_reader_filtered = stage1_extra_reader_queue
+        action_queue_filtered = action_queue
 
     if alert_level_filter:
         alerts_filtered = [alert for alert in alerts if alert["level"] == alert_level_filter]
@@ -5774,9 +6078,12 @@ def _collect_dashboard_data(filters: dict | None = None):
 
     tables = {
         "teacher_workload": teacher_workload,
-        "students_without_uploads": students_filtered[:10],
+        "upload_rescue": upload_rescue_filtered[:10],
+        "students_without_uploads": [row.student for row in upload_rescue_filtered if row.status_label == "Missing upload"][:10],
         "stage1_pending": stage1_filtered[:8],
         "stage1_extra_reader_queue": extra_reader_filtered[:8],
+        "action_queue": action_queue_filtered[:12],
+        "action_queue_total": len(action_queue_filtered),
     }
 
     alerts = alerts_filtered
@@ -11787,8 +12094,11 @@ def admin_score_student(student_id: int):
     state = _load_scoring_state()
 
     def _post_response():
+        redirect_target = _portal_next_url(request.form.get("redirect"))
         if is_htmx:
             return _render_score_response()
+        if redirect_target:
+            return redirect(redirect_target)
         return redirect(url_for("web.admin_score_student", student_id=student.id))
 
     remove_id = request.form.get("remove_reader")
@@ -12561,32 +12871,31 @@ def admin_planner_assign_supplemental_reader(batch_id: int, group_id: int):
     if not batch:
         abort(404)
     group = ReadingGroup.query.filter_by(id=group_id, batch_id=batch.id).first_or_404()
-    if batch.stage != Stage.STAGE_1 or group.stage != Stage.STAGE_1:
-        flash("Supplemental readers are only supported for Stage 1 batches.", "error")
+    redirect_target = _portal_next_url(request.form.get("redirect"))
+
+    def _supplemental_response():
         if _is_htmx_request():
             return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return redirect(redirect_target or url_for("web.admin_planner_batch", batch_id=batch.id))
+
+    if batch.stage != Stage.STAGE_1 or group.stage != Stage.STAGE_1:
+        flash("Supplemental readers are only supported for Stage 1 batches.", "error")
+        return _supplemental_response()
 
     teacher_id = request.form.get("teacher_id")
     if not teacher_id:
         flash("Select a teacher to assign.", "error")
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return _supplemental_response()
     try:
         teacher_id_int = int(teacher_id)
     except ValueError:
         flash("Invalid teacher selection.", "error")
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return _supplemental_response()
 
     teacher = db.session.get(Teacher, teacher_id_int)
     if not teacher or teacher.is_absent or not teacher.declared_assessor_competence:
         flash("Teacher is not available for assessment.", "error")
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return _supplemental_response()
 
     workload = _teacher_stage_one_workload(batch, teacher)
     if not workload.is_free:
@@ -12596,16 +12905,12 @@ def admin_planner_assign_supplemental_reader(batch_id: int, group_id: int):
             f"{'s' if workload.pending_count != 1 else ''}.",
             "error",
         )
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return _supplemental_response()
 
     assignments = _supplemental_reader_assignments_for_group(group, teacher)
     if not assignments:
         flash("No underfilled essays in this group are eligible for that teacher.", "warning")
-        if _is_htmx_request():
-            return admin_planner_batch(batch.id)
-        return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+        return _supplemental_response()
 
     created_assignment_ids: list[int] = []
     for assignment in assignments:
@@ -12636,9 +12941,7 @@ def admin_planner_assign_supplemental_reader(batch_id: int, group_id: int):
         f"{'s' if len(created_assignment_ids) != 1 else ''}.",
         "success",
     )
-    if _is_htmx_request():
-        return admin_planner_batch(batch.id)
-    return redirect(url_for("web.admin_planner_batch", batch_id=batch.id))
+    return _supplemental_response()
 
 
 @web_bp.route(
