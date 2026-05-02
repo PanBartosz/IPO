@@ -15,12 +15,27 @@
       }
       h1 {
         font-size: 18px;
-        margin-bottom: 0.2in;
+        margin: 0 0 0.03in 0;
+      }
+      .report-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.2in;
+        border-bottom: 1px solid #d1d5db;
+        padding-bottom: 0.08in;
+        margin-bottom: 0.15in;
+      }
+      .report-logo {
+        flex: 0 0 1.1in;
+        max-width: 1.1in;
+        max-height: 0.34in;
+        object-fit: contain;
       }
       .meta {
         font-size: 9px;
         color: #4b5563;
-        margin-bottom: 0.15in;
+        margin-bottom: 0;
       }
       table {
         width: 100%;
@@ -44,8 +59,15 @@
     </style>
   </head>
   <body>
-    <h1>Grades report</h1>
-    <div class="meta">Generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</div>
+    <header class="report-header">
+      <div>
+        <h1>Grades report</h1>
+        <div class="meta">Generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</div>
+      </div>
+      {% if pdf_logo_small_url %}
+        <img class="report-logo" src="{{ pdf_logo_small_url }}" alt="IPO 2026">
+      {% endif %}
+    </header>
 
     <table>
       <thead>

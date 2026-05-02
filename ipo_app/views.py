@@ -7,6 +7,7 @@ import re
 import secrets
 import json
 import hashlib
+import hmac
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -43,6 +44,7 @@ from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 from weasyprint import HTML
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -167,6 +169,12 @@ ADMIN_MODULES = [
 LOG_PAGE_SIZE = 100
 RESET_TOKEN_EXPIRY_HOURS = 24
 
+PDF_LOGO_ASSETS = {
+    "primary": "pdfgen_img_assets/logos/a.png",
+    "small": "pdfgen_img_assets/logos/e.png",
+    "packet": "pdfgen_img_assets/logos/f.png",
+}
+
 LOGIN_RATE_LIMIT_PER_USERNAME = "10 per minute"
 LOGIN_RATE_LIMIT_PER_IP = "120 per minute"
 TEACHER_BOARD_LOGIN_RATE_LIMIT_PER_IP = "10 per minute"
@@ -229,6 +237,8 @@ SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
 SETTING_REGISTRATION_INVITE_ONLY = "registration_invite_only"
 SETTING_LOGIN_FOLDED_ALIAS_ENABLED = "login_folded_alias_enabled"
 SETTING_LOGIN_EMAIL_ENABLED = "login_email_enabled"
+SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED = "student_temporary_access_login_enabled"
+SETTING_TEACHER_TEMPORARY_ACCESS_LOGIN_ENABLED = "teacher_temporary_access_login_enabled"
 SETTING_EMAIL_STUDENT_INVITE_SUBJECT = "email_student_invite_subject"
 SETTING_EMAIL_STUDENT_INVITE_BODY = "email_student_invite_body"
 SETTING_EMAIL_TEACHER_INVITE_SUBJECT = "email_teacher_invite_subject"
@@ -958,6 +968,37 @@ def _generate_unique_teacher_token(max_attempts: int = 20) -> str:
         if not Teacher.query.filter(Teacher.portal_token == token).first():
             return token
     return secrets.token_hex(16)
+
+
+def _generate_unique_temporary_access_code(model, column_name: str, max_attempts: int = 30) -> str:
+    column = getattr(model, column_name)
+    for _ in range(max_attempts):
+        code = secrets.token_urlsafe(8)
+        if not model.query.filter(column == code).first():
+            return code
+    return secrets.token_hex(12)
+
+
+def _ensure_student_temporary_access_code(student: Student) -> str:
+    if not student.temporary_access_code:
+        student.temporary_access_code = _generate_unique_temporary_access_code(Student, "temporary_access_code")
+        db.session.flush()
+    return student.temporary_access_code
+
+
+def _ensure_teacher_temporary_access_code(teacher: Teacher) -> str:
+    if not teacher.temporary_access_code:
+        teacher.temporary_access_code = _generate_unique_temporary_access_code(Teacher, "temporary_access_code")
+        db.session.flush()
+    return teacher.temporary_access_code
+
+
+def _temporary_access_code_matches(stored_code: str | None, submitted_secret: str | None) -> bool:
+    stored = (stored_code or "").strip()
+    submitted = (submitted_secret or "").strip()
+    if not stored or not submitted:
+        return False
+    return hmac.compare_digest(stored, submitted)
 
 
 def _generate_unique_invite_token(max_attempts: int = 20) -> str:
@@ -2371,10 +2412,10 @@ def _ensure_student_credentials(student: Student, *, reset_password: bool = Fals
         username_generated = True
 
     plain_password: str | None = None
-    if reset_password or not student.upload_password_hash or not student.upload_token:
+    if reset_password or not student.upload_password_hash:
         plain_password = secrets.token_urlsafe(8)
         student.upload_password_hash = generate_password_hash(plain_password)
-        student.upload_token = plain_password
+        student.upload_token = None
         student.__dict__["_plain_upload_password"] = plain_password
 
     if username_generated or plain_password is not None:
@@ -2519,16 +2560,79 @@ def _store_admin_essay_pdf(student: Student, file) -> tuple[str, Path, int | Non
     return stored_name, file_path, word_count, counted_at
 
 
+def _pdf_logo_path(kind: str) -> Path:
+    return Path(current_app.static_folder) / PDF_LOGO_ASSETS[kind]
+
+
+def _pdf_logo_uri(kind: str) -> str | None:
+    path = _pdf_logo_path(kind)
+    if not path.exists():
+        current_app.logger.warning("PDF logo asset missing: %s", path)
+        return None
+    return path.resolve().as_uri()
+
+
+def _pdf_logo_context() -> dict[str, str | None]:
+    return {
+        "pdf_logo_primary_url": _pdf_logo_uri("primary"),
+        "pdf_logo_small_url": _pdf_logo_uri("small"),
+        "pdf_logo_packet_url": _pdf_logo_uri("packet"),
+    }
+
+
+def _draw_pdf_logo(
+    c: canvas.Canvas,
+    kind: str,
+    x: float,
+    y: float,
+    max_width: float,
+    max_height: float,
+    *,
+    align: str = "left",
+) -> None:
+    path = _pdf_logo_path(kind)
+    if not path.exists():
+        current_app.logger.warning("PDF logo asset missing: %s", path)
+        return
+    image = ImageReader(str(path))
+    image_width, image_height = image.getSize()
+    scale = min(max_width / image_width, max_height / image_height)
+    width = image_width * scale
+    height = image_height * scale
+    if align == "right":
+        x += max_width - width
+    elif align == "center":
+        x += (max_width - width) / 2
+    c.drawImage(
+        image,
+        x,
+        y + (max_height - height) / 2,
+        width=width,
+        height=height,
+        mask="auto",
+    )
+
+
 def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids: list[int]) -> PdfReader:
     buffer = BytesIO()
     width, height = A4
     c = canvas.Canvas(buffer, pagesize=A4)
     margin = 40
 
+    _draw_pdf_logo(
+        c,
+        "packet",
+        margin,
+        height - margin - 108,
+        width - 2 * margin,
+        88,
+        align="center",
+    )
+
     c.setFont("Helvetica-Bold", 22)
-    c.drawString(margin, height - margin - 10, "IPO Essay Packet")
+    c.drawString(margin, height - margin - 140, "IPO Essay Packet")
     c.setFont("Helvetica", 14)
-    c.drawString(margin, height - margin - 36, f"Group: {group.name or group.id}")
+    c.drawString(margin, height - margin - 166, f"Group: {group.name or group.id}")
 
     group_label = getattr(group, "name", None) or getattr(group, "id", "—")
     info_rows = [
@@ -2537,7 +2641,7 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
         ("Group", group_label),
     ]
 
-    table_top = height - margin - 70
+    table_top = height - margin - 200
     row_height = 26
     col_widths = [150, width - 2 * margin - 150]
     c.setLineWidth(1)
@@ -2583,17 +2687,27 @@ def _create_committee_title_page(member_name: str, committee_label: str, essay_i
     c = canvas.Canvas(buffer, pagesize=A4)
     margin = 40
 
+    _draw_pdf_logo(
+        c,
+        "packet",
+        margin,
+        height - margin - 108,
+        width - 2 * margin,
+        88,
+        align="center",
+    )
+
     c.setFont("Helvetica-Bold", 22)
-    c.drawString(margin, height - margin - 10, "IPO Stage 3 Packet")
+    c.drawString(margin, height - margin - 140, "IPO Stage 3 Packet")
     c.setFont("Helvetica", 14)
-    c.drawString(margin, height - margin - 36, f"Committee: {committee_label}")
+    c.drawString(margin, height - margin - 166, f"Committee: {committee_label}")
 
     info_rows = [
         ("Member", member_name or "—"),
         ("Committee", committee_label),
     ]
 
-    table_top = height - margin - 70
+    table_top = height - margin - 200
     row_height = 26
     col_widths = [150, width - 2 * margin - 150]
     c.setLineWidth(1)
@@ -2666,6 +2780,14 @@ def _login_folded_alias_enabled() -> bool:
 
 def _login_email_enabled() -> bool:
     return _parse_bool(_get_setting(SETTING_LOGIN_EMAIL_ENABLED, "false"))
+
+
+def _student_temporary_access_login_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED, "false"))
+
+
+def _teacher_temporary_access_login_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_TEACHER_TEMPORARY_ACCESS_LOGIN_ENABLED, "false"))
 
 
 def _registration_invite_required() -> bool:
@@ -4978,7 +5100,9 @@ def _teacher_has_active_group_conflict(group: ReadingGroup, student_country: str
 
 
 def _render_pdf(template_name: str, filename: str, **context):
-    html = render_template(template_name, **context)
+    pdf_context = _pdf_logo_context()
+    pdf_context.update(context)
+    html = render_template(template_name, **pdf_context)
     pdf_bytes = HTML(string=html, base_url=request.url_root).write_pdf()
     response = make_response(pdf_bytes)
     response.headers["Content-Type"] = "application/pdf"
@@ -5314,37 +5438,49 @@ def student_login():
                     },
                 )
                 db.session.commit()
-        elif not check_password_hash(student.upload_password_hash, form.password.data.strip()):
-            flash("Invalid credentials.", "error")
-            log_activity(
-                "student_upload_login_failed",
-                f"Failed login for {username}",
-                details={
-                    "username": student.upload_username,
-                    "email": student.email,
-                    "submitted_username": username,
-                    "login_match_type": match_details["match_type"],
-                },
-            )
-            db.session.commit()
         else:
-            session["student_upload_id"] = student.id
-            log_activity(
-                "student_upload_login",
-                f"Student {student.first_name} {student.last_name} signed in",
-                object_type="student",
-                object_id=student.id,
-                details={
-                    "username": student.upload_username,
-                    "email": student.email,
-                    "submitted_username": username,
-                    "login_match_type": match_details["match_type"],
-                },
-            )
-            db.session.commit()
-            next_param = _portal_next_url(request.args.get("next"))
-            target = next_param or url_for("web.student_portal")
-            return redirect(target)
+            submitted_secret = form.password.data.strip()
+            auth_method = None
+            if check_password_hash(student.upload_password_hash, submitted_secret):
+                auth_method = "password"
+            elif (
+                _student_temporary_access_login_enabled()
+                and _temporary_access_code_matches(student.temporary_access_code, submitted_secret)
+            ):
+                auth_method = "temporary_access_code"
+
+            if auth_method is None:
+                flash("Invalid credentials.", "error")
+                log_activity(
+                    "student_upload_login_failed",
+                    f"Failed login for {username}",
+                    details={
+                        "username": student.upload_username,
+                        "email": student.email,
+                        "submitted_username": username,
+                        "login_match_type": match_details["match_type"],
+                    },
+                )
+                db.session.commit()
+            else:
+                session["student_upload_id"] = student.id
+                log_activity(
+                    "student_upload_login",
+                    f"Student {student.first_name} {student.last_name} signed in",
+                    object_type="student",
+                    object_id=student.id,
+                    details={
+                        "username": student.upload_username,
+                        "email": student.email,
+                        "submitted_username": username,
+                        "login_match_type": match_details["match_type"],
+                        "auth_method": auth_method,
+                    },
+                )
+                db.session.commit()
+                next_param = _portal_next_url(request.args.get("next"))
+                target = next_param or url_for("web.student_portal")
+                return redirect(target)
     return render_template(
         "student/login.html",
         form=form,
@@ -5920,6 +6056,7 @@ def register_student():
             is_absent=bool(form.is_absent.data),
         )
         _ensure_student_credentials(student)
+        _ensure_student_temporary_access_code(student)
         db.session.add(student)
         try:
             db.session.flush()
@@ -6081,6 +6218,7 @@ def register_teacher():
             db.session.add(teacher)
             try:
                 _ensure_teacher_portal_credentials(teacher)
+                _ensure_teacher_temporary_access_code(teacher)
                 db.session.flush()
                 if invite_active:
                     invite.first_name = teacher.first_name
@@ -6935,6 +7073,56 @@ def _parse_bool(raw: str | None) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _temporary_access_model(audience: str):
+    if audience == "students":
+        return Student, "student", "students"
+    if audience == "teachers":
+        return Teacher, "teacher", "teachers"
+    return None, None, None
+
+
+def _generate_reserved_temporary_access_code(reserved_codes: set[str], max_attempts: int = 100) -> str:
+    for _ in range(max_attempts):
+        code = secrets.token_urlsafe(8)
+        if code not in reserved_codes:
+            reserved_codes.add(code)
+            return code
+    code = secrets.token_hex(16)
+    reserved_codes.add(code)
+    return code
+
+
+def _temporary_access_reserved_codes(model) -> set[str]:
+    return {
+        row.temporary_access_code
+        for row in model.query.filter(model.temporary_access_code.isnot(None)).all()
+        if row.temporary_access_code
+    }
+
+
+def _generate_missing_temporary_access_codes(audience: str) -> int:
+    model, _singular, _plural = _temporary_access_model(audience)
+    if model is None:
+        return 0
+    reserved_codes = _temporary_access_reserved_codes(model)
+    rows = model.query.filter(model.temporary_access_code.is_(None)).order_by(model.id.asc()).all()
+    for row in rows:
+        row.temporary_access_code = _generate_reserved_temporary_access_code(reserved_codes)
+    return len(rows)
+
+
+def _rotate_temporary_access_codes(audience: str) -> int:
+    model, _singular, _plural = _temporary_access_model(audience)
+    if model is None:
+        return 0
+    rows = model.query.order_by(model.id.asc()).all()
+    old_codes = {row.temporary_access_code for row in rows if row.temporary_access_code}
+    reserved_codes = set(old_codes)
+    for row in rows:
+        row.temporary_access_code = _generate_reserved_temporary_access_code(reserved_codes)
+    return len(rows)
+
+
 def _stage_lock_key(stage: Stage) -> str:
     return SETTING_STAGE1_LOCK if stage == Stage.STAGE_1 else SETTING_STAGE2_LOCK
 
@@ -7157,6 +7345,8 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
 
     form.essay_upload_enabled.data = _is_upload_module_enabled()
     form.teacher_portal_enabled.data = _teacher_portal_enabled()
+    form.student_temporary_access_login_enabled.data = _student_temporary_access_login_enabled()
+    form.teacher_temporary_access_login_enabled.data = _teacher_temporary_access_login_enabled()
     form.registration_invite_only.data = _registration_invite_required()
     form.login_email_enabled.data = _login_email_enabled()
     form.login_folded_alias_enabled.data = _login_folded_alias_enabled()
@@ -7239,6 +7429,14 @@ def admin_settings():
             _set_setting(SETTING_ACCOMMODATION_INFO_HTML, accommodation_html)
             _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
             _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
+            _set_setting(
+                SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED,
+                "true" if form.student_temporary_access_login_enabled.data else "false",
+            )
+            _set_setting(
+                SETTING_TEACHER_TEMPORARY_ACCESS_LOGIN_ENABLED,
+                "true" if form.teacher_temporary_access_login_enabled.data else "false",
+            )
             _set_setting(SETTING_REGISTRATION_INVITE_ONLY, "true" if form.registration_invite_only.data else "false")
             _set_setting(SETTING_LOGIN_EMAIL_ENABLED, "true" if form.login_email_enabled.data else "false")
             _set_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true" if form.login_folded_alias_enabled.data else "false")
@@ -7272,6 +7470,47 @@ def admin_settings():
             return redirect(url_for("web.admin_settings"))
 
     return render_template("admin/settings.html", form=form, config=config, login_alias_diagnostics=diagnostics)
+
+
+@web_bp.route("/admin/settings/temporary-access-codes", methods=["POST"])
+def admin_temporary_access_codes():
+    if not _current_admin():
+        abort(403)
+
+    action = (request.form.get("action") or "").strip()
+    audience = (request.form.get("audience") or "").strip()
+    _model, _singular, plural_label = _temporary_access_model(audience)
+    if plural_label is None:
+        flash("Choose students or teachers before changing temporary access codes.", "error")
+        return redirect(url_for("web.admin_settings"))
+
+    if action == "generate_missing":
+        count = _generate_missing_temporary_access_codes(audience)
+        log_activity(
+            "temporary_access_codes_generated",
+            f"Generated missing temporary access codes for {plural_label}",
+            actor=_current_admin(),
+            details={"audience": audience, "count": count},
+        )
+        db.session.commit()
+        flash(f"Generated {count} missing temporary access codes for {plural_label}.", "success")
+    elif action == "rotate":
+        if request.form.get("confirm_rotation") != "yes":
+            flash("Confirm rotation before changing printed temporary access codes.", "error")
+            return redirect(url_for("web.admin_settings"))
+        count = _rotate_temporary_access_codes(audience)
+        log_activity(
+            "temporary_access_codes_rotated",
+            f"Rotated temporary access codes for {plural_label}",
+            actor=_current_admin(),
+            details={"audience": audience, "count": count},
+        )
+        db.session.commit()
+        flash(f"Rotated temporary access codes for {count} {plural_label}. Password hashes were not changed.", "success")
+    else:
+        flash("Unknown temporary access-code action.", "error")
+
+    return redirect(url_for("web.admin_settings"))
 
 
 @web_bp.route("/admin/exports")
@@ -9636,42 +9875,53 @@ def login():
                 },
             )
             db.session.commit()
-        elif not check_password_hash(teacher.portal_password_hash, password):
-            flash("Invalid credentials.", "error")
-            log_activity(
-                "teacher_portal_login_failed",
-                f"Teacher portal login failed for {username}",
-                actor="teacher_portal",
-                details={
-                    "username": teacher.portal_username,
-                    "email": teacher.email,
-                    "submitted_username": username,
-                    "login_match_type": match_details["match_type"],
-                    "remote_addr": request.remote_addr,
-                },
-            )
-            db.session.commit()
         else:
-            session["teacher_portal_id"] = teacher.id
-            session["teacher_board"] = True
-            teacher.portal_last_login = datetime.utcnow()
-            log_activity(
-                "teacher_portal_login",
-                f"Teacher {teacher.first_name} {teacher.last_name} signed in",
-                actor=teacher.portal_username or teacher.email,
-                object_type="teacher",
-                object_id=teacher.id,
-                details={
-                    "username": teacher.portal_username,
-                    "email": teacher.email,
-                    "submitted_username": username,
-                    "login_match_type": match_details["match_type"],
-                    "remote_addr": request.remote_addr,
-                },
-            )
-            db.session.commit()
-            target = _portal_next_url(request.form.get("next") or next_candidate)
-            return redirect(target or url_for("teacher_portal.dashboard"))
+            auth_method = None
+            if check_password_hash(teacher.portal_password_hash, password):
+                auth_method = "password"
+            elif (
+                _teacher_temporary_access_login_enabled()
+                and _temporary_access_code_matches(teacher.temporary_access_code, password)
+            ):
+                auth_method = "temporary_access_code"
+
+            if auth_method is None:
+                flash("Invalid credentials.", "error")
+                log_activity(
+                    "teacher_portal_login_failed",
+                    f"Teacher portal login failed for {username}",
+                    actor="teacher_portal",
+                    details={
+                        "username": teacher.portal_username,
+                        "email": teacher.email,
+                        "submitted_username": username,
+                        "login_match_type": match_details["match_type"],
+                        "remote_addr": request.remote_addr,
+                    },
+                )
+                db.session.commit()
+            else:
+                session["teacher_portal_id"] = teacher.id
+                session["teacher_board"] = True
+                teacher.portal_last_login = datetime.utcnow()
+                log_activity(
+                    "teacher_portal_login",
+                    f"Teacher {teacher.first_name} {teacher.last_name} signed in",
+                    actor=teacher.portal_username or teacher.email,
+                    object_type="teacher",
+                    object_id=teacher.id,
+                    details={
+                        "username": teacher.portal_username,
+                        "email": teacher.email,
+                        "submitted_username": username,
+                        "login_match_type": match_details["match_type"],
+                        "auth_method": auth_method,
+                        "remote_addr": request.remote_addr,
+                    },
+                )
+                db.session.commit()
+                target = _portal_next_url(request.form.get("next") or next_candidate)
+                return redirect(target or url_for("teacher_portal.dashboard"))
 
     return render_template(
         "teacher_portal/login.html",
@@ -12181,6 +12431,8 @@ def edit_student(student_id: int):
         student.is_absent = bool(form.is_absent.data)
         if not student.upload_username or not student.upload_password_hash:
             _ensure_student_credentials(student)
+        if not student.temporary_access_code:
+            _ensure_student_temporary_access_code(student)
 
         try:
             db.session.flush()
@@ -12368,6 +12620,8 @@ def edit_teacher(teacher_id: int):
             teacher.accepted_ethics = False
             teacher.accepted_ethics_at = None
         teacher.is_absent = bool(form.is_absent.data)
+        if not teacher.temporary_access_code:
+            _ensure_teacher_temporary_access_code(teacher)
 
         try:
             db.session.flush()
@@ -12759,18 +13013,14 @@ def admin_student_cards_pdf():
         .order_by(Student.country.asc(), Student.last_name.asc())
         .all()
     )
-    html = render_template(
+    return _render_pdf(
         "admin/pdf/student_cards.html",
+        "participant-cards.pdf",
         students=students,
         current_year=datetime.utcnow().year,
         upload_url=url_for("web.student_login", _external=True),
         event_theme="Essay Competition",
     )
-    pdf_bytes = HTML(string=html, base_url=request.url_root).write_pdf()
-    response = make_response(pdf_bytes)
-    response.headers["Content-Type"] = "application/pdf"
-    response.headers["Content-Disposition"] = "attachment; filename=participant-cards.pdf"
-    return response
 
 
 @web_bp.route("/admin/teachers/cards.pdf")
@@ -12788,34 +13038,27 @@ def admin_teacher_cards_pdf():
     )
     card_entries: list[dict] = []
     for teacher in teachers:
-        username, plain_password = _ensure_teacher_portal_credentials(teacher, reset_password=True)
-        if plain_password is None:
-            # Ensure a password is available for the card by forcing a reset
-            username, plain_password = _ensure_teacher_portal_credentials(teacher, reset_password=True)
         card_entries.append({
             "teacher": teacher,
-            "username": username,
-            "password": plain_password,
+            "username": teacher.portal_username,
+            "temporary_access_code": teacher.temporary_access_code,
         })
 
-    db.session.commit()
-
-    html = render_template(
+    response = _render_pdf(
         "admin/pdf/teacher_cards.html",
+        "teacher-portal-cards.pdf",
         teachers=card_entries,
         login_url=url_for("teacher_portal.login", _external=True),
         board_url=url_for("web.teacher_board", _external=True),
         current_year=datetime.utcnow().year,
     )
-    pdf_bytes = HTML(string=html, base_url=request.url_root).write_pdf()
-    response = make_response(pdf_bytes)
-    response.headers["Content-Type"] = "application/pdf"
-    response.headers["Content-Disposition"] = "attachment; filename=teacher-portal-cards.pdf"
     log_activity(
         "teacher_portal_cards_generated",
         "Teacher portal cards generated",
         object_type="teacher_portal",
+        details={"teacher_count": len(card_entries)},
     )
+    db.session.commit()
     return response
 
 

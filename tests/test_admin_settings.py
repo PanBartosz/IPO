@@ -81,6 +81,8 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             accommodation_info_html="  <p>Accommodation</p>  ",
             essay_upload_enabled="y",
             teacher_portal_enabled="y",
+            student_temporary_access_login_enabled="y",
+            teacher_temporary_access_login_enabled="y",
             registration_invite_only="y",
             login_email_enabled="y",
             login_folded_alias_enabled="y",
@@ -112,6 +114,8 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_ACCOMMODATION_INFO_HTML).value == "<p>Accommodation</p>"
         assert _setting_row(views.SETTING_UPLOAD_MODULE_ENABLED).value == "true"
         assert _setting_row(views.SETTING_TEACHER_PORTAL_ENABLED).value == "true"
+        assert _setting_row(views.SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED).value == "true"
+        assert _setting_row(views.SETTING_TEACHER_TEMPORARY_ACCESS_LOGIN_ENABLED).value == "true"
         assert _setting_row(views.SETTING_REGISTRATION_INVITE_ONLY).value == "true"
         assert _setting_row(views.SETTING_LOGIN_EMAIL_ENABLED).value == "true"
         assert _setting_row(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED).value == "true"

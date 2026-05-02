@@ -16,6 +16,7 @@
           <a href="#settings-scoring">Scoring Rules</a>
           <a href="#settings-uploads">Uploads & Limits</a>
           <a href="#settings-modules">Modules & Automation</a>
+          <a href="#settings-temporary-access">Printed Codes</a>
           <a href="#settings-login-aliases">Login Aliases</a>
           <a href="#settings-consents">Consent Texts</a>
           <a href="#settings-emails">Email Templates</a>
@@ -137,6 +138,43 @@
         {% for error in form.teacher_portal_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-temporary-access" class="settings-section-title">Competition-Day Printed Access Codes</h3>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.student_temporary_access_login_enabled() }}
+          {{ form.student_temporary_access_login_enabled.label.text }}
+        </label>
+        <span class="form-help">When enabled, students can sign in with the temporary access code printed on participant cards in addition to their regular portal password. This setting never changes password hashes.</span>
+        {% for error in form.student_temporary_access_login_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.teacher_temporary_access_login_enabled() }}
+          {{ form.teacher_temporary_access_login_enabled.label.text }}
+        </label>
+        <span class="form-help">When enabled, teachers can sign in with the temporary access code printed on teacher cards in addition to their regular portal password. This setting never changes password hashes.</span>
+        {% for error in form.teacher_temporary_access_login_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="settings-action-panel">
+          <div>
+            <h4 class="settings-subsection-title">Access-code maintenance</h4>
+            <p class="form-help">Generate missing codes after imports, or rotate printed codes for competition day. Rotation invalidates previously printed access-code cards but does not touch student or teacher password hashes.</p>
+          </div>
+          <div class="settings-action-grid">
+            <button type="submit" form="temporary-access-generate-students" class="button secondary">Generate Missing Student Codes</button>
+            <button type="submit" form="temporary-access-generate-teachers" class="button secondary">Generate Missing Teacher Codes</button>
+            <button type="submit" form="temporary-access-rotate-students" class="button danger">Rotate Student Codes</button>
+            <button type="submit" form="temporary-access-rotate-teachers" class="button danger">Rotate Teacher Codes</button>
+          </div>
+        </div>
       </div>
       <div class="form-field full-width">
         <label class="checkbox">
@@ -459,6 +497,28 @@
           <div class="form-actions">
             {{ form.submit(class_="button") }}
           </div>
+        </form>
+        <form id="temporary-access-generate-students" method="post" action="{{ url_for('web.admin_temporary_access_codes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="generate_missing">
+          <input type="hidden" name="audience" value="students">
+        </form>
+        <form id="temporary-access-generate-teachers" method="post" action="{{ url_for('web.admin_temporary_access_codes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="generate_missing">
+          <input type="hidden" name="audience" value="teachers">
+        </form>
+        <form id="temporary-access-rotate-students" method="post" action="{{ url_for('web.admin_temporary_access_codes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="rotate">
+          <input type="hidden" name="audience" value="students">
+          <input type="hidden" name="confirm_rotation" value="yes">
+        </form>
+        <form id="temporary-access-rotate-teachers" method="post" action="{{ url_for('web.admin_temporary_access_codes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="rotate">
+          <input type="hidden" name="audience" value="teachers">
+          <input type="hidden" name="confirm_rotation" value="yes">
         </form>
       </div>
     </div>

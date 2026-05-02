@@ -37,6 +37,7 @@ class Student(db.Model, TimestampMixin):
     upload_username = db.Column(db.String(64), nullable=True, unique=True)
     upload_password_hash = db.Column(db.String(255), nullable=True)
     upload_token = db.Column(db.String(64), nullable=True, unique=True)
+    temporary_access_code = db.Column(db.String(64), nullable=True, unique=True)
     uploaded_filename = db.Column(db.String(255), nullable=True)
     uploaded_at = db.Column(db.DateTime, nullable=True)
     essay_word_count = db.Column(db.Integer, nullable=True)
@@ -221,6 +222,7 @@ class Teacher(db.Model, TimestampMixin):
     portal_username = db.Column(db.String(64), unique=True)
     portal_password_hash = db.Column(db.String(255))
     portal_token = db.Column(db.String(64), unique=True)
+    temporary_access_code = db.Column(db.String(64), unique=True)
     portal_last_login = db.Column(db.DateTime)
 
     language_entries = db.relationship("TeacherLanguage", back_populates="teacher", cascade="all, delete-orphan")

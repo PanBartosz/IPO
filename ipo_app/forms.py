@@ -460,6 +460,12 @@ class DashboardSettingsForm(FlaskForm):
     )
     essay_upload_enabled = BooleanField("Enable essay upload module")
     teacher_portal_enabled = BooleanField("Enable teacher portal (individual login & online grading)")
+    student_temporary_access_login_enabled = BooleanField(
+        "Allow students to sign in with printed temporary access codes"
+    )
+    teacher_temporary_access_login_enabled = BooleanField(
+        "Allow teachers to sign in with printed temporary access codes"
+    )
     registration_invite_only = BooleanField("Require invite link for registrations")
     login_email_enabled = BooleanField("Allow login with registration email")
     login_folded_alias_enabled = BooleanField("Allow participant and teacher login without diacritics")

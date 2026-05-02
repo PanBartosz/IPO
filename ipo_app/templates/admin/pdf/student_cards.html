@@ -37,7 +37,14 @@
         font-weight: 600;
       }
       .logo-block {
+        flex: 0 0 210px;
         text-align: right;
+      }
+      .logo-block img {
+        display: inline-block;
+        max-width: 210px;
+        max-height: 52px;
+        object-fit: contain;
       }
       .logo-block h3 {
         margin: 0;
@@ -55,8 +62,12 @@
             <p>{{ student.country }}</p>
           </div>
           <div class="logo-block">
-            <h3>IPO {{ current_year }}</h3>
-            <p>{{ event_theme }}</p>
+            {% if pdf_logo_primary_url %}
+              <img src="{{ pdf_logo_primary_url }}" alt="IPO {{ current_year }} {{ event_theme }}">
+            {% else %}
+              <h3>IPO {{ current_year }}</h3>
+              <p>{{ event_theme }}</p>
+            {% endif %}
           </div>
         </div>
         <div class="instructions">
@@ -64,14 +75,14 @@
           <ol>
             <li>Save your essay as a PDF on the computer desktop.</li>
             <li>Open a web browser and visit <strong>{{ upload_url }}</strong>.</li>
-            <li>Log in with your personal username and password shown below.</li>
+            <li>Log in with your personal username and printed temporary access code shown below.</li>
             <li>Upload the essay PDF and wait for the confirmation screen.</li>
             <li>Do not touch the computer afterwards and leave the room quietly.</li>
           </ol>
         </div>
         <div class="credentials">
           <p><strong>Username:</strong> {{ student.upload_username }}</p>
-          <p><strong>Password:</strong> {{ student.upload_token }}</p>
+          <p><strong>Temporary access code:</strong> {{ student.temporary_access_code or 'Not generated' }}</p>
           <p><strong>Essay language:</strong> {{ student.essay_language }}</p>
         </div>
         <p class="instructions">If you have questions or encounter issues, please call one of the invigilators immediately.</p>

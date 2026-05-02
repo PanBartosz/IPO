@@ -20,10 +20,31 @@
         font-size: 1.35rem;
         margin-top: 2rem;
       }
+      .pdf-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        border-bottom: 1px solid #d1d5db;
+        padding-bottom: 0.65rem;
+        margin-bottom: 1.4rem;
+      }
+      .pdf-header-logo {
+        flex: 0 0 130px;
+        max-width: 130px;
+        max-height: 42px;
+        object-fit: contain;
+      }
       .meta {
         margin-bottom: 1.5rem;
         font-size: 0.95rem;
         color: #4b5563;
+      }
+      .meta p {
+        margin: 0.15rem 0;
+      }
+      .pdf-header .meta {
+        margin-bottom: 0;
       }
       table {
         width: 100%;
@@ -48,11 +69,18 @@
     </style>
   </head>
   <body>
-    <h1>{{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }}</h1>
-    <div class="meta">
-      <p>Status: {{ batch.status.value.title() }} · Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
-      <p>Total groups: {{ groups|length }}</p>
-    </div>
+    <header class="pdf-header">
+      <div>
+        <h1>{{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }}</h1>
+        <div class="meta">
+          <p>Status: {{ batch.status.value.title() }} · Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+          <p>Total groups: {{ groups|length }}</p>
+        </div>
+      </div>
+      {% if pdf_logo_small_url %}
+        <img class="pdf-header-logo" src="{{ pdf_logo_small_url }}" alt="IPO 2026">
+      {% endif %}
+    </header>
 
     {% for group in groups %}
       <section class="section">
