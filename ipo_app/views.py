@@ -14784,7 +14784,6 @@ def admin_stage3_packets():
                             reader.pages[0],
                             None,
                             assignment,
-                            header_text="IPO Stage 3 Review",
                             labels=overlay_labels,
                         )
                         first_page = reader.pages[0]

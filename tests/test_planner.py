@@ -2654,3 +2654,69 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert str(primary_student_id) in normalized_first_essay_text
     assert "Score:" in normalized_first_essay_text
     assert "/10" in normalized_first_essay_text
+
+
+def test_stage3_packet_uses_compact_essay_overlay(client, csrf_token):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Stage 3 Packet Batch",
+            stage=Stage.STAGE_2,
+            status=PlannerStatus.PUBLISHED,
+        )
+        group = ReadingGroup(
+            name="Stage 3 Source Group",
+            language="English",
+            stage=Stage.STAGE_2,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        student = _create_student(501, country="Stage 3 Country")
+        db.session.add_all([batch, group, student])
+        db.session.flush()
+        assignment = EssayAssignment(
+            student_id=student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_2,
+            status=PlannerStatus.PUBLISHED,
+            stage_three_recommended=True,
+        )
+        db.session.add(assignment)
+        db.session.flush()
+
+        upload_folder = client.application.config["UPLOAD_FOLDER"]
+        student.uploaded_filename = f"stage3-{student.id}.pdf"
+        _write_valid_pdf(Path(upload_folder) / student.uploaded_filename)
+        db.session.commit()
+        assignment_id = assignment.id
+        student_id = student.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    page = client.get("/admin/stage3/packets")
+    token = csrf_token(page)
+    response = client.post(
+        "/admin/stage3/packets",
+        data={
+            "csrf_token": token,
+            "committee_label": "Compact Committee",
+            "member_names": "Committee Member",
+            "essay_ids": [str(assignment_id)],
+            "submit": "Generate packets",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert "application/pdf" in response.headers.get("Content-Type", "")
+    reader = PdfReader(BytesIO(response.data))
+    assert len(reader.pages) >= 2
+    essay_text = reader.pages[1].extract_text() or ""
+    normalized_essay_text = " ".join(essay_text.split())
+    assert "IPO Stage 3 Review" not in normalized_essay_text
+    assert "Committee:" in normalized_essay_text
+    assert "Compact Committee" in normalized_essay_text
+    assert "Essay:" in normalized_essay_text
+    assert str(student_id) in normalized_essay_text
+    assert "Comments:" in normalized_essay_text
