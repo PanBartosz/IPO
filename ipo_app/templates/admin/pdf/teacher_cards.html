@@ -3,38 +3,96 @@
   <head>
     <meta charset="utf-8">
     <style>
+      @page {
+        size: A4;
+        margin: 18mm;
+      }
       body {
         font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        margin: 24px;
+        margin: 0;
         color: #111827;
       }
       .card {
         page-break-inside: avoid;
+        break-inside: avoid;
+        box-sizing: border-box;
+        height: 205mm;
         border: 1px solid #d1d5db;
         border-radius: 12px;
         padding: 24px;
-        margin-bottom: 24px;
+        margin: 0;
+      }
+      .card + .card {
+        page-break-before: always;
+        break-before: page;
       }
       .card-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        margin-bottom: 16px;
+        align-items: start;
+        gap: 32px;
+        min-height: 84px;
+        margin-bottom: 18px;
       }
       .card-header h2 {
         margin: 0;
-        font-size: 1.6rem;
+        font-size: 1.8rem;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+      .teacher-country {
+        margin: 6px 0 0 0;
+        font-size: 1rem;
+        color: #4b5563;
       }
       .credentials {
-        font-size: 1.1rem;
-        margin: 12px 0;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin: 16px 0 18px 0;
+      }
+      .credential-box {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 10px 14px;
+        min-height: 56px;
+      }
+      .credential-label {
+        display: block;
+        margin-bottom: 5px;
+        color: #6b7280;
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .credential-value {
+        display: block;
+        font-size: 1.28rem;
+        font-weight: 700;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
       }
       .instructions {
         font-size: 0.95rem;
-        line-height: 1.5;
+        line-height: 1.42;
       }
       .instructions strong {
         font-weight: 600;
+      }
+      .instructions p {
+        margin: 0 0 0.75rem 0;
+      }
+      .instructions ol {
+        margin: 0 0 0.75rem 0;
+        padding-left: 1.5rem;
+      }
+      .instructions li {
+        margin: 0 0 0.18rem 0;
+        break-inside: avoid;
+      }
+      .support-note {
+        margin-top: 0.75rem;
+        color: #4b5563;
       }
       .logo-block {
         flex: 0 0 210px;
@@ -42,14 +100,14 @@
       }
       .logo-block img {
         display: inline-block;
-        max-width: 210px;
-        max-height: 52px;
+        max-width: 170px;
+        max-height: 38px;
         object-fit: contain;
       }
       .logo-block h3 {
         margin: 0;
         font-size: 1.4rem;
-        letter-spacing: 0.1rem;
+        letter-spacing: 0;
       }
     </style>
   </head>
@@ -58,8 +116,8 @@
       <div class="card">
         <div class="card-header">
           <div>
-            <h2>{{ loop.index }} · {{ entry.teacher.first_name }} {{ entry.teacher.last_name }}</h2>
-            <p>{{ entry.teacher.country }}</p>
+            <h2>{{ entry.teacher.first_name }} {{ entry.teacher.last_name }}</h2>
+            <p class="teacher-country">{{ entry.teacher.country }}</p>
           </div>
           <div class="logo-block">
             {% if pdf_logo_primary_url %}
@@ -70,22 +128,33 @@
             {% endif %}
           </div>
         </div>
+        <div class="credentials">
+          {% for option in entry.login_options %}
+            <div class="credential-box">
+              <span class="credential-label">{{ option.label }}</span>
+              <span class="credential-value">{{ option.value }}</span>
+            </div>
+          {% endfor %}
+          <div class="credential-box">
+            <span class="credential-label">Temporary access code</span>
+            <span class="credential-value">{{ entry.temporary_access_code or 'Not generated' }}</span>
+          </div>
+        </div>
         <div class="instructions">
-          <p><strong>Getting started:</strong></p>
+          <p><strong>When grading starts:</strong></p>
           <ol>
-            <li>Visit the portal at <strong>{{ login_url }}</strong>.</li>
-            <li>Sign in with the personal username and printed temporary access code shown below.</li>
-            <li>Download the essays assigned to you and record scores in the portal.</li>
-            <li>Finalize each score when you are satisfied. Only admins can reopen finalized scores.</li>
+            <li>Open the teacher portal at <strong>{{ login_url }}</strong>.</li>
+            <li>Sign in with any login name printed above and the temporary access code.</li>
+            <li>On the dashboard, open your Stage 1 or Stage 2 essay list.</li>
+            <li>Download each essay PDF when it is available.</li>
+            <li>Open the scoring page, enter the score and optional comments.</li>
+            <li>Use <strong>Save</strong> if you need to come back later.</li>
+            <li>Click <strong>Finalize</strong> only when the score is ready. After this, only the organizers can reopen it.</li>
           </ol>
         </div>
-        <div class="credentials">
-          <p><strong>Username:</strong> {{ entry.username or 'Not generated' }}</p>
-          <p><strong>Temporary access code:</strong> {{ entry.temporary_access_code or 'Not generated' }}</p>
-        </div>
-        <p class="instructions">
-          Need announcements? Open the teacher board at <strong>{{ board_url }}</strong>.
-          Please keep these credentials secure and use your regular password after the competition-day access window closes.
+        <p class="instructions support-note">
+          For announcements, open the message board at <strong>{{ board_url }}</strong>.
+          Your regular teacher portal password also works.
         </p>
       </div>
     {% endfor %}

@@ -213,8 +213,10 @@ def test_card_generation_does_not_change_password_hashes_or_tokens(client, csrf_
 
     with client.application.app_context():
         _set_setting(views.SETTING_TEACHER_PORTAL_ENABLED, "true")
-        student = _student()
-        teacher = _teacher()
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        _set_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true")
+        student = _student(upload_username="żółć1")
+        teacher = _teacher(portal_username="łukasz1")
         batch = AssignmentBatch(
             stage=Stage.STAGE_1,
             status=PlannerStatus.PUBLISHED,
@@ -243,8 +245,22 @@ def test_card_generation_does_not_change_password_hashes_or_tokens(client, csrf_
 
     student_context = captured["admin/pdf/student_cards.html"]
     teacher_context = captured["admin/pdf/teacher_cards.html"]
-    assert student_context["students"][0].temporary_access_code == "student-code"
-    assert teacher_context["teachers"][0]["temporary_access_code"] == "teacher-code"
+    student_entry = student_context["students"][0]
+    teacher_entry = teacher_context["teachers"][0]
+    assert student_entry["temporary_access_code"] == "student-code"
+    assert teacher_entry["temporary_access_code"] == "teacher-code"
+    student_login_options = {option["label"]: option["value"] for option in student_entry["login_options"]}
+    teacher_login_options = {option["label"]: option["value"] for option in teacher_entry["login_options"]}
+    assert student_login_options == {
+        "Username": "żółć1",
+        "ASCII username": "zolc1",
+        "Email": "student.access@example.test",
+    }
+    assert teacher_login_options == {
+        "Username": "łukasz1",
+        "ASCII username": "lukasz1",
+        "Email": "teacher.access@example.test",
+    }
 
 
 def test_rotating_temporary_codes_preserves_password_hashes_and_regular_tokens(client, csrf_token, monkeypatch):

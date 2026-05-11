@@ -2775,6 +2775,25 @@ def _teacher_portal_enabled() -> bool:
     return flag.lower() == "true"
 
 
+def _card_login_options(username: str | None, email: str | None) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = [
+        {
+            "label": "Username",
+            "value": username or "Not generated",
+        }
+    ]
+
+    if username and _login_folded_alias_enabled():
+        folded_username = _fold_login_username(username)
+        if folded_username and folded_username != username.strip().casefold():
+            options.append({"label": "ASCII username", "value": folded_username})
+
+    if email and _login_email_enabled():
+        options.append({"label": "Email", "value": email})
+
+    return options
+
+
 def _login_folded_alias_enabled() -> bool:
     return _parse_bool(_get_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "false"))
 
@@ -13060,10 +13079,18 @@ def admin_student_cards_pdf():
         .order_by(Student.country.asc(), Student.last_name.asc())
         .all()
     )
+    card_entries = [
+        {
+            "student": student,
+            "login_options": _card_login_options(student.upload_username, student.email),
+            "temporary_access_code": student.temporary_access_code,
+        }
+        for student in students
+    ]
     return _render_pdf(
         "admin/pdf/student_cards.html",
         "participant-cards.pdf",
-        students=students,
+        students=card_entries,
         current_year=datetime.utcnow().year,
         upload_url=url_for("web.student_login", _external=True),
         event_theme="Essay Competition",
@@ -13088,6 +13115,7 @@ def admin_teacher_cards_pdf():
         card_entries.append({
             "teacher": teacher,
             "username": teacher.portal_username,
+            "login_options": _card_login_options(teacher.portal_username, teacher.email),
             "temporary_access_code": teacher.temporary_access_code,
         })
 

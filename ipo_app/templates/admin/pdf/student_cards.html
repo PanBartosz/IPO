@@ -3,38 +3,100 @@
   <head>
     <meta charset="utf-8">
     <style>
+      @page {
+        size: A4;
+        margin: 18mm;
+      }
       body {
         font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        margin: 24px;
+        margin: 0;
         color: #111827;
       }
       .card {
         page-break-inside: avoid;
+        break-inside: avoid;
+        box-sizing: border-box;
+        height: 205mm;
         border: 1px solid #d1d5db;
         border-radius: 12px;
         padding: 24px;
-        margin-bottom: 24px;
+        margin: 0;
+      }
+      .card + .card {
+        page-break-before: always;
+        break-before: page;
       }
       .card-header {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        margin-bottom: 16px;
+        align-items: start;
+        gap: 32px;
+        min-height: 84px;
+        margin-bottom: 18px;
       }
       .card-header h2 {
         margin: 0;
-        font-size: 1.6rem;
+        font-size: 1.8rem;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+      .student-country {
+        margin: 6px 0 0 0;
+        font-size: 1rem;
+        color: #4b5563;
       }
       .credentials {
-        font-size: 1.2rem;
-        margin: 12px 0;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin: 16px 0 18px 0;
+      }
+      .credential-box {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 10px 14px;
+        min-height: 56px;
+      }
+      .credential-label {
+        display: block;
+        margin-bottom: 5px;
+        color: #6b7280;
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .credential-value {
+        display: block;
+        font-size: 1.28rem;
+        font-weight: 700;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+      }
+      .language-line {
+        margin: 0 0 16px 0;
+        font-size: 1rem;
       }
       .instructions {
         font-size: 0.95rem;
-        line-height: 1.5;
+        line-height: 1.42;
       }
       .instructions strong {
         font-weight: 600;
+      }
+      .instructions p {
+        margin: 0 0 0.75rem 0;
+      }
+      .instructions ol {
+        margin: 0 0 0.75rem 0;
+        padding-left: 1.5rem;
+      }
+      .instructions li {
+        margin: 0 0 0.18rem 0;
+        break-inside: avoid;
+      }
+      .support-note {
+        margin-top: 0.75rem;
+        color: #4b5563;
       }
       .logo-block {
         flex: 0 0 210px;
@@ -42,24 +104,24 @@
       }
       .logo-block img {
         display: inline-block;
-        max-width: 210px;
-        max-height: 52px;
+        max-width: 170px;
+        max-height: 38px;
         object-fit: contain;
       }
       .logo-block h3 {
         margin: 0;
         font-size: 1.4rem;
-        letter-spacing: 0.1rem;
+        letter-spacing: 0;
       }
     </style>
   </head>
   <body>
-    {% for student in students %}
+    {% for entry in students %}
       <div class="card">
         <div class="card-header">
           <div>
-            <h2>{{ loop.index }} · {{ student.first_name }} {{ student.last_name }}</h2>
-            <p>{{ student.country }}</p>
+            <h2>{{ entry.student.first_name }} {{ entry.student.last_name }}</h2>
+            <p class="student-country">{{ entry.student.country }}</p>
           </div>
           <div class="logo-block">
             {% if pdf_logo_primary_url %}
@@ -70,22 +132,32 @@
             {% endif %}
           </div>
         </div>
+        <div class="credentials">
+          {% for option in entry.login_options %}
+            <div class="credential-box">
+              <span class="credential-label">{{ option.label }}</span>
+              <span class="credential-value">{{ option.value }}</span>
+            </div>
+          {% endfor %}
+          <div class="credential-box">
+            <span class="credential-label">Temporary access code</span>
+            <span class="credential-value">{{ entry.temporary_access_code or 'Not generated' }}</span>
+          </div>
+        </div>
+        <p class="language-line"><strong>Essay language:</strong> {{ entry.student.essay_language }}</p>
         <div class="instructions">
-          <p><strong>When you have finished writing your essay:</strong></p>
+          <p><strong>When your essay is ready:</strong></p>
           <ol>
-            <li>Save your essay as a PDF on the computer desktop.</li>
+            <li>Save your essay as a PDF on the computer.</li>
             <li>Open a web browser and visit <strong>{{ upload_url }}</strong>.</li>
-            <li>Log in with your personal username and printed temporary access code shown below.</li>
-            <li>Upload the essay PDF and wait for the confirmation screen.</li>
-            <li>Do not touch the computer afterwards and leave the room quietly.</li>
+            <li>Sign in with any login name printed above and the temporary access code.</li>
+            <li>Upload your PDF. You may upload a new version until you mark it as finished.</li>
+            <li>Check the uploaded PDF preview. Make sure it is the correct file.</li>
+            <li>Click <strong>Mark essay as finished</strong> and confirm. After this, you cannot upload a new file.</li>
+            <li>Wait for the message that your essay is marked as finished.</li>
           </ol>
         </div>
-        <div class="credentials">
-          <p><strong>Username:</strong> {{ student.upload_username }}</p>
-          <p><strong>Temporary access code:</strong> {{ student.temporary_access_code or 'Not generated' }}</p>
-          <p><strong>Essay language:</strong> {{ student.essay_language }}</p>
-        </div>
-        <p class="instructions">If you have questions or encounter issues, please call one of the invigilators immediately.</p>
+        <p class="instructions support-note">If you have questions or something goes wrong, please call the organizers.</p>
       </div>
     {% endfor %}
   </body>
