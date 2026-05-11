@@ -3650,6 +3650,16 @@ body.modal-open {
   max-width: 9rem;
 }
 
+.essay-status-cell .status-tag {
+  white-space: nowrap;
+}
+
+.essay-status-cell .essay-word-count-badge {
+  display: flex;
+  width: fit-content;
+  margin-top: 0.35rem;
+}
+
 .stage1-action-cell {
   min-width: 8rem;
 }

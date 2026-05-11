@@ -58,9 +58,16 @@
           <td>{{ student.country }}</td>
           <td>{{ student.essay_language }}</td>
           <td>{{ student.upload_username }}</td>
-          <td>
+          <td class="essay-status-cell">
             {% if student.essay_finalized %}
               <span class="status-tag success">Finished</span>
+              {% if student.essay_word_count is not none %}
+                <span class="status-tag essay-word-count-badge">
+                  {{ student.essay_word_count }} word{{ '' if student.essay_word_count == 1 else 's' }}
+                </span>
+              {% else %}
+                <span class="status-tag warning essay-word-count-badge">Word count unavailable</span>
+              {% endif %}
             {% elif student.uploaded_filename %}
               <span class="status-tag">Uploaded</span>
             {% else %}

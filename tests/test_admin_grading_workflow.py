@@ -300,6 +300,27 @@ def test_admin_stage_overviews_show_essay_id_jump_controls(client):
     assert 'value="stage_2"' in stage2_html
 
 
+def test_stage1_overview_shows_finalized_essay_word_count_badge(client):
+    with client.application.app_context():
+        teacher_id = _create_teacher("overview-word-count-reader")
+        student_id = _create_student("overview-word-count-student", client.application)
+        student = db.session.get(Student, student_id)
+        student.essay_word_count = 1234
+        db.session.commit()
+        _create_stage1_assignment(student_id=student_id, reader_ids=[teacher_id])
+
+    _login_admin(client)
+
+    response = client.get("/admin/uploads")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    normalized_html = " ".join(html.split())
+    assert "Finished" in html
+    assert "essay-word-count-badge" in html
+    assert "1234 words" in normalized_html
+
+
 def test_dashboard_surfaces_additional_assessor_queue(client):
     with client.application.app_context():
         batch = AssignmentBatch(name="Extra Reader Batch", stage=Stage.STAGE_1, status=PlannerStatus.PUBLISHED)

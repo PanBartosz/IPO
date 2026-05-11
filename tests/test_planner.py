@@ -2613,6 +2613,7 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
         db.session.commit()
         batch_id = batch.id
         packet_teacher_id = packet_teacher.id
+        primary_student_id = primary_student.id
         group_b_id = group_b.id
 
     with client.session_transaction() as session:
@@ -2644,3 +2645,12 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert "application/pdf" in response.headers.get("Content-Type", "")
     reader = PdfReader(BytesIO(response.data))
     assert len(reader.pages) >= 3
+    first_essay_text = reader.pages[1].extract_text() or ""
+    normalized_first_essay_text = " ".join(first_essay_text.split())
+    assert "IPO Essay" not in normalized_first_essay_text
+    assert "Group:" in normalized_first_essay_text
+    assert "Packet Group A" in normalized_first_essay_text
+    assert "Essay:" in normalized_first_essay_text
+    assert str(primary_student_id) in normalized_first_essay_text
+    assert "Score:" in normalized_first_essay_text
+    assert "/10" in normalized_first_essay_text

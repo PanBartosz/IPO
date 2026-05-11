@@ -3117,7 +3117,7 @@ def _create_essay_overlay_page(
     group: ReadingGroup | None,
     assignment: EssayAssignment,
     *,
-    header_text: str = "IPO Essay",
+    header_text: str | None = None,
     labels: list[tuple[str, str]] | None = None,
 ) -> PdfReader:
     buffer = BytesIO()
@@ -3125,19 +3125,7 @@ def _create_essay_overlay_page(
     height = float(page.mediabox.top - page.mediabox.bottom)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     margin = 36
-    table_height = 36
     table_width = width - 2 * margin
-    top = height - margin
-
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(1)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin, top + 4, header_text)
-
-    c.rect(margin, top - table_height, table_width, table_height)
-    col_width = table_width / 3
-    for i in range(1, 3):
-        c.line(margin + col_width * i, top - table_height, margin + col_width * i, top)
 
     if labels is None:
         group_label = getattr(group, "name", None) if group is not None else None
@@ -3151,12 +3139,70 @@ def _create_essay_overlay_page(
             ("Score", "     /10"),
         ]
 
-    for idx, (label, value) in enumerate(labels):
-        x = margin + col_width * idx + 6
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(x, top - 14, str(label))
-        c.setFont("Helvetica", 10)
-        c.drawString(x, top - 28, str(value))
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1)
+
+    if header_text:
+        table_height = 36
+        top = height - margin
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, top + 4, header_text)
+
+        c.rect(margin, top - table_height, table_width, table_height)
+        col_width = table_width / len(labels)
+        for i in range(1, len(labels)):
+            c.line(margin + col_width * i, top - table_height, margin + col_width * i, top)
+
+        for idx, (label, value) in enumerate(labels):
+            x = margin + col_width * idx + 6
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(x, top - 14, str(label))
+            c.setFont("Helvetica", 10)
+            c.drawString(x, top - 28, str(value))
+    else:
+        table_height = 20
+        top = height - 6
+        if len(labels) == 3:
+            col_widths = [table_width * 0.48, table_width * 0.2, table_width * 0.32]
+        else:
+            col_widths = [table_width / len(labels)] * len(labels)
+
+        c.rect(margin, top - table_height, table_width, table_height)
+        x = margin
+        for col_width in col_widths[:-1]:
+            x += col_width
+            c.line(x, top - table_height, x, top)
+
+        def _fit_text(text: str, font_name: str, font_size: float, max_width: float) -> str:
+            if max_width <= 0:
+                return ""
+            if c.stringWidth(text, font_name, font_size) <= max_width:
+                return text
+            suffix = "..."
+            suffix_width = c.stringWidth(suffix, font_name, font_size)
+            if suffix_width > max_width:
+                return ""
+            fitted = text
+            while fitted and c.stringWidth(fitted + suffix, font_name, font_size) > max_width:
+                fitted = fitted[:-1]
+            return fitted + suffix if fitted else suffix
+
+        x = margin
+        text_y = top - 13
+        label_font = "Helvetica-Bold"
+        value_font = "Helvetica"
+        font_size = 9
+        for col_width, (label, value) in zip(col_widths, labels):
+            label_text = f"{label}:"
+            value_text = str(value)
+            label_x = x + 6
+            value_x = label_x + c.stringWidth(label_text + " ", label_font, font_size)
+            max_value_width = x + col_width - 6 - value_x
+            c.setFont(label_font, font_size)
+            c.drawString(label_x, text_y, label_text)
+            c.setFont(value_font, font_size)
+            c.drawString(value_x, text_y, _fit_text(value_text, value_font, font_size, max_value_width))
+            x += col_width
 
     c.save()
     buffer.seek(0)
