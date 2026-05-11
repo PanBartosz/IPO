@@ -9,6 +9,9 @@
         margin: 24px;
         color: #111827;
       }
+      h1, h2 {
+        margin: 0;
+      }
       h1 {
         font-size: 1.75rem;
         margin-bottom: 0.5rem;
@@ -28,9 +31,9 @@
         margin-bottom: 1.4rem;
       }
       .pdf-header-logo {
-        flex: 0 0 130px;
-        max-width: 130px;
-        max-height: 42px;
+        flex: 0 0 170px;
+        max-width: 170px;
+        max-height: 38px;
         object-fit: contain;
       }
       .meta {
@@ -72,8 +75,8 @@
           <p>Teachers included: {{ schedules|length }}</p>
         </div>
       </div>
-      {% if pdf_logo_small_url %}
-        <img class="pdf-header-logo" src="{{ pdf_logo_small_url }}" alt="IPO 2026">
+      {% if pdf_logo_primary_url %}
+        <img class="pdf-header-logo" src="{{ pdf_logo_primary_url }}" alt="IPO 2026">
       {% endif %}
     </header>
 

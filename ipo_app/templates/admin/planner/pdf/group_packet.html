@@ -4,83 +4,146 @@
     <meta charset="utf-8">
     <title>{{ batch.name }} · Group Packet</title>
     <style>
+      @page {
+        size: A4;
+        margin: 16mm 18mm 20mm 18mm;
+      }
       body {
         font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        margin: 24px;
+        margin: 0;
         color: #111827;
       }
       h1, h2, h3 {
         margin: 0;
       }
       h1 {
-        font-size: 1.75rem;
-        margin-bottom: 0.5rem;
+        font-size: 1.55rem;
+        margin-bottom: 0.25rem;
       }
       h2 {
         font-size: 1.35rem;
-        margin-top: 2rem;
+        margin-top: 0;
+        margin-bottom: 0.25rem;
       }
-      .pdf-header {
+      h3 {
+        font-size: 0.98rem;
+        margin: 0.5rem 0 0.3rem 0;
+      }
+      .page-footer {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: -12mm;
         display: flex;
         justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
-        border-bottom: 1px solid #d1d5db;
-        padding-bottom: 0.65rem;
-        margin-bottom: 1.4rem;
+        align-items: center;
+        gap: 0.75rem;
+        border-top: 1px solid #d1d5db;
+        padding-top: 0.25rem;
+        color: #4b5563;
+        font-size: 0.72rem;
       }
-      .pdf-header-logo {
-        flex: 0 0 130px;
-        max-width: 130px;
-        max-height: 42px;
+      .page-footer-logo {
+        flex: 0 0 110px;
+        max-width: 110px;
+        max-height: 24px;
         object-fit: contain;
       }
       .meta {
-        margin-bottom: 1.5rem;
-        font-size: 0.95rem;
+        margin: 0 0 0.55rem 0;
+        font-size: 0.9rem;
         color: #4b5563;
       }
       .meta p {
         margin: 0.15rem 0;
       }
-      .pdf-header .meta {
-        margin-bottom: 0;
-      }
       table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 0.75rem;
+        margin: 0 0 0.55rem 0;
       }
       th, td {
         border: 1px solid #d1d5db;
-        padding: 0.5rem;
-        font-size: 0.95rem;
+        padding: 0.26rem 0.34rem;
+        font-size: 0.84rem;
       }
       th {
         background: #e5e7eb;
         text-align: left;
       }
+      h2, h3 {
+        page-break-after: avoid;
+        break-after: avoid;
+      }
       .section {
-        page-break-inside: avoid;
+        page-break-after: always;
+        break-after: page;
+      }
+      .section:last-of-type {
+        page-break-after: auto;
+        break-after: auto;
       }
       .assignments-table td:first-child {
         width: 10%;
       }
+      .operational-boxes {
+        display: block;
+        margin-top: 0.35rem;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .operational-box {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        padding: 0.55rem 0.65rem;
+      }
+      .operational-box + .operational-box {
+        margin-top: 0.65rem;
+      }
+      .additional-readers-box {
+        height: 52mm;
+      }
+      .operational-notes-box {
+        height: 70mm;
+      }
+      .operational-box-title {
+        margin: 0 0 0.45rem 0;
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #4b5563;
+      }
+      .reader-lines {
+        border-top: 1px solid #d1d5db;
+      }
+      .reader-line {
+        height: 9mm;
+        border-bottom: 1px solid #d1d5db;
+      }
+      .notes-lines {
+        border-top: 1px solid #d1d5db;
+      }
+      .note-line {
+        height: 8mm;
+        border-bottom: 1px solid #d1d5db;
+      }
     </style>
   </head>
   <body>
-    <header class="pdf-header">
+    <footer class="page-footer">
       <div>
-        <h1>{{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }}</h1>
-        <div class="meta">
-          <p>Status: {{ batch.status.value.title() }} · Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
-          <p>Total groups: {{ groups|length }}</p>
-        </div>
+        {{ batch.name }} · Stage {{ 1 if batch.stage.value == 'stage_1' else 2 }} ·
+        {{ batch.status.value.title() }} ·
+        Generated {{ batch.updated_at.strftime('%Y-%m-%d %H:%M') if batch.updated_at else batch.created_at.strftime('%Y-%m-%d %H:%M') }} ·
+        {{ groups|length }} groups
       </div>
-      {% if pdf_logo_small_url %}
-        <img class="pdf-header-logo" src="{{ pdf_logo_small_url }}" alt="IPO 2026">
+      {% if pdf_logo_primary_url %}
+        <img class="page-footer-logo" src="{{ pdf_logo_primary_url }}" alt="IPO 2026">
       {% endif %}
-    </header>
+    </footer>
 
     {% for group in groups %}
       <section class="section">
@@ -134,6 +197,31 @@
             {% endfor %}
           </tbody>
         </table>
+
+        <div class="operational-boxes">
+          <div class="operational-box additional-readers-box">
+            <p class="operational-box-title">Additional readers</p>
+            <div class="reader-lines">
+              <div class="reader-line"></div>
+              <div class="reader-line"></div>
+              <div class="reader-line"></div>
+              <div class="reader-line"></div>
+              <div class="reader-line"></div>
+            </div>
+          </div>
+          <div class="operational-box operational-notes-box">
+            <p class="operational-box-title">Operational notes</p>
+            <div class="notes-lines">
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+              <div class="note-line"></div>
+            </div>
+          </div>
+        </div>
       </section>
     {% endfor %}
   </body>
