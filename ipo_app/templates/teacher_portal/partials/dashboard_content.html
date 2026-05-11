@@ -105,6 +105,16 @@
                 </dd>
               </div>
               <div>
+                <dt>Word count</dt>
+                <dd>
+                  {% if entry.essay_word_count is not none %}
+                    {{ entry.essay_word_count }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </dd>
+              </div>
+              <div>
                 <dt>Last update</dt>
                 <dd>
                   {% if entry.updated_at %}
@@ -167,6 +177,16 @@
                 <dd>
                   {% if entry.score_record and entry.score_record.score is not none %}
                     {{ "%.2f"|format(entry.score_record.score) }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </dd>
+              </div>
+              <div>
+                <dt>Word count</dt>
+                <dd>
+                  {% if entry.essay_word_count is not none %}
+                    {{ entry.essay_word_count }}
                   {% else %}
                     —
                   {% endif %}

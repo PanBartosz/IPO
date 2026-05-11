@@ -118,6 +118,10 @@ def test_teacher_sees_only_assigned_essays_on_dashboard(client, csrf_token):
 
         student_a_id = _create_student(label="student-a")
         student_b_id = _create_student(label="student-b")
+        student_a = db.session.get(Student, student_a_id)
+        assert student_a is not None
+        student_a.essay_word_count = 1420
+        db.session.commit()
 
         _create_stage1_assignment(teacher_id=teacher_a_id, student_id=student_a_id)
         _create_stage1_assignment(teacher_id=teacher_b_id, student_id=student_b_id)
@@ -133,6 +137,8 @@ def test_teacher_sees_only_assigned_essays_on_dashboard(client, csrf_token):
     html = dashboard.get_data(as_text=True)
     assert expected_label in html
     assert unexpected_label not in html
+    assert "Word count" in html
+    assert "1420" in html
 
 
 def test_teacher_cannot_download_assignment_until_student_finalizes(client, csrf_token):

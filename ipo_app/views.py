@@ -1581,6 +1581,7 @@ def _teacher_portal_assignments(teacher: Teacher, stage: Stage) -> list[SimpleNa
             display_label=display_label,
             group_label=group_label,
             stage_label=STAGE_LABELS[stage],
+            essay_word_count=student.essay_word_count,
             essay_available=essay_available,
             score_record=score_record,
             status=status,
