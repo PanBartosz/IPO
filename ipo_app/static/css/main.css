@@ -351,6 +351,32 @@ a:hover {
   z-index: 1;
 }
 
+.essay-topics-hero {
+  text-align: left;
+}
+
+.essay-topics-content {
+  max-width: 840px;
+  margin: 0 auto;
+}
+
+.essay-topics-content > :first-child {
+  margin-top: 0;
+}
+
+.essay-topics-content > :last-child {
+  margin-bottom: 0;
+}
+
+.essay-topics-content ol,
+.essay-topics-content ul {
+  padding-left: 1.35rem;
+}
+
+.essay-topics-content li + li {
+  margin-top: 0.55rem;
+}
+
 .cta-group {
   margin-top: 2rem;
   display: flex;

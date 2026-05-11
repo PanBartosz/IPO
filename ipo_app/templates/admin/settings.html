@@ -15,6 +15,7 @@
           <a href="#settings-deadlines">Deadlines & SLA</a>
           <a href="#settings-scoring">Scoring Rules</a>
           <a href="#settings-uploads">Uploads & Limits</a>
+          <a href="#settings-essay-topics">Essay Topics</a>
           <a href="#settings-modules">Modules & Automation</a>
           <a href="#settings-temporary-access">Printed Codes</a>
           <a href="#settings-login-aliases">Login Aliases</a>
@@ -123,6 +124,27 @@
         </label>
         <span class="form-help">Enable when the upload room is open. Students can view status anytime, but uploads are only available while enabled and not manually locked.</span>
         {% for error in form.essay_upload_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <h3 id="settings-essay-topics" class="settings-section-title">Essay Topics</h3>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.essay_topics_visible() }}
+          {{ form.essay_topics_visible.label.text }}
+        </label>
+        <span class="form-help">When disabled, saved topics remain hidden from the public homepage. When enabled, this replaces the homepage hero card.</span>
+        {% for error in form.essay_topics_visible.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        {{ form.essay_topics_html.label }}
+        {{ form.essay_topics_html(class_="js-richtext", id="essay-topics-html") }}
+        <span class="form-help">Saved privately in Settings until the homepage toggle above is enabled. Formatting is limited to headings, paragraphs, lists, emphasis, and links.</span>
+        {% for error in form.essay_topics_html.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>

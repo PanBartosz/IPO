@@ -433,6 +433,12 @@ class DashboardSettingsForm(FlaskForm):
     stage1_trim_extreme_scores_enabled = BooleanField(
         "Use trimmed Stage 1 average after additional readings"
     )
+    essay_topics_visible = BooleanField("Show essay topics on the public homepage")
+    essay_topics_html = TextAreaField(
+        "Essay topics",
+        validators=[Optional()],
+        render_kw={"rows": 8},
+    )
     ethics_consent_html = TextAreaField(
         "Code of Ethics consent text (HTML)",
         validators=[Optional()],

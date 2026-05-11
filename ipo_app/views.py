@@ -11,7 +11,7 @@ import hmac
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
-from html import unescape
+from html import escape, unescape
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -405,6 +405,8 @@ SETTING_PACKET_PRINT_MODE = "packet_print_mode"
 SETTING_ESSAY_WORD_LIMIT = "essay_word_limit_words"
 SETTING_ESSAY_WORD_LIMIT_MODE = "essay_word_limit_mode"
 SETTING_STAGE1_TRIM_EXTREME_SCORES = "stage1_trim_extreme_scores"
+SETTING_ESSAY_TOPICS_VISIBLE = "essay_topics_visible"
+SETTING_ESSAY_TOPICS_HTML = "essay_topics_html"
 SETTING_ETHICS_CONSENT_HTML = "ethics_consent_html"
 SETTING_GDPR_NOTICE_HTML = "gdpr_notice_html"
 SETTING_PHOTO_CONSENT_HTML = "photo_consent_html"
@@ -434,6 +436,113 @@ DEFAULT_ACCOMMODATION_INFO_HTML = (
 UPLOAD_ALLOWED_EXTENSIONS = {"pdf"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 STATIC_PAGE_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+PUBLIC_RICH_TEXT_TAGS = {
+    "a",
+    "blockquote",
+    "br",
+    "em",
+    "h2",
+    "h3",
+    "h4",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "span",
+    "strong",
+    "u",
+    "ul",
+}
+PUBLIC_RICH_TEXT_SKIP_TAGS = {"script", "style", "iframe", "object", "embed", "svg", "math"}
+PUBLIC_RICH_TEXT_VOID_TAGS = {"br"}
+
+
+def _is_safe_rich_text_url(value: str) -> bool:
+    cleaned = value.strip()
+    lowered = cleaned.lower()
+    return bool(cleaned) and (
+        lowered.startswith(("http://", "https://", "mailto:"))
+        or cleaned.startswith(("/", "#"))
+    )
+
+
+class _PublicRichTextSanitizer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in PUBLIC_RICH_TEXT_SKIP_TAGS:
+            self.skip_depth += 1
+            return
+        if self.skip_depth or tag not in PUBLIC_RICH_TEXT_TAGS:
+            return
+
+        clean_attrs: list[tuple[str, str]] = []
+        if tag == "a":
+            href = ""
+            target = ""
+            title = ""
+            for name, value in attrs:
+                name = (name or "").lower()
+                value = (value or "").strip()
+                if name == "href" and _is_safe_rich_text_url(value):
+                    href = value
+                elif name == "target" and value in {"_blank", "_self"}:
+                    target = value
+                elif name == "title":
+                    title = value
+            if href:
+                clean_attrs.append(("href", href))
+                if target:
+                    clean_attrs.append(("target", target))
+                if target == "_blank":
+                    clean_attrs.append(("rel", "noopener noreferrer"))
+                if title:
+                    clean_attrs.append(("title", title))
+        elif tag == "span":
+            for name, value in attrs:
+                name = (name or "").lower()
+                value = (value or "").strip()
+                normalized_style = re.sub(r"\s+", "", value.lower())
+                if name == "style" and normalized_style == "text-decoration:underline;":
+                    clean_attrs.append(("style", "text-decoration: underline;"))
+                    break
+
+        attrs_text = "".join(
+            f' {name}="{escape(value, quote=True)}"'
+            for name, value in clean_attrs
+        )
+        self.parts.append(f"<{tag}{attrs_text}>")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in PUBLIC_RICH_TEXT_SKIP_TAGS:
+            self.skip_depth = max(self.skip_depth - 1, 0)
+            return
+        if self.skip_depth or tag not in PUBLIC_RICH_TEXT_TAGS or tag in PUBLIC_RICH_TEXT_VOID_TAGS:
+            return
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip_depth:
+            self.parts.append(escape(data))
+
+
+def _sanitize_public_rich_text(raw_html: str | None) -> str:
+    if not raw_html:
+        return ""
+    parser = _PublicRichTextSanitizer()
+    parser.feed(raw_html)
+    parser.close()
+    return "".join(parser.parts).strip()
+
+
+def _rich_text_has_visible_content(html: str) -> bool:
+    text = unescape(re.sub(r"<[^>]*>", " ", html)).replace("\xa0", " ")
+    return bool(text.strip())
 
 
 def _essay_word_limit() -> int:
@@ -456,6 +565,14 @@ def _essay_word_limit_mode() -> str:
 
 def _stage1_trim_extreme_scores_enabled() -> bool:
     return _parse_bool(_get_setting(SETTING_STAGE1_TRIM_EXTREME_SCORES, "false"))
+
+
+def _essay_topics_visible() -> bool:
+    return _parse_bool(_get_setting(SETTING_ESSAY_TOPICS_VISIBLE, "false"))
+
+
+def _essay_topics_html() -> str:
+    return _sanitize_public_rich_text(_get_setting(SETTING_ESSAY_TOPICS_HTML) or "")
 
 
 def _ethics_consent_html() -> str:
@@ -5380,7 +5497,14 @@ def _build_teacher_reader_packet(teacher: Teacher, assignments: list[EssayAssign
 
 @web_bp.route("/")
 def index():
-    return render_template("index.html", invite_only=_registration_invite_required())
+    essay_topics_html = _essay_topics_html()
+    if not _essay_topics_visible() or not _rich_text_has_visible_content(essay_topics_html):
+        essay_topics_html = None
+    return render_template(
+        "index.html",
+        invite_only=_registration_invite_required(),
+        essay_topics_html=essay_topics_html,
+    )
 
 
 @web_bp.route("/manuals/<slug>/", defaults={"filename": "index.html"})
@@ -7403,6 +7527,8 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
         form.essay_word_limit.data = DEFAULT_ESSAY_WORD_LIMIT
     form.essay_word_limit_mode.data = _essay_word_limit_mode()
     form.stage1_trim_extreme_scores_enabled.data = _stage1_trim_extreme_scores_enabled()
+    form.essay_topics_visible.data = _essay_topics_visible()
+    form.essay_topics_html.data = _essay_topics_html()
     form.ethics_consent_html.data = _ethics_consent_html()
     form.gdpr_notice_html.data = _gdpr_notice_html()
     form.photo_consent_html.data = _photo_consent_html()
@@ -7453,11 +7579,15 @@ def admin_settings():
     enabling_alias_from_off_to_on = submitted_with_enabled_alias and not diagnostics["enabled"]
 
     if form.is_submitted() and form.validate():
+        essay_topics_html = _sanitize_public_rich_text(form.essay_topics_html.data or "")
+        essay_topics_visible_value = bool(form.essay_topics_visible.data)
+        if essay_topics_visible_value and not _rich_text_has_visible_content(essay_topics_html):
+            form.essay_topics_html.errors.append("Enter essay topics before showing them on the public homepage.")
         if enabling_alias_from_off_to_on and not diagnostics["all_safe"]:
             form.login_folded_alias_enabled.errors.append(
                 "Cannot enable folded login aliases until all folded student and teacher usernames are unique."
             )
-        else:
+        if not form.errors:
             previous_stage1_trim_extreme_scores = _stage1_trim_extreme_scores_enabled()
             upload_value = form.upload_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.upload_deadline.data else None
             stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
@@ -7483,6 +7613,8 @@ def admin_settings():
                 SETTING_STAGE1_TRIM_EXTREME_SCORES,
                 "true" if stage1_trim_extreme_scores_value else "false",
             )
+            _set_setting(SETTING_ESSAY_TOPICS_VISIBLE, "true" if essay_topics_visible_value else "false")
+            _set_setting(SETTING_ESSAY_TOPICS_HTML, essay_topics_html or None)
             ethics_html = (form.ethics_consent_html.data or "").strip() or None
             gdpr_html = (form.gdpr_notice_html.data or "").strip() or None
             photo_html = (form.photo_consent_html.data or "").strip() or None

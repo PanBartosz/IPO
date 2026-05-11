@@ -74,6 +74,12 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             essay_word_limit="2750",
             essay_word_limit_mode="hard",
             stage1_trim_extreme_scores_enabled="y",
+            essay_topics_visible="y",
+            essay_topics_html=(
+                '  <h3>Topics</h3><ol><li><strong>Question A</strong></li></ol>'
+                '<p><span style="text-decoration: underline;">Underlined</span></p>'
+                '<script>alert(1)</script><a href="javascript:bad()">Unsafe link</a>  '
+            ),
             ethics_consent_html="  <p>Ethics</p>  ",
             gdpr_notice_html="  <p>GDPR</p>  ",
             photo_consent_html="  <p>Photo</p>  ",
@@ -107,6 +113,13 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_ESSAY_WORD_LIMIT).value == "2750"
         assert _setting_row(views.SETTING_ESSAY_WORD_LIMIT_MODE).value == "hard"
         assert _setting_row(views.SETTING_STAGE1_TRIM_EXTREME_SCORES).value == "true"
+        assert _setting_row(views.SETTING_ESSAY_TOPICS_VISIBLE).value == "true"
+        topics_html = _setting_row(views.SETTING_ESSAY_TOPICS_HTML).value
+        assert "<h3>Topics</h3>" in topics_html
+        assert "<strong>Question A</strong>" in topics_html
+        assert '<span style="text-decoration: underline;">Underlined</span>' in topics_html
+        assert "script" not in topics_html
+        assert "javascript" not in topics_html
         assert _setting_row(views.SETTING_ETHICS_CONSENT_HTML).value == "<p>Ethics</p>"
         assert _setting_row(views.SETTING_GDPR_NOTICE_HTML).value == "<p>GDPR</p>"
         assert _setting_row(views.SETTING_PHOTO_CONSENT_HTML).value == "<p>Photo</p>"
@@ -126,6 +139,29 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         blank_subject = _setting_row(views.SETTING_EMAIL_TEACHER_SUBJECT)
         assert blank_subject is not None
         assert blank_subject.value is None
+
+
+def test_admin_settings_rejects_showing_blank_essay_topics(client, csrf_token):
+    _login_admin_session(client)
+
+    token = csrf_token(client.get("/admin/settings"))
+    response = client.post(
+        "/admin/settings",
+        data=_settings_payload(
+            token,
+            essay_topics_visible="y",
+            essay_topics_html="<script>alert(1)</script>",
+        ),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Enter essay topics before showing them on the public homepage." in html
+
+    with client.application.app_context():
+        assert _setting_row(views.SETTING_ESSAY_TOPICS_VISIBLE) is None
+        assert _setting_row(views.SETTING_ESSAY_TOPICS_HTML) is None
 
 
 def test_settings_helpers_fall_back_to_safe_defaults_for_invalid_values(client):
