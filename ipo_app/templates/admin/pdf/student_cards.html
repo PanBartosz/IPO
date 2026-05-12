@@ -16,7 +16,7 @@
         page-break-inside: avoid;
         break-inside: avoid;
         box-sizing: border-box;
-        height: 205mm;
+        min-height: 238mm;
         border: 1px solid #d1d5db;
         border-radius: 12px;
         padding: 24px;
@@ -71,6 +71,35 @@
         font-weight: 700;
         line-height: 1.15;
         overflow-wrap: anywhere;
+      }
+      .wifi-box {
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 8px 14px;
+        margin: -6px 0 14px 0;
+        background: #f9fafb;
+      }
+      .wifi-title {
+        display: block;
+        margin-bottom: 4px;
+        color: #6b7280;
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .wifi-line {
+        font-size: 0.98rem;
+      }
+      .wifi-item {
+        display: inline-block;
+        margin-right: 1.35rem;
+      }
+      .wifi-label {
+        color: #4b5563;
+        font-weight: 600;
+      }
+      .wifi-value {
+        font-weight: 700;
       }
       .language-line {
         margin: 0 0 16px 0;
@@ -142,6 +171,13 @@
           <div class="credential-box">
             <span class="credential-label">Temporary access code</span>
             <span class="credential-value">{{ entry.temporary_access_code or 'Not generated' }}</span>
+          </div>
+        </div>
+        <div class="wifi-box">
+          <span class="wifi-title">Wi-Fi access</span>
+          <div class="wifi-line">
+            <span class="wifi-item"><span class="wifi-label">Network:</span> <span class="wifi-value">ipo2026</span></span>
+            <span class="wifi-item"><span class="wifi-label">Password:</span> <span class="wifi-value">ipowarsaw2026</span></span>
           </div>
         </div>
         <p class="language-line"><strong>Essay language:</strong> {{ entry.student.essay_language }}</p>
