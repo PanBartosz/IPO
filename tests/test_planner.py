@@ -2563,6 +2563,8 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
         other_teacher_3 = _create_assessor(404, country="Other Country 3")
         primary_student = _create_student(401, country="Primary Country")
         supplemental_student = _create_student(402, country="Supplemental Country")
+        primary_student.essay_word_count = 1420
+        supplemental_student.essay_word_count = 1375
         db.session.add_all(
             [
                 batch,
@@ -2652,6 +2654,8 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert "Packet Group A" in normalized_first_essay_text
     assert "Essay:" in normalized_first_essay_text
     assert str(primary_student_id) in normalized_first_essay_text
+    assert "Word count:" in normalized_first_essay_text
+    assert "1420" in normalized_first_essay_text
     assert "Score:" in normalized_first_essay_text
     assert "/10" in normalized_first_essay_text
 
@@ -2671,6 +2675,7 @@ def test_stage3_packet_uses_compact_essay_overlay(client, csrf_token):
             batch=batch,
         )
         student = _create_student(501, country="Stage 3 Country")
+        student.essay_word_count = 1525
         db.session.add_all([batch, group, student])
         db.session.flush()
         assignment = EssayAssignment(
@@ -2719,4 +2724,6 @@ def test_stage3_packet_uses_compact_essay_overlay(client, csrf_token):
     assert "Compact Committee" in normalized_essay_text
     assert "Essay:" in normalized_essay_text
     assert str(student_id) in normalized_essay_text
+    assert "Word count:" in normalized_essay_text
+    assert "1525" in normalized_essay_text
     assert "Comments:" in normalized_essay_text

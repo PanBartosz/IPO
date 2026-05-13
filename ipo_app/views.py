@@ -174,6 +174,8 @@ PDF_LOGO_ASSETS = {
     "small": "pdfgen_img_assets/logos/e.png",
     "packet": "pdfgen_img_assets/logos/f.png",
 }
+PDF_POINTS_PER_MM = 72 / 25.4
+ESSAY_OVERLAY_TOP_INSET = 6 + 4 * PDF_POINTS_PER_MM
 
 LOGIN_RATE_LIMIT_PER_USERNAME = "10 per minute"
 LOGIN_RATE_LIMIT_PER_IP = "120 per minute"
@@ -3270,9 +3272,12 @@ def _create_essay_overlay_page(
             group_label = getattr(group, "id", None) if group is not None else None
         group_label = group_label or "—"
         essay_id = assignment.student.id if assignment.student else "—"
+        word_count = assignment.student.essay_word_count if assignment.student else None
+        word_count_label = str(word_count) if word_count is not None else "—"
         labels = [
             ("Group", group_label),
             ("Essay", essay_id),
+            ("Word count", word_count_label),
             ("Score", "     /10"),
         ]
 
@@ -3298,9 +3303,11 @@ def _create_essay_overlay_page(
             c.drawString(x, top - 28, str(value))
     else:
         table_height = 20
-        top = height - 6
+        top = height - ESSAY_OVERLAY_TOP_INSET
         if len(labels) == 3:
             col_widths = [table_width * 0.48, table_width * 0.2, table_width * 0.32]
+        elif len(labels) == 4:
+            col_widths = [table_width * 0.38, table_width * 0.16, table_width * 0.22, table_width * 0.24]
         else:
             col_widths = [table_width / len(labels)] * len(labels)
 
@@ -14910,6 +14917,10 @@ def admin_stage3_packets():
                         overlay_labels = [
                             ("Committee", committee_label),
                             ("Essay", student.id),
+                            (
+                                "Word count",
+                                str(student.essay_word_count) if student.essay_word_count is not None else "—",
+                            ),
                             ("Comments", ""),
                         ]
                         overlay_reader = _create_essay_overlay_page(
