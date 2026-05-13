@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from io import BytesIO
 from importlib import import_module
 
+from PyPDF2 import PdfReader
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -261,6 +263,55 @@ def test_card_generation_does_not_change_password_hashes_or_tokens(client, csrf_
         "ASCII username": "lukasz1",
         "Email": "teacher.access@example.test",
     }
+
+
+def test_card_pdfs_render_unicode_names_with_embedded_font(client):
+    _login_admin(client)
+
+    with client.application.app_context():
+        _set_setting(views.SETTING_TEACHER_PORTAL_ENABLED, "true")
+        student = _student(
+            first_name="Zoë",
+            last_name="Działoszyńska-Γεωργίου",
+            country="Česko",
+            upload_username="student-unicode",
+            email="student.unicode@example.test",
+        )
+        teacher = _teacher(
+            first_name="Bartosz",
+            last_name="Działoszyński-Иванов",
+            country="Polska",
+            portal_username="teacher-unicode",
+            email="teacher.unicode@example.test",
+        )
+        batch = AssignmentBatch(
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            name="Published Stage 1",
+            published_at=datetime.utcnow(),
+        )
+        db.session.add_all([student, teacher, batch])
+        db.session.commit()
+
+    student_response = client.get("/admin/students/cards.pdf")
+    teacher_response = client.get("/admin/teachers/cards.pdf")
+
+    assert student_response.status_code == 200
+    assert teacher_response.status_code == 200
+    student_text = " ".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(student_response.data)).pages
+    )
+    teacher_text = " ".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(teacher_response.data)).pages
+    )
+    assert "Zoë Działoszyńska-" in student_text
+    assert "Γεωργίου" in student_text
+    assert "Česko" in student_text
+    assert "Bartosz Działoszyński-" in teacher_text
+    assert "Иванов" in teacher_text
+    assert "Polska" in teacher_text
 
 
 def test_rotating_temporary_codes_preserves_password_hashes_and_regular_tokens(client, csrf_token, monkeypatch):

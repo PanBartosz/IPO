@@ -41,6 +41,8 @@ from sqlalchemy.engine.url import make_url
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from PyPDF2 import PdfReader, PdfWriter
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -174,8 +176,16 @@ PDF_LOGO_ASSETS = {
     "small": "pdfgen_img_assets/logos/e.png",
     "packet": "pdfgen_img_assets/logos/f.png",
 }
+PDF_FONT_ASSETS = {
+    "regular": "vendor/fonts/pdf/DejaVuSans.ttf",
+    "bold": "vendor/fonts/pdf/DejaVuSans-Bold.ttf",
+}
+PDF_REPORTLAB_FONT_REGULAR = "IPO-DejaVuSans"
+PDF_REPORTLAB_FONT_BOLD = "IPO-DejaVuSans-Bold"
 PDF_POINTS_PER_MM = 72 / 25.4
-ESSAY_OVERLAY_TOP_INSET = 6 + 4 * PDF_POINTS_PER_MM
+ESSAY_OVERLAY_TOP_INSET = 6 + 7 * PDF_POINTS_PER_MM
+_REPORTLAB_PDF_FONTS_ATTEMPTED = False
+_REPORTLAB_PDF_FONTS_READY = False
 
 LOGIN_RATE_LIMIT_PER_USERNAME = "10 per minute"
 LOGIN_RATE_LIMIT_PER_IP = "120 per minute"
@@ -2692,12 +2702,46 @@ def _pdf_logo_uri(kind: str) -> str | None:
     return path.resolve().as_uri()
 
 
+def _pdf_font_path(kind: str) -> Path:
+    return Path(current_app.static_folder) / PDF_FONT_ASSETS[kind]
+
+
+def _pdf_font_uri(kind: str) -> str | None:
+    path = _pdf_font_path(kind)
+    if not path.exists():
+        current_app.logger.warning("PDF font asset missing: %s", path)
+        return None
+    return path.resolve().as_uri()
+
+
 def _pdf_logo_context() -> dict[str, str | None]:
     return {
         "pdf_logo_primary_url": _pdf_logo_uri("primary"),
         "pdf_logo_small_url": _pdf_logo_uri("small"),
         "pdf_logo_packet_url": _pdf_logo_uri("packet"),
+        "pdf_font_regular_url": _pdf_font_uri("regular"),
+        "pdf_font_bold_url": _pdf_font_uri("bold"),
     }
+
+
+def _reportlab_pdf_fonts() -> tuple[str, str]:
+    global _REPORTLAB_PDF_FONTS_ATTEMPTED, _REPORTLAB_PDF_FONTS_READY
+    if not _REPORTLAB_PDF_FONTS_ATTEMPTED:
+        _REPORTLAB_PDF_FONTS_ATTEMPTED = True
+        try:
+            regular_path = _pdf_font_path("regular")
+            bold_path = _pdf_font_path("bold")
+            if not regular_path.exists() or not bold_path.exists():
+                raise FileNotFoundError(f"Missing PDF font assets: {regular_path}, {bold_path}")
+            pdfmetrics.registerFont(TTFont(PDF_REPORTLAB_FONT_REGULAR, str(regular_path)))
+            pdfmetrics.registerFont(TTFont(PDF_REPORTLAB_FONT_BOLD, str(bold_path)))
+            _REPORTLAB_PDF_FONTS_READY = True
+        except Exception as exc:
+            current_app.logger.warning("Unable to register PDF fonts; falling back to Helvetica: %s", exc)
+            _REPORTLAB_PDF_FONTS_READY = False
+    if _REPORTLAB_PDF_FONTS_READY:
+        return PDF_REPORTLAB_FONT_REGULAR, PDF_REPORTLAB_FONT_BOLD
+    return "Helvetica", "Helvetica-Bold"
 
 
 def _draw_pdf_logo(
@@ -2738,6 +2782,7 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
     width, height = A4
     c = canvas.Canvas(buffer, pagesize=A4)
     margin = 40
+    regular_font, bold_font = _reportlab_pdf_fonts()
 
     _draw_pdf_logo(
         c,
@@ -2749,9 +2794,9 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
         align="center",
     )
 
-    c.setFont("Helvetica-Bold", 22)
+    c.setFont(bold_font, 22)
     c.drawString(margin, height - margin - 140, "IPO Essay Packet")
-    c.setFont("Helvetica", 14)
+    c.setFont(regular_font, 14)
     c.drawString(margin, height - margin - 166, f"Group: {group.name or group.id}")
 
     group_label = getattr(group, "name", None) or getattr(group, "id", "—")
@@ -2769,9 +2814,9 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
     for label, value in info_rows:
         c.rect(margin, y - row_height, col_widths[0], row_height)
         c.rect(margin + col_widths[0], y - row_height, col_widths[1], row_height)
-        c.setFont("Helvetica-Bold", 12)
+        c.setFont(bold_font, 12)
         c.drawString(margin + 6, y - row_height + 8, str(label))
-        c.setFont("Helvetica", 12)
+        c.setFont(regular_font, 12)
         c.drawString(margin + col_widths[0] + 6, y - row_height + 8, str(value))
         y -= row_height
 
@@ -2781,12 +2826,12 @@ def _create_teacher_title_page(teacher: Teacher, group: ReadingGroup, essay_ids:
     columns = [180, width - 2 * margin - 180]
     c.rect(margin, essay_table_top - header_height, columns[0], header_height)
     c.rect(margin + columns[0], essay_table_top - header_height, columns[1], header_height)
-    c.setFont("Helvetica-Bold", 12)
+    c.setFont(bold_font, 12)
     c.drawString(margin + 6, essay_table_top - header_height + 8, "Essay ID")
     c.drawString(margin + columns[0] + 6, essay_table_top - header_height + 8, "Score")
 
     y = essay_table_top - header_height
-    c.setFont("Helvetica", 12)
+    c.setFont(regular_font, 12)
     entries = essay_ids or ["—"]
     for essay_id in entries:
         c.rect(margin, y - essay_row_height, columns[0], essay_row_height)
@@ -2806,6 +2851,7 @@ def _create_committee_title_page(member_name: str, committee_label: str, essay_i
     width, height = A4
     c = canvas.Canvas(buffer, pagesize=A4)
     margin = 40
+    regular_font, bold_font = _reportlab_pdf_fonts()
 
     _draw_pdf_logo(
         c,
@@ -2817,9 +2863,9 @@ def _create_committee_title_page(member_name: str, committee_label: str, essay_i
         align="center",
     )
 
-    c.setFont("Helvetica-Bold", 22)
+    c.setFont(bold_font, 22)
     c.drawString(margin, height - margin - 140, "IPO Stage 3 Packet")
-    c.setFont("Helvetica", 14)
+    c.setFont(regular_font, 14)
     c.drawString(margin, height - margin - 166, f"Committee: {committee_label}")
 
     info_rows = [
@@ -2835,9 +2881,9 @@ def _create_committee_title_page(member_name: str, committee_label: str, essay_i
     for label, value in info_rows:
         c.rect(margin, y - row_height, col_widths[0], row_height)
         c.rect(margin + col_widths[0], y - row_height, col_widths[1], row_height)
-        c.setFont("Helvetica-Bold", 12)
+        c.setFont(bold_font, 12)
         c.drawString(margin + 6, y - row_height + 8, str(label))
-        c.setFont("Helvetica", 12)
+        c.setFont(regular_font, 12)
         c.drawString(margin + col_widths[0] + 6, y - row_height + 8, str(value))
         y -= row_height
 
@@ -2847,12 +2893,12 @@ def _create_committee_title_page(member_name: str, committee_label: str, essay_i
     columns = [180, width - 2 * margin - 180]
     c.rect(margin, essay_table_top - header_height, columns[0], header_height)
     c.rect(margin + columns[0], essay_table_top - header_height, columns[1], header_height)
-    c.setFont("Helvetica-Bold", 12)
+    c.setFont(bold_font, 12)
     c.drawString(margin + 6, essay_table_top - header_height + 8, "Essay ID")
     c.drawString(margin + columns[0] + 6, essay_table_top - header_height + 8, "Comments")
 
     y = essay_table_top - header_height
-    c.setFont("Helvetica", 12)
+    c.setFont(regular_font, 12)
     entries = essay_ids or ["—"]
     for essay_id in entries:
         c.rect(margin, y - essay_row_height, columns[0], essay_row_height)
@@ -3265,6 +3311,7 @@ def _create_essay_overlay_page(
     c = canvas.Canvas(buffer, pagesize=(width, height))
     margin = 36
     table_width = width - 2 * margin
+    regular_font, bold_font = _reportlab_pdf_fonts()
 
     if labels is None:
         group_label = getattr(group, "name", None) if group is not None else None
@@ -3287,7 +3334,7 @@ def _create_essay_overlay_page(
     if header_text:
         table_height = 36
         top = height - margin
-        c.setFont("Helvetica-Bold", 12)
+        c.setFont(bold_font, 12)
         c.drawString(margin, top + 4, header_text)
 
         c.rect(margin, top - table_height, table_width, table_height)
@@ -3297,9 +3344,9 @@ def _create_essay_overlay_page(
 
         for idx, (label, value) in enumerate(labels):
             x = margin + col_width * idx + 6
-            c.setFont("Helvetica-Bold", 10)
+            c.setFont(bold_font, 10)
             c.drawString(x, top - 14, str(label))
-            c.setFont("Helvetica", 10)
+            c.setFont(regular_font, 10)
             c.drawString(x, top - 28, str(value))
     else:
         table_height = 20
@@ -3333,8 +3380,8 @@ def _create_essay_overlay_page(
 
         x = margin
         text_y = top - 13
-        label_font = "Helvetica-Bold"
-        value_font = "Helvetica"
+        label_font = bold_font
+        value_font = regular_font
         font_size = 9
         for col_width, (label, value) in zip(col_widths, labels):
             label_text = f"{label}:"

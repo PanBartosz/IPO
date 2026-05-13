@@ -2660,6 +2660,63 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert "/10" in normalized_first_essay_text
 
 
+def test_individual_teacher_packet_embeds_unicode_teacher_name(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Unicode Packet Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.ALL_ASSESSORS_NO_BACKUPS,
+        )
+        group = ReadingGroup(
+            name="Łódź Ελληνικά Кир",
+            language="English",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            batch=batch,
+        )
+        packet_teacher = _create_assessor(405, country="Poland")
+        packet_teacher.first_name = "Bartosz"
+        packet_teacher.last_name = "Działoszyński"
+        student = _create_student(405, country="Unicode Country")
+        db.session.add_all([batch, group, packet_teacher, student])
+        db.session.flush()
+        _add_reader(group, packet_teacher, role=GroupMemberRole.LEADER)
+        assignment = EssayAssignment(
+            student_id=student.id,
+            group_id=group.id,
+            batch_id=batch.id,
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+        )
+        db.session.add(assignment)
+        db.session.flush()
+
+        upload_folder = client.application.config["UPLOAD_FOLDER"]
+        student.uploaded_filename = f"unicode-{student.id}.pdf"
+        _write_valid_pdf(Path(upload_folder) / student.uploaded_filename)
+        db.session.commit()
+        batch_id = batch.id
+        packet_teacher_id = packet_teacher.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(
+        f"/admin/planner/batches/{batch_id}/teachers/{packet_teacher_id}/reader-packet.pdf",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    reader = PdfReader(BytesIO(response.data))
+    title_page_text = " ".join((reader.pages[0].extract_text() or "").split())
+    essay_page_text = " ".join((reader.pages[1].extract_text() or "").split())
+    assert "Bartosz Działoszyński" in title_page_text
+    assert "Łódź" in essay_page_text
+    assert "Ελληνικά" in essay_page_text
+    assert "Кир" in essay_page_text
+
+
 def test_stage3_packet_uses_compact_essay_overlay(client, csrf_token):
     with client.application.app_context():
         batch = AssignmentBatch(
