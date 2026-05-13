@@ -3541,7 +3541,7 @@ def _public_assessor_group_entries(groups: list[ReadingGroup]) -> tuple[list[dic
     return entries, len(unique_teacher_ids)
 
 
-def _public_assessor_group_pages(entries: list[dict[str, Any]], per_page: int = 10) -> list[list[dict[str, Any]]]:
+def _public_assessor_group_pages(entries: list[dict[str, Any]], per_page: int = 14) -> list[list[dict[str, Any]]]:
     pages = [entries[index:index + per_page] for index in range(0, len(entries), per_page)]
     if len(pages) > 1 and len(pages[-1]) == 1:
         pages[-1].insert(0, pages[-2].pop())

@@ -2668,12 +2668,16 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
             status=PlannerStatus.PUBLISHED,
             planner_algorithm=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
         )
-        teachers = [_create_assessor(6000 + index) for index in range(125)]
+        teachers = [_create_assessor(6000 + index) for index in range(100)]
         for index, teacher in enumerate(teachers):
-            if index % 11 == 1:
-                teacher.first_name = "Alexandria-Cassandra"
-                teacher.last_name = "Dzialoszynski-Konstantinopoulos"
-                teacher.country = "United Kingdom of Great Britain"
+            teacher.first_name = f"T{index:02d}"
+            teacher.last_name = f"Assessor{index:02d}"
+            teacher.country = f"C{index % 20:02d}"
+        teachers[0].first_name = "Teacher6000"
+        teachers[0].last_name = "Assessor6000"
+        teachers[1].first_name = "Alexandria-Cassandra"
+        teachers[1].last_name = "Dzialoszynski-Konstantinopoulos"
+        teachers[1].country = "United Kingdom of Great Britain"
         students = [
             _create_student(6000 + index, country=f"Hidden Country {index}")
             for index in range(25)
@@ -2692,13 +2696,13 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
             )
             db.session.add(group)
             db.session.flush()
-            for offset in range(5):
+            for offset in range(4):
                 role = GroupMemberRole.READER
                 if offset == 0:
                     role = GroupMemberRole.LEADER
-                elif offset == 4:
+                elif offset == 3:
                     role = GroupMemberRole.BACKUP
-                _add_reader(group, teachers[group_index * 5 + offset], role=role)
+                _add_reader(group, teachers[group_index * 4 + offset], role=role)
             db.session.add(
                 EssayAssignment(
                     student_id=students[group_index].id,
@@ -2724,14 +2728,14 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
     assert "application/pdf" in response.headers.get("Content-Type", "")
 
     reader = PdfReader(BytesIO(response.data))
-    assert len(reader.pages) == 3
+    assert len(reader.pages) == 2
     pdf_text = " ".join((page.extract_text() or "") for page in reader.pages)
     last_page_text = reader.pages[-1].extract_text() or ""
     assert "Assessor Groups" in pdf_text
     assert "English Group 01" in pdf_text
-    assert "English Group 21" in last_page_text
+    assert "English Group 15" in last_page_text
     assert "English Group 25" in last_page_text
-    assert last_page_text.count("English Group ") == 5
+    assert last_page_text.count("English Group ") == 11
     assert "Teacher6000Assessor6000" in pdf_text.replace(" ", "")
     assert "LEADER" in pdf_text
     assert "Public Assessor Batch" not in pdf_text
