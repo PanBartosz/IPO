@@ -3541,6 +3541,13 @@ def _public_assessor_group_entries(groups: list[ReadingGroup]) -> tuple[list[dic
     return entries, len(unique_teacher_ids)
 
 
+def _public_assessor_group_pages(entries: list[dict[str, Any]], per_page: int = 10) -> list[list[dict[str, Any]]]:
+    pages = [entries[index:index + per_page] for index in range(0, len(entries), per_page)]
+    if len(pages) > 1 and len(pages[-1]) == 1:
+        pages[-1].insert(0, pages[-2].pop())
+    return pages
+
+
 def _reader_score_is_complete(score_record: EssayScore | None) -> bool:
     if not score_record or score_record.score is None:
         return False
@@ -14856,15 +14863,13 @@ def admin_planner_export_public_assessor_groups_pdf(batch_id: int):
         abort(404)
     groups = _load_batch_groups(batch)
     group_entries, assessor_count = _public_assessor_group_entries(groups)
+    group_pages = _public_assessor_group_pages(group_entries)
     slug = secure_filename(batch.name.lower().replace(" ", "-")) or f"batch-{batch.id}"
     filename = f"{slug}-assessor-groups.pdf"
     response = _render_pdf(
         "admin/planner/pdf/public_assessor_groups.html",
         filename,
-        batch=batch,
-        groups=group_entries,
-        assessor_count=assessor_count,
-        generated_at=datetime.utcnow(),
+        group_pages=group_pages,
     )
     log_activity(
         "public_assessor_groups_generated",

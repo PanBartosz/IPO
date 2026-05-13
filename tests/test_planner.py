@@ -2668,7 +2668,12 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
             status=PlannerStatus.PUBLISHED,
             planner_algorithm=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
         )
-        teachers = [_create_assessor(6000 + index) for index in range(100)]
+        teachers = [_create_assessor(6000 + index) for index in range(125)]
+        for index, teacher in enumerate(teachers):
+            if index % 11 == 1:
+                teacher.first_name = "Alexandria-Cassandra"
+                teacher.last_name = "Dzialoszynski-Konstantinopoulos"
+                teacher.country = "United Kingdom of Great Britain"
         students = [
             _create_student(6000 + index, country=f"Hidden Country {index}")
             for index in range(25)
@@ -2687,9 +2692,13 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
             )
             db.session.add(group)
             db.session.flush()
-            for offset in range(4):
-                role = GroupMemberRole.LEADER if offset == 0 else GroupMemberRole.READER
-                _add_reader(group, teachers[group_index * 4 + offset], role=role)
+            for offset in range(5):
+                role = GroupMemberRole.READER
+                if offset == 0:
+                    role = GroupMemberRole.LEADER
+                elif offset == 4:
+                    role = GroupMemberRole.BACKUP
+                _add_reader(group, teachers[group_index * 5 + offset], role=role)
             db.session.add(
                 EssayAssignment(
                     student_id=students[group_index].id,
@@ -2715,11 +2724,20 @@ def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
     assert "application/pdf" in response.headers.get("Content-Type", "")
 
     reader = PdfReader(BytesIO(response.data))
-    assert len(reader.pages) <= 10
+    assert len(reader.pages) == 3
     pdf_text = " ".join((page.extract_text() or "") for page in reader.pages)
+    last_page_text = reader.pages[-1].extract_text() or ""
     assert "Assessor Groups" in pdf_text
     assert "English Group 01" in pdf_text
-    assert "Teacher6000 Assessor6000" in pdf_text
+    assert "English Group 21" in last_page_text
+    assert "English Group 25" in last_page_text
+    assert last_page_text.count("English Group ") == 5
+    assert "Teacher6000Assessor6000" in pdf_text.replace(" ", "")
+    assert "LEADER" in pdf_text
+    assert "Public Assessor Batch" not in pdf_text
+    assert "Stage 1" not in pdf_text
+    assert "Public directory" not in pdf_text
+    assert "No participant names included" not in pdf_text
     assert "Student6000" not in pdf_text
     assert "Hidden Country" not in pdf_text
 
