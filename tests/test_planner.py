@@ -2660,6 +2660,70 @@ def test_individual_teacher_packet_includes_group_and_supplemental_assignments(c
     assert "/10" in normalized_first_essay_text
 
 
+def test_public_assessor_groups_pdf_is_public_safe_and_compact(client):
+    with client.application.app_context():
+        batch = AssignmentBatch(
+            name="Public Assessor Batch",
+            stage=Stage.STAGE_1,
+            status=PlannerStatus.PUBLISHED,
+            planner_algorithm=PlannerAlgorithm.STRICT_FOUR_WITH_BACKUPS,
+        )
+        teachers = [_create_assessor(6000 + index) for index in range(100)]
+        students = [
+            _create_student(6000 + index, country=f"Hidden Country {index}")
+            for index in range(25)
+        ]
+        db.session.add(batch)
+        db.session.add_all(teachers + students)
+        db.session.flush()
+
+        for group_index in range(25):
+            group = ReadingGroup(
+                name=f"English Group {group_index + 1:02d}",
+                language="English",
+                stage=Stage.STAGE_1,
+                status=PlannerStatus.PUBLISHED,
+                batch=batch,
+            )
+            db.session.add(group)
+            db.session.flush()
+            for offset in range(4):
+                role = GroupMemberRole.LEADER if offset == 0 else GroupMemberRole.READER
+                _add_reader(group, teachers[group_index * 4 + offset], role=role)
+            db.session.add(
+                EssayAssignment(
+                    student_id=students[group_index].id,
+                    group_id=group.id,
+                    batch_id=batch.id,
+                    stage=Stage.STAGE_1,
+                    status=PlannerStatus.PUBLISHED,
+                )
+            )
+
+        db.session.commit()
+        batch_id = batch.id
+
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    planner_page = client.get(f"/admin/planner/batches/{batch_id}")
+    assert planner_page.status_code == 200
+    assert f"/admin/planner/batches/{batch_id}/export/assessor-groups.pdf" in planner_page.get_data(as_text=True)
+
+    response = client.get(f"/admin/planner/batches/{batch_id}/export/assessor-groups.pdf")
+    assert response.status_code == 200
+    assert "application/pdf" in response.headers.get("Content-Type", "")
+
+    reader = PdfReader(BytesIO(response.data))
+    assert len(reader.pages) <= 10
+    pdf_text = " ".join((page.extract_text() or "") for page in reader.pages)
+    assert "Assessor Groups" in pdf_text
+    assert "English Group 01" in pdf_text
+    assert "Teacher6000 Assessor6000" in pdf_text
+    assert "Student6000" not in pdf_text
+    assert "Hidden Country" not in pdf_text
+
+
 def test_individual_teacher_packet_embeds_unicode_teacher_name(client):
     with client.application.app_context():
         batch = AssignmentBatch(

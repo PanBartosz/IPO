@@ -314,6 +314,72 @@ def test_card_pdfs_render_unicode_names_with_embedded_font(client):
     assert "Polska" in teacher_text
 
 
+def test_compact_access_table_pdfs_render_card_credentials(client):
+    _login_admin(client)
+
+    with client.application.app_context():
+        _set_setting(views.SETTING_TEACHER_PORTAL_ENABLED, "true")
+        _set_setting(views.SETTING_LOGIN_EMAIL_ENABLED, "true")
+        _set_setting(views.SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "true")
+        db.session.add(
+            _student(
+                first_name="Zoë",
+                last_name="Działoszyńska",
+                country="Česko",
+                upload_username="żółć1",
+                email="student.table@example.test",
+                temporary_access_code="student-table-code",
+            )
+        )
+        db.session.add(
+            _teacher(
+                first_name="Łukasz",
+                last_name="Kowalski",
+                country="Polska",
+                portal_username="łukasz1",
+                email="teacher.table@example.test",
+                temporary_access_code="teacher-table-code",
+            )
+        )
+        db.session.commit()
+
+    exports_html = client.get("/admin/exports").get_data(as_text=True)
+    students_html = client.get("/admin/students").get_data(as_text=True)
+    teachers_html = client.get("/admin/teachers").get_data(as_text=True)
+    assert "/admin/students/access-table.pdf" in exports_html
+    assert "/admin/teachers/access-table.pdf" in exports_html
+    assert "/admin/students/access-table.pdf" in students_html
+    assert "/admin/teachers/access-table.pdf" in teachers_html
+
+    student_response = client.get("/admin/students/access-table.pdf")
+    teacher_response = client.get("/admin/teachers/access-table.pdf")
+    assert student_response.status_code == 200
+    assert teacher_response.status_code == 200
+    assert "application/pdf" in student_response.headers.get("Content-Type", "")
+    assert "application/pdf" in teacher_response.headers.get("Content-Type", "")
+
+    student_text = " ".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(student_response.data)).pages
+    )
+    teacher_text = " ".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(teacher_response.data)).pages
+    )
+    assert "Zoë Działoszyńska" in student_text
+    assert "Česko" in student_text
+    assert "żółć1" in student_text
+    assert "zolc1" in student_text
+    assert "student.table@example.test" in student_text
+    assert "student-table-code" in student_text
+    assert "Łukasz Kowalski" in teacher_text
+    assert "Polska" in teacher_text
+    assert "łukasz1" in teacher_text
+    assert "lukasz1" in teacher_text
+    assert "teacher.table@example.test" in teacher_text
+    assert "teacher-table-code" in teacher_text
+
+
 def test_rotating_temporary_codes_preserves_password_hashes_and_regular_tokens(client, csrf_token, monkeypatch):
     _login_admin(client)
     generated_codes = iter(["new-student-code", "new-teacher-code"])

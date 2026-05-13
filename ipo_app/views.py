@@ -2959,6 +2959,57 @@ def _card_login_options(username: str | None, email: str | None) -> list[dict[st
     return options
 
 
+def _card_ascii_username(username: str | None) -> str:
+    if not username or not _login_folded_alias_enabled():
+        return ""
+    folded_username = _fold_login_username(username)
+    if folded_username and folded_username != username.strip().casefold():
+        return folded_username
+    return ""
+
+
+def _student_access_table_entries() -> list[dict[str, str]]:
+    students = (
+        Student.query.filter_by(is_absent=False)
+        .order_by(Student.country.asc(), Student.last_name.asc(), Student.first_name.asc(), Student.id.asc())
+        .all()
+    )
+    entries: list[dict[str, str]] = []
+    for student in students:
+        name = " ".join(part for part in [student.first_name, student.last_name] if part).strip()
+        entries.append({
+            "id": str(student.id),
+            "name": name,
+            "country": student.country,
+            "username": student.upload_username or "Not generated",
+            "ascii_username": _card_ascii_username(student.upload_username),
+            "email": student.email,
+            "access_code": student.temporary_access_code or "Not generated",
+        })
+    return entries
+
+
+def _teacher_access_table_entries() -> list[dict[str, str]]:
+    teachers = (
+        Teacher.query.filter_by(is_absent=False)
+        .order_by(Teacher.country.asc(), Teacher.last_name.asc(), Teacher.first_name.asc(), Teacher.id.asc())
+        .all()
+    )
+    entries: list[dict[str, str]] = []
+    for teacher in teachers:
+        name = " ".join(part for part in [teacher.first_name, teacher.last_name] if part).strip()
+        entries.append({
+            "id": str(teacher.id),
+            "name": name,
+            "country": teacher.country,
+            "username": teacher.portal_username or "Not generated",
+            "ascii_username": _card_ascii_username(teacher.portal_username),
+            "email": teacher.email,
+            "access_code": teacher.temporary_access_code or "Not generated",
+        })
+    return entries
+
+
 def _login_folded_alias_enabled() -> bool:
     return _parse_bool(_get_setting(SETTING_LOGIN_FOLDED_ALIAS_ENABLED, "false"))
 
@@ -3446,6 +3497,48 @@ def _load_batch_groups(batch: AssignmentBatch) -> list[ReadingGroup]:
         .order_by(ReadingGroup.language.asc(), ReadingGroup.name.asc())
         .all()
     )
+
+
+def _public_assessor_group_entries(groups: list[ReadingGroup]) -> tuple[list[dict[str, Any]], int]:
+    role_order = {
+        GroupMemberRole.LEADER: 0,
+        GroupMemberRole.READER: 1,
+        GroupMemberRole.BACKUP: 2,
+    }
+    entries: list[dict[str, Any]] = []
+    unique_teacher_ids: set[int] = set()
+
+    for group in groups:
+        members = []
+        for member in group.members:
+            teacher = member.teacher
+            if not teacher or teacher.is_absent:
+                continue
+            if not member.active and member.role != GroupMemberRole.BACKUP:
+                continue
+
+            unique_teacher_ids.add(teacher.id)
+            members.append({
+                "teacher": teacher,
+                "role": member.role,
+                "active": member.active,
+            })
+
+        members.sort(
+            key=lambda item: (
+                role_order.get(item["role"], 9),
+                item["teacher"].country.casefold(),
+                item["teacher"].last_name.casefold(),
+                item["teacher"].first_name.casefold(),
+                item["teacher"].id,
+            )
+        )
+        entries.append({
+            "group": group,
+            "members": members,
+        })
+
+    return entries, len(unique_teacher_ids)
 
 
 def _reader_score_is_complete(score_record: EssayScore | None) -> bool:
@@ -13323,6 +13416,60 @@ def admin_teacher_cards_pdf():
     return response
 
 
+@web_bp.route("/admin/students/access-table.pdf")
+def admin_student_access_table_pdf():
+    entries = _student_access_table_entries()
+    response = _render_pdf(
+        "admin/pdf/access_table.html",
+        "participant-access-table.pdf",
+        audience_label="Participant",
+        audience_label_plural="Participants",
+        entries=entries,
+        login_url=url_for("web.student_login", _external=True),
+        generated_at=datetime.utcnow(),
+        folded_alias_enabled=_login_folded_alias_enabled(),
+        email_login_enabled=_login_email_enabled(),
+    )
+    log_activity(
+        "participant_access_table_generated",
+        "Participant compact access table generated",
+        object_type="student_access",
+        details={"student_count": len(entries)},
+    )
+    db.session.commit()
+    return response
+
+
+@web_bp.route("/admin/teachers/access-table.pdf")
+def admin_teacher_access_table_pdf():
+    if not _current_admin():
+        abort(403)
+    if not _teacher_portal_enabled():
+        flash("Enable teacher portal in Settings before generating teacher access tables.", "error")
+        return redirect(url_for("web.admin_settings"))
+
+    entries = _teacher_access_table_entries()
+    response = _render_pdf(
+        "admin/pdf/access_table.html",
+        "teacher-access-table.pdf",
+        audience_label="Teacher",
+        audience_label_plural="Teachers",
+        entries=entries,
+        login_url=url_for("teacher_portal.login", _external=True),
+        generated_at=datetime.utcnow(),
+        folded_alias_enabled=_login_folded_alias_enabled(),
+        email_login_enabled=_login_email_enabled(),
+    )
+    log_activity(
+        "teacher_access_table_generated",
+        "Teacher compact access table generated",
+        object_type="teacher_access",
+        details={"teacher_count": len(entries)},
+    )
+    db.session.commit()
+    return response
+
+
 @web_bp.route("/admin/uploads/<int:student_id>/scores", methods=["GET", "POST"])
 def admin_score_student(student_id: int):
     student = db.session.get(Student, student_id)
@@ -14700,6 +14847,34 @@ def admin_planner_export_groups_pdf(batch_id: int):
     slug = batch.name.lower().replace(" ", "-")
     filename = f"{slug}-groups.pdf"
     return _render_pdf("admin/planner/pdf/group_packet.html", filename, batch=batch, groups=groups)
+
+
+@web_bp.route("/admin/planner/batches/<int:batch_id>/export/assessor-groups.pdf")
+def admin_planner_export_public_assessor_groups_pdf(batch_id: int):
+    batch = db.session.get(AssignmentBatch, batch_id)
+    if not batch:
+        abort(404)
+    groups = _load_batch_groups(batch)
+    group_entries, assessor_count = _public_assessor_group_entries(groups)
+    slug = secure_filename(batch.name.lower().replace(" ", "-")) or f"batch-{batch.id}"
+    filename = f"{slug}-assessor-groups.pdf"
+    response = _render_pdf(
+        "admin/planner/pdf/public_assessor_groups.html",
+        filename,
+        batch=batch,
+        groups=group_entries,
+        assessor_count=assessor_count,
+        generated_at=datetime.utcnow(),
+    )
+    log_activity(
+        "public_assessor_groups_generated",
+        f"Public assessor group PDF generated for batch {batch.name}",
+        object_type="assignment_batch",
+        object_id=batch.id,
+        details={"group_count": len(group_entries), "assessor_count": assessor_count},
+    )
+    db.session.commit()
+    return response
 
 
 @web_bp.route("/admin/planner/batches/<int:batch_id>/export/teachers.pdf")

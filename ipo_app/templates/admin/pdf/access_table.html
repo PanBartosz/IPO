@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{{ audience_label_plural }} - Compact Access Table</title>
+    <style>
+      {% if pdf_font_regular_url and pdf_font_bold_url %}
+      @font-face {
+        font-family: "IPO PDF Sans";
+        src: url("{{ pdf_font_regular_url }}") format("truetype");
+        font-weight: 400;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: "IPO PDF Sans";
+        src: url("{{ pdf_font_bold_url }}") format("truetype");
+        font-weight: 700;
+        font-style: normal;
+      }
+      {% endif %}
+      @page {
+        size: A4 landscape;
+        margin: 8mm 7mm 10mm 7mm;
+        @bottom-right {
+          content: "Page " counter(page) " / " counter(pages);
+          color: #6b7280;
+          font-family: "IPO PDF Sans", "DejaVu Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          font-size: 6.8pt;
+        }
+      }
+      body {
+        margin: 0;
+        color: #111827;
+        font-family: "IPO PDF Sans", "DejaVu Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 7.2pt;
+        line-height: 1.18;
+      }
+      h1, p {
+        margin: 0;
+      }
+      .header {
+        display: table;
+        width: 100%;
+        border-bottom: 1.5pt solid #822d80;
+        padding-bottom: 2.4mm;
+        margin-bottom: 2.8mm;
+      }
+      .header-main,
+      .header-logo {
+        display: table-cell;
+        vertical-align: top;
+      }
+      .header-logo {
+        width: 42mm;
+        text-align: right;
+      }
+      .header-logo img {
+        max-width: 38mm;
+        max-height: 10mm;
+        object-fit: contain;
+      }
+      h1 {
+        font-size: 15pt;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+      .meta {
+        margin-top: 1.6mm;
+        color: #4b5563;
+        font-size: 8pt;
+      }
+      .meta span {
+        display: inline-block;
+        margin-right: 4mm;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      thead {
+        display: table-header-group;
+      }
+      tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      th,
+      td {
+        border: 0.5pt solid #d1d5db;
+        padding: 1.2mm 1.4mm;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+      th {
+        background: #f3f4f6;
+        color: #374151;
+        font-size: 6.7pt;
+        font-weight: 700;
+        text-align: left;
+        text-transform: uppercase;
+      }
+      tbody tr:nth-child(even) td {
+        background: #fafafa;
+      }
+      .id-col {
+        width: 8mm;
+        color: #4b5563;
+        text-align: right;
+      }
+      .name-col {
+        width: 38mm;
+        font-weight: 700;
+      }
+      .country-col {
+        width: 28mm;
+      }
+      .username-col {
+        width: 34mm;
+        font-weight: 700;
+      }
+      .ascii-col {
+        width: 28mm;
+      }
+      .email-col {
+        width: 55mm;
+      }
+      .code-col {
+        width: 34mm;
+        font-family: "IPO PDF Sans", "DejaVu Sans Mono", Consolas, monospace;
+        font-weight: 700;
+      }
+      .empty {
+        color: #6b7280;
+      }
+      .footer {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: -7mm;
+        width: 100%;
+        border-top: 0.75pt solid #d1d5db;
+        padding-top: 1.4mm;
+        color: #6b7280;
+        font-size: 6.8pt;
+      }
+    </style>
+  </head>
+  <body>
+    <footer class="footer">
+      Internal access table - Generated {{ generated_at.strftime('%Y-%m-%d %H:%M') }}
+    </footer>
+
+    <header class="header">
+      <div class="header-main">
+        <h1>{{ audience_label_plural }} Access Table</h1>
+        <p class="meta">
+          <span>{{ entries|length }} record{{ '' if entries|length == 1 else 's' }}</span>
+          <span>Login: {{ login_url }}</span>
+          <span>Email login: {{ 'on' if email_login_enabled else 'off' }}</span>
+          <span>ASCII aliases: {{ 'on' if folded_alias_enabled else 'off' }}</span>
+        </p>
+      </div>
+      <div class="header-logo">
+        {% if pdf_logo_primary_url %}
+          <img src="{{ pdf_logo_primary_url }}" alt="IPO 2026">
+        {% endif %}
+      </div>
+    </header>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="id-col">ID</th>
+          <th class="name-col">Name</th>
+          <th class="country-col">Country</th>
+          <th class="username-col">Username</th>
+          <th class="ascii-col">ASCII username</th>
+          <th class="email-col">Email</th>
+          <th class="code-col">Access code</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td class="id-col">{{ entry.id }}</td>
+            <td class="name-col">{{ entry.name }}</td>
+            <td class="country-col">{{ entry.country }}</td>
+            <td class="username-col">{{ entry.username }}</td>
+            <td class="ascii-col">{% if entry.ascii_username %}{{ entry.ascii_username }}{% else %}<span class="empty">-</span>{% endif %}</td>
+            <td class="email-col">{{ entry.email }}</td>
+            <td class="code-col">{{ entry.access_code }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="empty">No {{ audience_label|lower }} records available.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>

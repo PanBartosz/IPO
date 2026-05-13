@@ -88,6 +88,7 @@
       <div class="planner-action-group">
         <span class="planner-action-label">PDF</span>
         <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_groups_pdf', batch_id=batch.id) }}">Groups PDF</a>
+        <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_public_assessor_groups_pdf', batch_id=batch.id) }}">Assessor groups PDF</a>
         <a class="button-link secondary" href="{{ url_for('web.admin_planner_export_teachers_pdf', batch_id=batch.id) }}">Teachers PDF</a>
       </div>
     </div>

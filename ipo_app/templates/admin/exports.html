@@ -26,12 +26,14 @@
         <h3>Participant cards</h3>
         <p class="fine-print">Print participant cards with competition-day temporary access codes.</p>
         <a class="button" href="{{ url_for('web.admin_student_cards_pdf') }}">Download participant cards PDF</a>
+        <a class="button secondary" href="{{ url_for('web.admin_student_access_table_pdf') }}">Download participant access table PDF</a>
       </div>
       <div class="export-item">
         <h3>Teacher portal cards</h3>
         <p class="fine-print">Print teacher cards with competition-day temporary access codes. This does not reset portal passwords.</p>
         {% if teacher_portal_enabled %}
           <a class="button" href="{{ url_for('web.admin_teacher_cards_pdf') }}">Download teacher cards PDF</a>
+          <a class="button secondary" href="{{ url_for('web.admin_teacher_access_table_pdf') }}">Download teacher access table PDF</a>
         {% else %}
           <p class="field-error">Enable the teacher portal in Settings to generate login cards.</p>
         {% endif %}
