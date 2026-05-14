@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% macro render_score_section(stage, rows) %}
+  {% set stage_label = STAGE_LABELS[stage] %}
+  <div id="{{ stage.value }}-scores" class="table-card table-card-wide">
+    <div class="table-header">
+      <h3>{{ stage_label }} scores</h3>
+      <div class="table-actions">
+        <span class="status-tag">{{ rows|length }} assigned</span>
+      </div>
+    </div>
+    {% if rows %}
+      <form method="post" class="form-grid" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="update_scores">
+        <input type="hidden" name="stage" value="{{ stage.value }}">
+        <table class="data-table" style="width: 100%;">
+          <thead>
+            <tr>
+              <th>Essay ID</th>
+              <th>Group</th>
+              <th>Source</th>
+              <th>Country</th>
+              <th>Language</th>
+              <th>Word count</th>
+              <th>Status</th>
+              <th>Score</th>
+              <th>Last updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.student.id }}</td>
+                <td>{{ row.group_label }}</td>
+                <td>{{ row.source_label }}</td>
+                <td>{{ row.student.country }}</td>
+                <td>{{ row.student.essay_language }}</td>
+                <td>{{ row.student.essay_word_count if row.student.essay_word_count is not none else "—" }}</td>
+                <td>
+                  <span class="status-tag{% if row.status_info.css %} {{ row.status_info.css }}{% endif %}">
+                    {{ row.status_info.label }}
+                  </span>
+                  {% if row.status_info.timestamp %}
+                    <div class="fine-print">{{ row.status_info.timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  <input
+                    name="score_{{ row.assignment.id }}"
+                    value="{{ row.score_value }}"
+                    list="score-values"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    class="score-select"
+                    style="width: 6rem;"
+                    aria-label="{{ stage_label }} score for essay {{ row.student.id }}"
+                  >
+                </td>
+                <td>
+                  {% if row.updated_at %}
+                    {{ row.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                  {% else %}
+                    &mdash;
+                  {% endif %}
+                </td>
+                <td>
+                  <a class="button-link" href="{{ row.student_scoring_url }}">Open essay</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <div class="form-actions" style="margin-top: 1rem;">
+          <button type="submit" class="button">Save {{ stage_label }} scores</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="fine-print">No {{ stage_label }} assignments found for this teacher.</p>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% block title %}Scores · {{ teacher.first_name }} {{ teacher.last_name }} · Admin{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <datalist id="score-values">
+    {% for value, label in score_choices %}
+      <option value="{{ value }}">{{ label }}</option>
+    {% endfor %}
+  </datalist>
+
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Scores · {{ teacher.first_name }} {{ teacher.last_name }}</h2>
+      <div class="table-actions">
+        <a class="button-link" href="{{ url_for('web.admin_teachers') }}">Back to teachers</a>
+      </div>
+    </div>
+    <p>
+      <strong>Teacher ID:</strong> {{ teacher.id }}
+      &middot; <strong>Country:</strong> {{ teacher.country }}
+      &middot; <strong>Languages:</strong> {{ teacher.languages }}
+    </p>
+    <p>
+      <strong>Assessor:</strong>
+      {% if teacher.declared_assessor_competence %}
+        <span class="status-tag success">Yes</span>
+      {% else %}
+        <span class="status-tag warning">No</span>
+      {% endif %}
+      {% if teacher.is_absent %}
+        <span class="status-tag warning">Absent</span>
+      {% endif %}
+      {% if active_batch %}
+        <span class="status-tag">Batch: {{ active_batch.name }}</span>
+      {% else %}
+        <span class="status-tag warning">No published Stage 1 batch</span>
+      {% endif %}
+    </p>
+  </div>
+
+  {{ render_score_section(Stage.STAGE_1, stage1_rows) }}
+  {{ render_score_section(Stage.STAGE_2, stage2_rows) }}
+{% endblock %}

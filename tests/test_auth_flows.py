@@ -109,6 +109,71 @@ def test_admin_routes_require_authentication_redirects_to_login(client):
     assert "/admin/login" in response.headers["Location"]
 
 
+def test_recent_admin_sensitive_get_routes_require_admin(client):
+    paths = [
+        "/admin/students/cards.pdf",
+        "/admin/teachers/cards.pdf",
+        "/admin/students/access-table.pdf",
+        "/admin/teachers/access-table.pdf",
+        "/admin/teachers/1/scores",
+        "/admin/uploads/1/scores",
+        "/admin/stage2/1",
+        "/admin/file-bin",
+        "/admin/file-bin/1/download",
+    ]
+
+    for path in paths:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 302, path
+        assert "/admin/login" in response.headers["Location"], path
+
+
+def test_recent_admin_sensitive_post_routes_require_admin_even_with_valid_csrf(client, csrf_token):
+    login_page = client.get("/admin/login")
+    token = csrf_token(login_page)
+    posts = [
+        (
+            "/admin/settings/temporary-access-codes",
+            {"csrf_token": token, "action": "generate_missing", "audience": "students"},
+        ),
+        (
+            "/admin/teachers/1/scores",
+            {"csrf_token": token, "action": "update_scores", "stage": "stage_1"},
+        ),
+        (
+            "/admin/uploads/1/scores",
+            {"csrf_token": token, "action": "update_scores"},
+        ),
+        (
+            "/admin/stage2/1",
+            {"csrf_token": token, "action": "update_scores"},
+        ),
+        (
+            "/admin/file-bin",
+            {"csrf_token": token, "action": "settings", "enabled": "y", "access_code": "emergency"},
+        ),
+        (
+            "/admin/file-bin",
+            {"csrf_token": token, "action": "mark_reviewed", "upload_id": "1", "reviewed": "1"},
+        ),
+    ]
+
+    for path, data in posts:
+        response = client.post(path, data=data, follow_redirects=False)
+        assert response.status_code == 302, path
+        assert "/admin/login" in response.headers["Location"], path
+
+
+def test_teacher_portal_session_does_not_grant_admin_access(client):
+    with client.session_transaction() as session:
+        session["teacher_portal_id"] = 1
+
+    response = client.get("/admin/teachers/1/scores", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "/admin/login" in response.headers["Location"]
+
+
 def test_student_login_allows_access_to_portal(client, csrf_token):
     with client.application.app_context():
         student = Student(

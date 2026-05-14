@@ -113,6 +113,8 @@ COMMUNICATION_AUDIENCE_CHOICES = [
     (CommunicationAudience.BOTH.value, "Teachers and students"),
 ]
 
+FILE_BIN_ALLOWED_EXTENSIONS = ["pdf", "docx", "odt", "txt", "rtf"]
+
 
 class StudentRegistrationForm(FlaskForm):
     first_name = StringField("First name", validators=[DataRequired(), Length(max=80)])
@@ -386,6 +388,28 @@ class AdminEssayOverrideForm(FlaskForm):
     )
     finalize_current = SubmitField("Finalize current upload")
     replace_and_finalize = SubmitField("Upload replacement and finalize")
+
+
+class FileBinUploadForm(FlaskForm):
+    access_code = PasswordField("Emergency code", validators=[DataRequired(), Length(max=128)])
+    staff_name = StringField("Staff name", validators=[DataRequired(), Length(max=120)])
+    room = StringField("Room or location", validators=[Optional(), Length(max=120)])
+    student_identifier = StringField("Student / essay identifier", validators=[DataRequired(), Length(max=255)])
+    note = TextAreaField("Note", validators=[Optional(), Length(max=5000)])
+    file = FileField(
+        "File",
+        validators=[
+            FileRequired(message="Please select a file."),
+            FileAllowed(FILE_BIN_ALLOWED_EXTENSIONS, "Allowed files: PDF, DOCX, ODT, TXT, RTF."),
+        ],
+    )
+    submit = SubmitField("Send file")
+
+
+class FileBinSettingsForm(FlaskForm):
+    enabled = BooleanField("Enable emergency File Bin")
+    access_code = PasswordField("Emergency code", validators=[Optional(), Length(max=128)])
+    submit = SubmitField("Save File Bin settings")
 
 
 class DashboardSettingsForm(FlaskForm):

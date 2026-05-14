@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}File Bin · Admin · IPO{% endblock %}
+
+{% block main_class %}container-wide{% endblock %}
+
+{% block content %}
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>File Bin</h2>
+      <div class="table-actions">
+        {% if enabled and configured %}
+          <span class="status-tag success">Open</span>
+        {% else %}
+          <span class="status-tag warning">Closed</span>
+        {% endif %}
+        <span class="status-tag">{{ unreviewed_count }} unreviewed</span>
+        <a class="button-link" href="{{ url_for('web.file_bin') }}" target="_blank" rel="noopener">Open public page</a>
+      </div>
+    </div>
+    <p class="fine-print">Emergency files are stored separately from official essay uploads. Download and review them here, then use the existing essay override flow only when needed.</p>
+
+    <form method="post" class="form-grid" novalidate>
+      {{ settings_form.hidden_tag() }}
+      <input type="hidden" name="action" value="settings">
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ settings_form.enabled() }}
+          {{ settings_form.enabled.label.text }}
+        </label>
+        {% for error in settings_form.enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        {{ settings_form.access_code.label }}
+        {{ settings_form.access_code(autocomplete="new-password") }}
+        <span class="form-help">Leave blank to keep the current code. Required before enabling.</span>
+        {% for error in settings_form.access_code.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field">
+        <label>Limits</label>
+        <div class="fine-print">PDF, DOCX, ODT, TXT, RTF · max {{ max_upload_mb }} MB</div>
+      </div>
+      <div class="form-actions full-width">
+        {{ settings_form.submit(class_="button") }}
+      </div>
+    </form>
+  </div>
+
+  <div class="table-card table-card-wide">
+    <div class="table-header">
+      <h2>Received files</h2>
+    </div>
+
+    {% if uploads %}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Received</th>
+            <th>Staff</th>
+            <th>Room</th>
+            <th>Student / essay</th>
+            <th>File</th>
+            <th>Note</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for upload in uploads %}
+            <tr>
+              <td>#{{ upload.id }}</td>
+              <td>{{ upload.created_at.strftime('%Y-%m-%d %H:%M') if upload.created_at else '—' }}</td>
+              <td>{{ upload.staff_name }}</td>
+              <td>{{ upload.room or '—' }}</td>
+              <td>{{ upload.student_identifier }}</td>
+              <td>
+                <a href="{{ url_for('web.admin_file_bin_download', upload_id=upload.id) }}">{{ upload.original_filename }}</a>
+                <div class="fine-print">
+                  {% if upload.file_size is not none %}
+                    {{ "%.1f"|format(upload.file_size / 1024) }} KB
+                  {% else %}
+                    Size unknown
+                  {% endif %}
+                </div>
+              </td>
+              <td>{{ upload.note or '—' }}</td>
+              <td>
+                {% if upload.reviewed %}
+                  <span class="status-tag success">Reviewed</span>
+                  {% if upload.reviewed_at %}
+                    <div class="fine-print">{{ upload.reviewed_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                  {% endif %}
+                  {% if upload.reviewed_by %}
+                    <div class="fine-print">{{ upload.reviewed_by }}</div>
+                  {% endif %}
+                {% else %}
+                  <span class="status-tag warning">Unreviewed</span>
+                {% endif %}
+                {% if upload.admin_note %}
+                  <div class="fine-print">Admin note: {{ upload.admin_note }}</div>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" class="form-grid" style="gap: 0.5rem; min-width: 12rem;">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="mark_reviewed">
+                  <input type="hidden" name="upload_id" value="{{ upload.id }}">
+                  <input type="hidden" name="reviewed" value="{{ 0 if upload.reviewed else 1 }}">
+                  <textarea name="admin_note" rows="2" placeholder="Admin note">{{ upload.admin_note or '' }}</textarea>
+                  <button type="submit" class="button-link">
+                    {% if upload.reviewed %}Reopen{% else %}Mark reviewed{% endif %}
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="fine-print">No emergency files have been received.</p>
+    {% endif %}
+  </div>
+{% endblock %}

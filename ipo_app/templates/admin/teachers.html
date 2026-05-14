@@ -100,6 +100,14 @@
                 <a
                   class="action-menu__item"
                   data-action-menu-item
+                  href="{{ url_for('web.admin_teacher_scores', teacher_id=teacher.id) }}"
+                  role="menuitem"
+                >
+                  Scores
+                </a>
+                <a
+                  class="action-menu__item"
+                  data-action-menu-item
                   href="{{ url_for('web.edit_teacher', teacher_id=teacher.id) }}"
                   role="menuitem"
                 >

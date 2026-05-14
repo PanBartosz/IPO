@@ -160,6 +160,32 @@ class StaticPageAttachment(db.Model, TimestampMixin):
     )
 
 
+class FileBinUpload(db.Model, TimestampMixin):
+    __tablename__ = "file_bin_uploads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    staff_name = db.Column(db.String(120), nullable=False)
+    room = db.Column(db.String(120), nullable=True)
+    student_identifier = db.Column(db.String(255), nullable=False)
+    note = db.Column(db.Text, nullable=True)
+    original_filename = db.Column(db.String(255), nullable=False)
+    stored_filename = db.Column(db.String(255), nullable=False, unique=True)
+    content_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    submitted_ip = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+    reviewed = db.Column(db.Boolean, nullable=False, default=False)
+    reviewed_by = db.Column(db.String(120), nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    admin_note = db.Column(db.Text, nullable=True)
+
+    __table_args__ = (
+        db.Index("ix_file_bin_upload_reviewed", "reviewed"),
+        db.Index("ix_file_bin_upload_created_at", "created_at"),
+        db.Index("ix_file_bin_upload_student_identifier", "student_identifier"),
+    )
+
+
 class SurveyStatus(enum.StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"

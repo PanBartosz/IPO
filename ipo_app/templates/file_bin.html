@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Emergency File Bin · IPO{% endblock %}
+
+{% block content %}
+  <div class="table-card">
+    <div class="table-header">
+      <h2>Emergency File Bin</h2>
+      {% if enabled and configured %}
+        <span class="status-tag success">Open</span>
+      {% else %}
+        <span class="status-tag warning">Closed</span>
+      {% endif %}
+    </div>
+
+    {% if enabled and configured %}
+      <p class="fine-print">Files sent here are held for admin review and do not replace official essay submissions.</p>
+      <form method="post" class="form-grid" enctype="multipart/form-data" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="form-field">
+          {{ form.access_code.label }}
+          {{ form.access_code(autocomplete="off") }}
+          {% for error in form.access_code.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-field">
+          {{ form.staff_name.label }}
+          {{ form.staff_name(autocomplete="name") }}
+          {% for error in form.staff_name.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-field">
+          {{ form.room.label }}
+          {{ form.room(autocomplete="off") }}
+          {% for error in form.room.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-field">
+          {{ form.student_identifier.label }}
+          {{ form.student_identifier(autocomplete="off") }}
+          {% for error in form.student_identifier.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-field full-width">
+          {{ form.file.label }}
+          {{ form.file() }}
+          <span class="form-help">PDF, DOCX, ODT, TXT, or RTF. Max {{ max_upload_mb }} MB.</span>
+          {% for error in form.file.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-field full-width">
+          {{ form.note.label }}
+          {{ form.note(rows=4) }}
+          {% for error in form.note.errors %}
+            <div class="field-error">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="form-actions">
+          {{ form.submit(class_="button") }}
+        </div>
+      </form>
+    {% else %}
+      <p>Emergency File Bin is currently unavailable.</p>
+    {% endif %}
+  </div>
+{% endblock %}

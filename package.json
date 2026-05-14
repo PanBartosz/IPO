@@ -1,0 +1,12 @@
+{
+  "name": "ipo-e2e-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e:file-bin": "node scripts/e2e_file_bin.mjs",
+    "e2e:teacher-scores": "node scripts/e2e_teacher_scores.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.59.1"
+  }
+}

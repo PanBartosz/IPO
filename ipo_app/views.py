@@ -66,6 +66,8 @@ from .forms import (
     TeacherRegistrationForm,
     DelegationInviteForm,
     DelegationLeaderInviteForm,
+    FileBinSettingsForm,
+    FileBinUploadForm,
     AdminDelegationInvitationForm,
     AdminInvitationForm,
     AdminInvitationBatchUploadForm,
@@ -91,6 +93,7 @@ from .forms import (
     StaticPageForm,
     Stage3PacketForm,
     GradesExportForm,
+    FILE_BIN_ALLOWED_EXTENSIONS,
     LANGUAGE_CHOICES,
     INVITATION_BATCH_TYPE_CHOICES,
 )
@@ -134,6 +137,7 @@ from .models import (
     CommunicationRecipientRole,
     CommunicationRecipientStatus,
     EssayUpload,
+    FileBinUpload,
     StaticPage,
     StaticPageAttachment,
 )
@@ -159,6 +163,7 @@ ADMIN_MODULES = [
     ("Messages", "web.admin_messages"),
     ("Communication", "web.admin_communications"),
     ("Static pages", "web.admin_static_pages"),
+    ("File bin", "web.admin_file_bin"),
     ("Grades export", "web.admin_grades_export"),
     ("Surveys", "web.admin_surveys"),
     ("Logs", "web.admin_logs"),
@@ -411,6 +416,8 @@ SETTING_STAGE1_LOCK = "grading_stage1_locked"
 SETTING_STAGE2_LOCK = "grading_stage2_locked"
 SETTING_UPLOAD_MODULE_ENABLED = "essay_upload_enabled"
 SETTING_UPLOAD_LOCK = "upload_locked"
+SETTING_FILE_BIN_ENABLED = "file_bin_enabled"
+SETTING_FILE_BIN_ACCESS_CODE_HASH = "file_bin_access_code_hash"
 SETTING_EVENT_END = "event_end"
 SETTING_EVENT_END_OVERRIDE = "event_end_override"
 SETTING_PACKET_PRINT_MODE = "packet_print_mode"
@@ -447,6 +454,7 @@ DEFAULT_ACCOMMODATION_INFO_HTML = (
 
 UPLOAD_ALLOWED_EXTENSIONS = {"pdf"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+FILE_BIN_MAX_UPLOAD_SIZE = MAX_UPLOAD_SIZE
 STATIC_PAGE_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 PUBLIC_RICH_TEXT_TAGS = {
     "a",
@@ -1518,6 +1526,92 @@ def _delete_static_page_attachment_file(stored_filename: str | None) -> None:
         current_app.logger.warning("Failed to remove static page attachment file: %s", file_path)
 
 
+def _file_bin_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_FILE_BIN_ENABLED, "false"))
+
+
+def _file_bin_access_configured() -> bool:
+    return bool((_get_setting(SETTING_FILE_BIN_ACCESS_CODE_HASH) or "").strip())
+
+
+def _file_bin_access_code_matches(submitted_code: str | None) -> bool:
+    stored_hash = (_get_setting(SETTING_FILE_BIN_ACCESS_CODE_HASH) or "").strip()
+    if not stored_hash or not submitted_code:
+        return False
+    return check_password_hash(stored_hash, submitted_code.strip())
+
+
+def _get_file_bin_folder() -> Path:
+    folder = Path(
+        current_app.config.get(
+            "FILE_BIN_UPLOAD_FOLDER",
+            _get_upload_folder() / "file-bin",
+        )
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _file_bin_upload_path(upload: FileBinUpload) -> Path:
+    return _get_file_bin_folder() / upload.stored_filename
+
+
+def _uploaded_file_size(upload) -> int | None:
+    try:
+        upload.seek(0, os.SEEK_END)
+        size = upload.tell()
+        upload.seek(0)
+        return int(size)
+    except (OSError, ValueError):
+        try:
+            upload.seek(0)
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+def _save_file_bin_upload(form: FileBinUploadForm) -> FileBinUpload:
+    upload = form.file.data
+    safe_filename = secure_filename(upload.filename or "")
+    if not safe_filename:
+        raise ValueError("File name is invalid.")
+
+    suffix = Path(safe_filename).suffix.lower()
+    allowed_suffixes = {f".{extension}" for extension in FILE_BIN_ALLOWED_EXTENSIONS}
+    if suffix not in allowed_suffixes:
+        raise ValueError("Allowed files: PDF, DOCX, ODT, TXT, RTF.")
+
+    file_size = _uploaded_file_size(upload)
+    if file_size is not None and file_size > FILE_BIN_MAX_UPLOAD_SIZE:
+        raise ValueError("File too large (max 50 MB).")
+
+    stored_filename = (
+        f"file-bin-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-"
+        f"{secrets.token_hex(8)}{suffix}"
+    )
+    upload.save(_get_file_bin_folder() / stored_filename)
+
+    record = FileBinUpload(
+        staff_name=form.staff_name.data.strip(),
+        room=(form.room.data or "").strip() or None,
+        student_identifier=form.student_identifier.data.strip(),
+        note=(form.note.data or "").strip() or None,
+        original_filename=safe_filename,
+        stored_filename=stored_filename,
+        content_type=(upload.mimetype or None),
+        file_size=file_size,
+        submitted_ip=request.remote_addr,
+        user_agent=(request.user_agent.string or "")[:255] or None,
+    )
+    db.session.add(record)
+    db.session.flush()
+    return record
+
+
+def _populate_file_bin_settings_form(form: FileBinSettingsForm) -> None:
+    form.enabled.data = _file_bin_enabled()
+    form.access_code.data = ""
+
 
 def _get_active_batch(stage: Stage) -> AssignmentBatch | None:
     return (
@@ -1777,6 +1871,216 @@ def _stage_assessors(assignment: EssayAssignment | None, stage: Stage, include_g
         seen.add(teacher.id)
 
     return assessors
+
+
+def _score_record_for_assignment_reader(
+    assignment: EssayAssignment,
+    teacher_id: int,
+    stage: Stage,
+) -> EssayScore | None:
+    for score_record in assignment.scores:
+        if score_record.teacher_id == teacher_id and score_record.stage == stage:
+            return score_record
+
+    return (
+        EssayScore.query.filter_by(
+            student_id=assignment.student_id,
+            teacher_id=teacher_id,
+            stage=stage,
+        )
+        .order_by(EssayScore.id.desc())
+        .first()
+    )
+
+
+def _teacher_score_rows(teacher: Teacher, stage: Stage) -> tuple[list[SimpleNamespace], AssignmentBatch | None]:
+    active_batch = _get_active_batch(Stage.STAGE_1)
+    if not active_batch:
+        return [], None
+
+    query = (
+        EssayAssignment.query.options(
+            joinedload(EssayAssignment.student),
+            joinedload(EssayAssignment.batch),
+            joinedload(EssayAssignment.group)
+            .joinedload(ReadingGroup.members)
+            .joinedload(ReadingGroupMember.teacher),
+            joinedload(EssayAssignment.extra_readers).joinedload(EssayAssignmentExtraReader.teacher),
+            joinedload(EssayAssignment.scores),
+        )
+        .filter(
+            EssayAssignment.batch_id == active_batch.id,
+            EssayAssignment.stage == Stage.STAGE_1,
+        )
+        .order_by(EssayAssignment.student_id.asc(), EssayAssignment.id.asc())
+    )
+    if stage == Stage.STAGE_2:
+        query = query.filter(EssayAssignment.stage_two_candidate.is_(True))
+
+    assignments = query.all()
+    global_stage_locked = _is_stage_locked(stage)
+    rows: list[SimpleNamespace] = []
+
+    for assignment in assignments:
+        student = assignment.student
+        if not student or student.is_absent:
+            continue
+
+        assessor = next(
+            (
+                entry
+                for entry in _stage_assessors(assignment, stage, include_group=stage == Stage.STAGE_1)
+                if entry.teacher_id == teacher.id
+            ),
+            None,
+        )
+        if not assessor:
+            continue
+
+        score_record = _score_record_for_assignment_reader(assignment, teacher.id, stage)
+        pdf_available = _essay_pdf_path(student) is not None
+        assignment_locked = assignment.stage1_locked if stage == Stage.STAGE_1 else assignment.stage2_locked
+        status_info = _resolve_portal_status(
+            student,
+            score_record,
+            pdf_available,
+            locked=assignment_locked or global_stage_locked,
+        )
+        group_label = assignment.group.name if assignment.group else "—"
+        source_label = "Stage 2 reader" if stage == Stage.STAGE_2 else ("Extra reader" if assessor.is_extra else "Group")
+        rows.append(
+            SimpleNamespace(
+                assignment=assignment,
+                student=student,
+                teacher=teacher,
+                stage=stage,
+                score_record=score_record,
+                score=score_record.score if score_record else None,
+                score_value=(
+                    format_score_value(score_record.score)
+                    if score_record and score_record.score is not None
+                    else ""
+                ),
+                group_label=group_label,
+                source_label=source_label,
+                status_info=status_info,
+                updated_at=score_record.updated_at if score_record else None,
+                submitted_at=score_record.submitted_at if score_record else None,
+                finalized=bool(score_record.teacher_finalized) if score_record else False,
+                student_scoring_url=(
+                    url_for("web.admin_score_student", student_id=student.id)
+                    if stage == Stage.STAGE_1
+                    else url_for("web.admin_stage2_score_student", student_id=student.id)
+                ),
+            )
+        )
+
+    rows.sort(key=lambda row: (row.student.id, row.assignment.id))
+    return rows, active_batch
+
+
+def _save_teacher_score_rows(teacher: Teacher, stage: Stage, rows: list[SimpleNamespace]) -> bool:
+    pending_updates: list[tuple[SimpleNamespace, float]] = []
+    invalid_entries: list[int] = []
+
+    for row in rows:
+        field_name = f"score_{row.assignment.id}"
+        value = request.form.get(field_name, "").strip()
+        if not value:
+            continue
+
+        score_value, score_error = parse_score_value(value)
+        if score_error or score_value is None:
+            invalid_entries.append(row.student.id)
+            continue
+
+        numeric = float(score_value)
+        existing_score = row.score_record.score if row.score_record and row.score_record.score is not None else None
+        if existing_score is not None and math.isclose(existing_score, numeric, abs_tol=1e-9):
+            continue
+
+        pending_updates.append((row, numeric))
+
+    if invalid_entries:
+        essay_ids = ", ".join(str(essay_id) for essay_id in invalid_entries)
+        flash(f"Invalid score for essay ID(s): {essay_ids}. {SCORE_VALIDATION_MESSAGE}", "error")
+        return False
+
+    if not pending_updates:
+        flash("No score changes detected.", "info")
+        return False
+
+    now = datetime.utcnow()
+    updates: list[dict[str, Any]] = []
+    changed_stage1_assignments: dict[int, EssayAssignment] = {}
+
+    for row, numeric in pending_updates:
+        score_record = row.score_record
+        if score_record is None:
+            score_record = EssayScore(
+                student_id=row.student.id,
+                teacher_id=teacher.id,
+                assignment=row.assignment,
+                stage=stage,
+            )
+            db.session.add(score_record)
+            row.score_record = score_record
+        elif score_record.assignment_id != row.assignment.id:
+            score_record.assignment = row.assignment
+
+        previous_score = score_record.score
+        prev_admin_entered = bool(score_record.admin_entered)
+        prev_admin_override = bool(score_record.admin_override)
+        had_teacher_input = bool(score_record.submitted_at) or bool(score_record.teacher_finalized)
+
+        score_record.score = numeric
+        score_record.admin_updated_at = now
+        if had_teacher_input and not prev_admin_override and not prev_admin_entered:
+            score_record.admin_override = True
+            score_record.admin_entered = False
+        elif prev_admin_override:
+            score_record.admin_override = True
+            score_record.admin_entered = False
+        else:
+            score_record.admin_entered = True
+            score_record.admin_override = False
+
+        score_record.teacher_finalized = False
+        score_record.teacher_finalized_at = None
+
+        updates.append(
+            {
+                "assignment_id": row.assignment.id,
+                "student_id": row.student.id,
+                "previous_score": previous_score,
+                "score": numeric,
+                "admin_entered": bool(score_record.admin_entered),
+                "admin_override": bool(score_record.admin_override),
+            }
+        )
+        if stage == Stage.STAGE_1:
+            changed_stage1_assignments[row.assignment.id] = row.assignment
+
+    if changed_stage1_assignments:
+        db.session.flush()
+        for assignment in changed_stage1_assignments.values():
+            db.session.expire(assignment, ["scores"])
+            _apply_stage_one_rules(assignment)
+
+    log_activity(
+        "teacher_scores_updated",
+        f"{STAGE_LABELS.get(stage, stage.value)} scores updated for teacher {teacher.id}",
+        object_type="teacher",
+        object_id=teacher.id,
+        details={
+            "stage": stage.value,
+            "teacher_id": teacher.id,
+            "updates": updates,
+        },
+    )
+    db.session.commit()
+    flash(f"{STAGE_LABELS.get(stage, stage.value)} scores saved.", "success")
+    return True
 
 
 GRADE_STAGE_SLOTS = {
@@ -5719,6 +6023,61 @@ def static_page_attachment_download(slug: str, attachment_id: int):
     return response
 
 
+@web_bp.route("/file-bin", methods=["GET", "POST"])
+def file_bin():
+    form = FileBinUploadForm()
+    enabled = _file_bin_enabled()
+    configured = _file_bin_access_configured()
+
+    if request.method == "POST" and (not enabled or not configured):
+        flash("Emergency File Bin is not available right now.", "error")
+        return redirect(url_for("web.file_bin"))
+
+    if form.validate_on_submit():
+        if not _file_bin_access_code_matches(form.access_code.data):
+            log_activity(
+                "file_bin_upload_rejected",
+                "File Bin upload rejected because the emergency code was invalid",
+                details={
+                    "staff_name": form.staff_name.data.strip(),
+                    "student_identifier": form.student_identifier.data.strip(),
+                    "remote_addr": request.remote_addr,
+                },
+            )
+            db.session.commit()
+            flash("Invalid emergency code.", "error")
+        else:
+            try:
+                upload = _save_file_bin_upload(form)
+            except ValueError as exc:
+                form.file.errors.append(str(exc))
+            else:
+                log_activity(
+                    "file_bin_upload_received",
+                    f"Emergency file received for {upload.student_identifier}",
+                    object_type="file_bin_upload",
+                    object_id=upload.id,
+                    details={
+                        "staff_name": upload.staff_name,
+                        "room": upload.room,
+                        "student_identifier": upload.student_identifier,
+                        "original_filename": upload.original_filename,
+                        "file_size": upload.file_size,
+                    },
+                )
+                db.session.commit()
+                flash(f"File received. Reference: File Bin #{upload.id}.", "success")
+                return redirect(url_for("web.file_bin"))
+
+    return render_template(
+        "file_bin.html",
+        form=form,
+        enabled=enabled,
+        configured=configured,
+        max_upload_mb=FILE_BIN_MAX_UPLOAD_SIZE // (1024 * 1024),
+    )
+
+
 @web_bp.route("/admin/login", methods=["GET", "POST"])
 @limiter.limit(LOGIN_RATE_LIMIT_PER_IP, key_func=_rate_limit_ip, methods=["POST"])
 @limiter.limit(LOGIN_RATE_LIMIT_PER_USERNAME, key_func=_rate_limit_username, methods=["POST"])
@@ -7909,6 +8268,123 @@ def admin_export_essays():
         details={"finalized_only": only_finalized},
     )
     return send_file(zip_buffer, as_attachment=True, download_name=filename, mimetype="application/zip")
+
+
+@web_bp.route("/admin/file-bin", methods=["GET", "POST"])
+def admin_file_bin():
+    admin_user = _current_admin()
+    if not admin_user:
+        abort(403)
+
+    settings_form = FileBinSettingsForm()
+    action = request.form.get("action", "") if request.method == "POST" else ""
+
+    if request.method == "POST":
+        if action == "settings":
+            if settings_form.validate_on_submit():
+                enabled = bool(settings_form.enabled.data)
+                new_code = (settings_form.access_code.data or "").strip()
+                has_existing_code = _file_bin_access_configured()
+                if enabled and not (new_code or has_existing_code):
+                    settings_form.access_code.errors.append("Set an emergency code before enabling File Bin.")
+                else:
+                    _set_setting(SETTING_FILE_BIN_ENABLED, "true" if enabled else "false")
+                    if new_code:
+                        _set_setting(SETTING_FILE_BIN_ACCESS_CODE_HASH, generate_password_hash(new_code))
+                    log_activity(
+                        "file_bin_settings_updated",
+                        "File Bin settings updated",
+                        actor=admin_user,
+                        details={
+                            "enabled": enabled,
+                            "code_rotated": bool(new_code),
+                        },
+                    )
+                    db.session.commit()
+                    flash("File Bin settings saved.", "success")
+                    return redirect(url_for("web.admin_file_bin"))
+        elif action == "mark_reviewed":
+            upload_id = request.form.get("upload_id", type=int)
+            upload = db.session.get(FileBinUpload, upload_id) if upload_id else None
+            if not upload:
+                abort(404)
+            reviewed = request.form.get("reviewed") == "1"
+            upload.reviewed = reviewed
+            upload.reviewed_by = admin_user if reviewed else None
+            upload.reviewed_at = datetime.utcnow() if reviewed else None
+            upload.admin_note = (request.form.get("admin_note") or "").strip()[:5000] or None
+            log_activity(
+                "file_bin_upload_reviewed",
+                f"File Bin upload {upload.id} marked {'reviewed' if reviewed else 'unreviewed'}",
+                actor=admin_user,
+                object_type="file_bin_upload",
+                object_id=upload.id,
+                details={
+                    "reviewed": reviewed,
+                    "student_identifier": upload.student_identifier,
+                    "original_filename": upload.original_filename,
+                },
+            )
+            db.session.commit()
+            flash("File Bin upload updated.", "success")
+            return redirect(url_for("web.admin_file_bin"))
+        else:
+            flash("Unknown File Bin action.", "error")
+            return redirect(url_for("web.admin_file_bin"))
+    else:
+        _populate_file_bin_settings_form(settings_form)
+
+    uploads = (
+        FileBinUpload.query.order_by(
+            FileBinUpload.reviewed.asc(),
+            FileBinUpload.created_at.desc(),
+            FileBinUpload.id.desc(),
+        )
+        .all()
+    )
+    return render_template(
+        "admin/file_bin.html",
+        settings_form=settings_form,
+        uploads=uploads,
+        enabled=_file_bin_enabled(),
+        configured=_file_bin_access_configured(),
+        max_upload_mb=FILE_BIN_MAX_UPLOAD_SIZE // (1024 * 1024),
+        unreviewed_count=sum(1 for upload in uploads if not upload.reviewed),
+    )
+
+
+@web_bp.route("/admin/file-bin/<int:upload_id>/download")
+def admin_file_bin_download(upload_id: int):
+    admin_user = _current_admin()
+    if not admin_user:
+        abort(403)
+
+    upload = db.session.get(FileBinUpload, upload_id)
+    if not upload:
+        abort(404)
+    file_path = _file_bin_upload_path(upload)
+    if not file_path.exists():
+        abort(404)
+
+    guessed_type, _ = mimetypes.guess_type(upload.original_filename or "")
+    log_activity(
+        "file_bin_upload_downloaded",
+        f"File Bin upload {upload.id} downloaded",
+        actor=admin_user,
+        object_type="file_bin_upload",
+        object_id=upload.id,
+        details={
+            "student_identifier": upload.student_identifier,
+            "original_filename": upload.original_filename,
+        },
+    )
+    db.session.commit()
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name=upload.original_filename,
+        mimetype=upload.content_type or guessed_type or "application/octet-stream",
+    )
 
 
 @web_bp.route("/admin/help")
@@ -11356,6 +11832,44 @@ def admin_teachers():
     )
 
 
+@web_bp.route("/admin/teachers/<int:teacher_id>/scores", methods=["GET", "POST"])
+def admin_teacher_scores(teacher_id: int):
+    if not _current_admin():
+        abort(403)
+    teacher = db.session.get(Teacher, teacher_id)
+    if not teacher:
+        abort(404)
+
+    stage1_rows, active_batch = _teacher_score_rows(teacher, Stage.STAGE_1)
+    stage2_rows, _ = _teacher_score_rows(teacher, Stage.STAGE_2)
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        stage_value = request.form.get("stage")
+        try:
+            stage = Stage(stage_value)
+        except (TypeError, ValueError):
+            abort(400)
+
+        if action != "update_scores":
+            abort(400)
+
+        rows = stage1_rows if stage == Stage.STAGE_1 else stage2_rows
+        _save_teacher_score_rows(teacher, stage, rows)
+        return redirect(url_for("web.admin_teacher_scores", teacher_id=teacher.id, _anchor=f"{stage.value}-scores"))
+
+    return render_template(
+        "admin/teacher_scores.html",
+        teacher=teacher,
+        active_batch=active_batch,
+        stage1_rows=stage1_rows,
+        stage2_rows=stage2_rows,
+        score_choices=score_choices(include_blank=False),
+        Stage=Stage,
+        STAGE_LABELS=STAGE_LABELS,
+    )
+
+
 def _delegation_leader_choices() -> list[tuple[int, str]]:
     leaders = (
         Teacher.query.filter(Teacher.delegation_leader.is_(True))
@@ -13356,6 +13870,8 @@ def admin_essay_override(student_id: int):
 
 @web_bp.route("/admin/students/cards.pdf")
 def admin_student_cards_pdf():
+    if not _current_admin():
+        abort(403)
     active_batch = _get_active_batch(Stage.STAGE_1)
     if not active_batch:
         flash("Publish a Stage 1 batch before generating cards.", "error")
@@ -13425,6 +13941,8 @@ def admin_teacher_cards_pdf():
 
 @web_bp.route("/admin/students/access-table.pdf")
 def admin_student_access_table_pdf():
+    if not _current_admin():
+        abort(403)
     entries = _student_access_table_entries()
     response = _render_pdf(
         "admin/pdf/access_table.html",

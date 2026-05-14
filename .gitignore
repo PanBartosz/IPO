@@ -9,6 +9,7 @@
 __pycache__/
 .pytest_cache/
 /.venv/
+/node_modules/
 /migrations/__pycache__/
 /ipo_app/__pycache__/
 /scripts/__pycache__/
