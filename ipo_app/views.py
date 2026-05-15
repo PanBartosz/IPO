@@ -14261,6 +14261,8 @@ def admin_score_student(student_id: int):
             flash("No score changes detected.", "info")
             return _post_response()
 
+        db.session.flush()
+        db.session.expire(assignment, ["scores"])
         _apply_stage_one_rules(assignment)
         log_activity(
             "stage1_scores_updated",
@@ -15700,6 +15702,7 @@ def admin_stage3_packets():
                             "essay_ids": essay_ids_for_table,
                         },
                     )
+                    db.session.commit()
                     if missing_files:
                         flash(
                             "Some essays are missing uploads: " + ", ".join(str(sid) for sid in sorted(set(missing_files))),
