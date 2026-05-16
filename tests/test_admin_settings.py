@@ -68,6 +68,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             stage2_deadline="2026-04-05T11:45",
             event_end="2026-04-10T18:30",
             event_end_override="force_open",
+            delegation_essay_downloads_enabled="y",
             stage1_sla="12",
             stage2_sla="36",
             packet_print_mode="double",
@@ -87,6 +88,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
             accommodation_info_html="  <p>Accommodation</p>  ",
             essay_upload_enabled="y",
             teacher_portal_enabled="y",
+            teacher_assessment_access_enabled="y",
             student_temporary_access_login_enabled="y",
             teacher_temporary_access_login_enabled="y",
             registration_invite_only="y",
@@ -107,6 +109,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_STAGE2_DEADLINE).value == "2026-04-05T11:45"
         assert _setting_row(views.SETTING_EVENT_END).value == "2026-04-10T18:30"
         assert _setting_row(views.SETTING_EVENT_END_OVERRIDE).value == "force_open"
+        assert _setting_row(views.SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED).value == "true"
         assert _setting_row(views.SETTING_STAGE1_SLA).value == "12"
         assert _setting_row(views.SETTING_STAGE2_SLA).value == "36"
         assert _setting_row(views.SETTING_PACKET_PRINT_MODE).value == "double"
@@ -127,6 +130,7 @@ def test_admin_settings_persists_core_options_and_normalizes_blank_email_templat
         assert _setting_row(views.SETTING_ACCOMMODATION_INFO_HTML).value == "<p>Accommodation</p>"
         assert _setting_row(views.SETTING_UPLOAD_MODULE_ENABLED).value == "true"
         assert _setting_row(views.SETTING_TEACHER_PORTAL_ENABLED).value == "true"
+        assert _setting_row(views.SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED).value == "true"
         assert _setting_row(views.SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED).value == "true"
         assert _setting_row(views.SETTING_TEACHER_TEMPORARY_ACCESS_LOGIN_ENABLED).value == "true"
         assert _setting_row(views.SETTING_REGISTRATION_INVITE_ONLY).value == "true"
@@ -164,17 +168,44 @@ def test_admin_settings_rejects_showing_blank_essay_topics(client, csrf_token):
         assert _setting_row(views.SETTING_ESSAY_TOPICS_HTML) is None
 
 
+def test_admin_settings_persists_visibility_controls_when_unchecked(client, csrf_token):
+    _login_admin_session(client)
+
+    with client.application.app_context():
+        views._set_setting(views.SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED, "true")
+        views._set_setting(views.SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED, "true")
+        db.session.commit()
+
+    token = csrf_token(client.get("/admin/settings"))
+    response = client.post(
+        "/admin/settings",
+        data=_settings_payload(token),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/settings")
+
+    with client.application.app_context():
+        assert _setting_row(views.SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED).value == "false"
+        assert _setting_row(views.SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED).value == "false"
+
+
 def test_settings_helpers_fall_back_to_safe_defaults_for_invalid_values(client):
     with client.application.app_context():
         views._set_setting(views.SETTING_ESSAY_WORD_LIMIT, "not-a-number")
         views._set_setting(views.SETTING_ESSAY_WORD_LIMIT_MODE, "mystery")
         views._set_setting(views.SETTING_EVENT_END_OVERRIDE, "unknown")
+        views._set_setting(views.SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED, "unexpected")
+        views._set_setting(views.SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED, "unexpected")
         views._set_setting(views.SETTING_PACKET_PRINT_MODE, "duplex-ish")
         db.session.commit()
 
         assert views._essay_word_limit() == views.DEFAULT_ESSAY_WORD_LIMIT
         assert views._essay_word_limit_mode() == views.DEFAULT_ESSAY_WORD_LIMIT_MODE
         assert views._event_end_override() == "auto"
+        assert views._delegation_essay_downloads_enabled() is False
+        assert views._teacher_assessment_access_enabled() is False
         assert views._packets_double_sided() is False
 
         views._set_setting(views.SETTING_ESSAY_WORD_LIMIT, "0")
@@ -321,6 +352,52 @@ def test_admin_settings_shows_safe_folded_login_diagnostics(client):
     assert "Folded Username Uniqueness Check" in html
     assert "Students:</strong> 0 usernames checked. No folded conflicts found." in html
     assert "Teachers:</strong> 0 usernames checked. No folded conflicts found." in html
+
+
+def test_admin_settings_shows_delegation_essay_visibility_state(client):
+    _login_admin_session(client)
+
+    response = client.get("/admin/settings")
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Delegation leader essay visibility:" in html
+    assert "Delegation leaders cannot currently download essays." in html
+
+    with client.application.app_context():
+        views._set_setting(views.SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED, "true")
+        db.session.commit()
+
+    response = client.get("/admin/settings")
+    html = response.get_data(as_text=True)
+    assert "Delegation leaders can currently download finalized essays from their own delegation." in html
+
+
+def test_admin_settings_shows_teacher_assessment_visibility_state(client):
+    _login_admin_session(client)
+
+    response = client.get("/admin/settings")
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Teacher essay and grade visibility:" in html
+    assert "Teachers cannot currently see assigned essays or grades because the teacher portal is disabled." in html
+
+    with client.application.app_context():
+        views._set_setting(views.SETTING_TEACHER_PORTAL_ENABLED, "true")
+        db.session.commit()
+
+    response = client.get("/admin/settings")
+    html = response.get_data(as_text=True)
+    assert "Teachers can currently see assigned essays and their own grades." in html
+
+    with client.application.app_context():
+        views._set_setting(views.SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED, "false")
+        db.session.commit()
+
+    response = client.get("/admin/settings")
+    html = response.get_data(as_text=True)
+    assert "Teachers cannot currently see assigned essays or grades." in html
 
 
 def test_event_access_overrides_control_downloads_and_notice_text(client):

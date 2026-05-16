@@ -32,9 +32,10 @@ def _login_teacher_portal(client, csrf_token, username: str, password: str) -> N
     assert response.status_code == 302
 
 
-def test_delegation_leader_download_blocked_before_event_end(client, csrf_token):
+def test_delegation_leader_download_blocked_until_manual_enable(client, csrf_token):
     with client.application.app_context():
         _set_setting("teacher_portal_enabled", "true")
+        _set_setting("event_end_override", "force_end")
 
         teacher = Teacher(
             country="Testland",
@@ -79,10 +80,59 @@ def test_delegation_leader_download_blocked_before_event_end(client, csrf_token)
     assert response.headers["Location"].startswith("/teacher/delegation/essays")
 
 
+def test_delegation_leader_download_allowed_after_manual_enable(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        _set_setting("delegation_essay_downloads_enabled", "true")
+
+        teacher = Teacher(
+            country="Testland",
+            first_name="Leader",
+            last_name="Allowed",
+            email="leader.allowed@example.test",
+            school="Test School",
+            languages="English",
+            meal_preference="No preference",
+            tshirt_size="M",
+            delegation_leader=True,
+            portal_username="leader-allowed",
+            portal_password_hash=generate_password_hash("teacher-pass"),
+        )
+        db.session.add(teacher)
+
+        student = Student(
+            country="Testland",
+            first_name="Student",
+            last_name="Allowed",
+            email="student.allowed@example.test",
+            school="Test School",
+            date_of_birth=date(2000, 1, 1),
+            essay_language="English",
+            keyboard_preference="QWERTY",
+            meal_preference="No preference",
+            uploaded_filename="student-allowed.pdf",
+            uploaded_at=datetime.utcnow(),
+            essay_finalized=True,
+            essay_finalized_at=datetime.utcnow(),
+        )
+        db.session.add(student)
+        db.session.commit()
+
+        upload_folder = Path(client.application.config["UPLOAD_FOLDER"])
+        (upload_folder / student.uploaded_filename).write_bytes(b"%PDF-1.4\n% delegation\n%%EOF\n")
+
+    _login_teacher_portal(client, csrf_token, "leader-allowed", "teacher-pass")
+
+    response = client.get(f"/teacher/delegation/essays/{student.id}/download", follow_redirects=False)
+    assert response.status_code == 200
+    assert "application/pdf" in response.headers.get("Content-Type", "")
+    assert "attachment" in response.headers.get("Content-Disposition", "")
+
+
 def test_delegation_leader_cannot_download_cross_country_essays(client, csrf_token):
     with client.application.app_context():
         _set_setting("teacher_portal_enabled", "true")
-        _set_setting("event_end_override", "force_end")
+        _set_setting("delegation_essay_downloads_enabled", "true")
 
         teacher = Teacher(
             country="Alpha",
@@ -124,4 +174,3 @@ def test_delegation_leader_cannot_download_cross_country_essays(client, csrf_tok
 
     response = client.get(f"/teacher/delegation/essays/{student.id}/download", follow_redirects=False)
     assert response.status_code == 404
-

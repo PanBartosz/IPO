@@ -251,6 +251,7 @@ SETTING_EMAIL_SURVEY_PUBLISH_BODY = "email_survey_publish_body"
 SETTING_EMAIL_SURVEY_REMINDER_SUBJECT = "email_survey_reminder_subject"
 SETTING_EMAIL_SURVEY_REMINDER_BODY = "email_survey_reminder_body"
 SETTING_TEACHER_PORTAL_ENABLED = "teacher_portal_enabled"
+SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED = "teacher_assessment_access_enabled"
 SETTING_REGISTRATION_INVITE_ONLY = "registration_invite_only"
 SETTING_LOGIN_FOLDED_ALIAS_ENABLED = "login_folded_alias_enabled"
 SETTING_LOGIN_EMAIL_ENABLED = "login_email_enabled"
@@ -420,6 +421,7 @@ SETTING_FILE_BIN_ENABLED = "file_bin_enabled"
 SETTING_FILE_BIN_ACCESS_CODE_HASH = "file_bin_access_code_hash"
 SETTING_EVENT_END = "event_end"
 SETTING_EVENT_END_OVERRIDE = "event_end_override"
+SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED = "delegation_essay_downloads_enabled"
 SETTING_PACKET_PRINT_MODE = "packet_print_mode"
 SETTING_ESSAY_WORD_LIMIT = "essay_word_limit_words"
 SETTING_ESSAY_WORD_LIMIT_MODE = "essay_word_limit_mode"
@@ -1749,6 +1751,9 @@ def _resolve_portal_status(
 
 
 def _teacher_portal_assignments(teacher: Teacher, stage: Stage) -> list[SimpleNamespace]:
+    if not _teacher_assessment_access_enabled():
+        return []
+
     assignment_ids = _teacher_portal_assignment_ids(teacher, stage)
     if not assignment_ids:
         return []
@@ -3242,6 +3247,10 @@ def _auto_email_enabled() -> bool:
 def _teacher_portal_enabled() -> bool:
     flag = _get_setting(SETTING_TEACHER_PORTAL_ENABLED, "false") or "false"
     return flag.lower() == "true"
+
+
+def _teacher_assessment_access_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED, "true"))
 
 
 def _card_login_options(username: str | None, email: str | None) -> list[dict[str, str]]:
@@ -7924,6 +7933,10 @@ def _event_end_override() -> str:
     return raw
 
 
+def _delegation_essay_downloads_enabled() -> bool:
+    return _parse_bool(_get_setting(SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED, "false"))
+
+
 def _essay_event_state(now: datetime | None = None) -> SimpleNamespace:
     event_end = _event_end()
     override = _event_end_override()
@@ -8019,6 +8032,7 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
     if override_value not in {"auto", "force_end", "force_open"}:
         override_value = "auto"
     form.event_end_override.data = override_value
+    form.delegation_essay_downloads_enabled.data = _delegation_essay_downloads_enabled()
     if stage1_sla_raw:
         try:
             form.stage1_sla.data = int(float(stage1_sla_raw))
@@ -8050,6 +8064,7 @@ def _populate_admin_settings_form(form: DashboardSettingsForm, config: dict[str,
 
     form.essay_upload_enabled.data = _is_upload_module_enabled()
     form.teacher_portal_enabled.data = _teacher_portal_enabled()
+    form.teacher_assessment_access_enabled.data = _teacher_assessment_access_enabled()
     form.student_temporary_access_login_enabled.data = _student_temporary_access_login_enabled()
     form.teacher_temporary_access_login_enabled.data = _teacher_temporary_access_login_enabled()
     form.registration_invite_only.data = _registration_invite_required()
@@ -8106,6 +8121,7 @@ def admin_settings():
             stage2_value = form.stage2_deadline.data.strftime("%Y-%m-%dT%H:%M") if form.stage2_deadline.data else None
             event_end_value = form.event_end.data.strftime("%Y-%m-%dT%H:%M") if form.event_end.data else None
             event_override_value = form.event_end_override.data if form.event_end_override.data != "auto" else None
+            delegation_essay_downloads_enabled_value = bool(form.delegation_essay_downloads_enabled.data)
             stage1_sla_value = str(form.stage1_sla.data) if form.stage1_sla.data else None
             stage2_sla_value = str(form.stage2_sla.data) if form.stage2_sla.data else None
             stage1_trim_extreme_scores_value = bool(form.stage1_trim_extreme_scores_enabled.data)
@@ -8114,6 +8130,10 @@ def admin_settings():
             _set_setting(SETTING_STAGE2_DEADLINE, stage2_value)
             _set_setting(SETTING_EVENT_END, event_end_value)
             _set_setting(SETTING_EVENT_END_OVERRIDE, event_override_value)
+            _set_setting(
+                SETTING_DELEGATION_ESSAY_DOWNLOADS_ENABLED,
+                "true" if delegation_essay_downloads_enabled_value else "false",
+            )
             _set_setting(SETTING_STAGE1_SLA, stage1_sla_value)
             _set_setting(SETTING_STAGE2_SLA, stage2_sla_value)
             _set_setting(SETTING_PACKET_PRINT_MODE, form.packet_print_mode.data)
@@ -8140,6 +8160,10 @@ def admin_settings():
             _set_setting(SETTING_ACCOMMODATION_INFO_HTML, accommodation_html)
             _set_setting(SETTING_UPLOAD_MODULE_ENABLED, "true" if form.essay_upload_enabled.data else "false")
             _set_setting(SETTING_TEACHER_PORTAL_ENABLED, "true" if form.teacher_portal_enabled.data else "false")
+            _set_setting(
+                SETTING_TEACHER_ASSESSMENT_ACCESS_ENABLED,
+                "true" if form.teacher_assessment_access_enabled.data else "false",
+            )
             _set_setting(
                 SETTING_STUDENT_TEMPORARY_ACCESS_LOGIN_ENABLED,
                 "true" if form.student_temporary_access_login_enabled.data else "false",
@@ -8180,7 +8204,15 @@ def admin_settings():
             flash("Dashboard settings updated.", "success")
             return redirect(url_for("web.admin_settings"))
 
-    return render_template("admin/settings.html", form=form, config=config, login_alias_diagnostics=diagnostics)
+    return render_template(
+        "admin/settings.html",
+        form=form,
+        config=config,
+        login_alias_diagnostics=diagnostics,
+        delegation_essay_downloads_enabled=_delegation_essay_downloads_enabled(),
+        teacher_assessment_access_enabled=_teacher_assessment_access_enabled(),
+        teacher_assessment_visible=_teacher_portal_enabled() and _teacher_assessment_access_enabled(),
+    )
 
 
 @web_bp.route("/admin/settings/temporary-access-codes", methods=["POST"])
@@ -10867,6 +10899,7 @@ def dashboard():
         return redirect(url_for("teacher_portal.login", next=request.full_path))
 
     is_htmx = _is_htmx_request()
+    teacher_assessment_access_enabled = _teacher_assessment_access_enabled()
     stage1_entries = _teacher_portal_assignments(teacher, Stage.STAGE_1)
     stage2_entries = _teacher_portal_assignments(teacher, Stage.STAGE_2)
 
@@ -10918,6 +10951,7 @@ def dashboard():
     template_name = "teacher_portal/partials/dashboard_content.html" if is_htmx else "teacher_portal/dashboard.html"
     context = {
         "teacher": teacher,
+        "teacher_assessment_access_enabled": teacher_assessment_access_enabled,
         "stage1_entries": stage1_entries,
         "stage2_entries": stage2_entries,
         "stage1_summary": stage1_summary,
@@ -11052,7 +11086,7 @@ def _delegation_essay_context(teacher: Teacher) -> dict:
         .order_by(Student.last_name.asc(), Student.first_name.asc())
         .all()
     )
-    event_state = _essay_event_state()
+    delegation_downloads_enabled = _delegation_essay_downloads_enabled()
     entries: list[SimpleNamespace] = []
     total = len(students)
     uploaded = 0
@@ -11068,7 +11102,7 @@ def _delegation_essay_context(teacher: Teacher) -> dict:
         if student.essay_finalized:
             finalized += 1
         download_allowed = bool(
-            event_state.event_over
+            delegation_downloads_enabled
             and student.essay_finalized
             and pdf_path is not None
         )
@@ -11114,7 +11148,7 @@ def _delegation_essay_context(teacher: Teacher) -> dict:
         "delegation_country": teacher.country,
         "entries": entries,
         "summary": summary,
-        "event_state": event_state,
+        "delegation_downloads_enabled": delegation_downloads_enabled,
     }
 
 
@@ -11169,9 +11203,8 @@ def delegation_download_essay(student_id: int):
     if not student or student.is_absent or student.country != teacher.country:
         abort(404)
 
-    event_state = _essay_event_state()
-    if not event_state.event_over:
-        flash("Delegation essay downloads unlock after the event ends.", "error")
+    if not _delegation_essay_downloads_enabled():
+        flash("Delegation essay downloads are currently blocked by the organizing team.", "error")
         return redirect(url_for("teacher_portal.delegation_essays"))
 
     if not student.essay_finalized:
@@ -11547,6 +11580,9 @@ def assignment_detail(assignment_id: int, stage: str):
     if not teacher:
         flash("Please sign in to continue.", "error")
         return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not _teacher_assessment_access_enabled():
+        flash("Teacher essay and grading access is currently disabled by the organizing team.", "error")
+        return redirect(url_for("teacher_portal.dashboard"))
 
     try:
         stage_enum = Stage(stage)
@@ -11753,6 +11789,9 @@ def download_assignment(assignment_id: int, stage: str):
     if not teacher:
         flash("Please sign in to continue.", "error")
         return redirect(url_for("teacher_portal.login", next=request.full_path))
+    if not _teacher_assessment_access_enabled():
+        flash("Teacher essay and grading access is currently disabled by the organizing team.", "error")
+        return redirect(url_for("teacher_portal.dashboard"))
 
     try:
         stage_enum = Stage(stage)

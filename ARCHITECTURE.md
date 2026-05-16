@@ -103,7 +103,8 @@ Repository (core):
 **Settings**
 - `AppSetting` key/value store used for “feature flags” and operational toggles (deadlines, locks, email templates, etc.).
 - Upload settings include a configurable essay word limit and mode (off/soft/hard); the system estimates word counts from uploaded PDFs.
-- An event end timestamp controls when student and delegation leader essay downloads unlock, with an admin override to force downloads open or closed.
+- An event end timestamp controls student self-downloads, with an admin override to force student downloads open or closed.
+- Delegation leader essay downloads use a separate manual setting and stay blocked until an administrator enables them.
 - Registration settings include rich-text consent/statement content used on student/teacher registration forms.
 - Registration access can be set to invite-only, with dedicated email templates for invitation links.
 - GDPR notice and photo consent text blocks are editable in Admin Settings and shared across student/teacher registration.
@@ -124,6 +125,7 @@ Repository (core):
 
 ### 6.3 Teacher scoring lifecycle (per assignment)
 - `awaiting student finalization` → `available` → `draft score` → `teacher finalized`.
+- A separate teacher assessment visibility setting can hide assigned essays, own grades, scoring pages, and essay downloads while keeping the broader teacher portal available.
 - Admin can lock/unlock grading (global stage lock + per-assignment lock + per-score `locked_by_admin`).
 
 ### 6.4 Stage progression (admin-operated)

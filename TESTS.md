@@ -190,13 +190,13 @@ Expected:
 - Settings save with success flash.
 - Upload lock toggle updates and shows success toast.
 
-### A-03 Settings: event end and manual override
+### A-03 Settings: student download event end and manual override
 Steps:
 1. Go to Admin -> Settings.
 2. Set Event end to a time in the past.
-3. Set Event access override to "Auto (use event end time)".
+3. Set Student essay download override to "Automatic (use event end time)".
 4. Save settings.
-5. Return to Settings and set Event access override to "Force open (keep downloads locked)".
+5. Return to Settings and set Student essay download override to "Block student downloads".
 6. Save settings.
 Expected:
 - Event end is stored and visible on reload.
@@ -812,9 +812,9 @@ Expected:
 - Resend updates email status (or shows auto-email disabled warning).
 - Revoke changes status to "Revoked" and disables actions.
 
-### DL-04 Delegation essay downloads after event end
+### DL-04 Delegation essay downloads after manual release
 Steps:
-1. Ask admin to set Event access override to "Force end".
+1. Ask admin to enable "Allow delegation leaders to download essays".
 2. Open "Delegation essays".
 3. Download a finalized essay.
 Expected:
@@ -848,12 +848,14 @@ Steps:
 Expected:
 - The app warns that an active invite already exists and does not create a duplicate.
 
-### DL-08 Delegation essay downloads blocked before event end
+### DL-08 Delegation essay downloads manual release
 Steps:
-1. Ask admin to set Event access override to “Force open (keep downloads locked)” (or set Event end to the future with Auto override).
+1. Ask admin to keep **Allow delegation leaders to download essays** disabled.
 2. Open "Delegation essays" and attempt to download an essay.
+3. Ask admin to enable **Allow delegation leaders to download essays** and retry.
 Expected:
-- Download is blocked with a clear message until the event is over (or override is set to Force end).
+- Download is blocked with a clear message while the manual release switch is off.
+- Download becomes available only after the manual release switch is enabled.
 
 ### DL-09 Delegation essays status list
 Steps:
@@ -861,7 +863,7 @@ Steps:
 2. Verify status labels across students (No upload / Uploaded / Finalized / File missing).
 Expected:
 - Status labels match the underlying upload/finalization state.
-- Download links appear only when the event is over and the student has a finalized essay file.
+- Download links appear only when delegation essay downloads are enabled and the student has a finalized essay file.
 
 ## Role: Teacher (Assessor)
 ### T-01 Teacher portal login
@@ -902,7 +904,17 @@ Steps:
 Expected:
 - The teacher portal is not accessible and redirects to the teacher board login with an explanatory message.
 
-### T-06 Assignment download gating (locks + finalization)
+### T-06 Teacher assessment visibility control
+Steps:
+1. Leave the teacher portal enabled.
+2. Disable **Allow teachers to view assigned essays and grades** in Admin -> Settings.
+3. Log in as a teacher with an assigned essay and open the dashboard, the direct scoring URL, and the direct download URL.
+4. Re-enable **Allow teachers to view assigned essays and grades** and repeat the checks.
+Expected:
+- While disabled, the dashboard hides assigned essays and grade values, and direct scoring/download URLs redirect back to the teacher dashboard.
+- After re-enabling, assigned essays and own grade values are visible again, scoring pages open, and essay downloads work subject to normal stage/finalization locks.
+
+### T-07 Assignment download gating (locks + finalization)
 Steps:
 1. Log in to the teacher portal.
 2. Open an assignment where the student is not finalized yet and attempt to download.
@@ -993,7 +1005,7 @@ Expected:
 
 ### S-05 Download after event end
 Steps:
-1. Ask admin to set Event access override to "Force end".
+1. Ask admin to set Student essay download override to "Allow student downloads now".
 2. Return to the student portal.
 3. Click "Download essay PDF".
 Expected:
@@ -1046,11 +1058,11 @@ Expected:
 ### S-11 Preview and download access rules
 Steps:
 1. Upload a PDF and open preview.
-2. Try to download the essay before the event end (or when override is “Force open”).
-3. After event end (or when override is “Force end”), download the essay.
+2. Try to download the essay before the event end (or when student essay download override is “Block student downloads”).
+3. After event end (or when student essay download override is “Allow student downloads now”), download the essay.
 Expected:
 - Preview is available as long as an upload exists.
-- Downloads are blocked until the event is over (unless forced).
+- Downloads are blocked until the event is over unless the student download override explicitly allows them.
 
 ### S-12 Upload history downloads
 Steps:

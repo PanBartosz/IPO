@@ -1,7 +1,11 @@
 <section class="portal-hero">
   <div>
     <h2>Welcome, {{ teacher.first_name }} {{ teacher.last_name }}</h2>
-    <p class="fine-print">Download essays, save draft scores, and finalize your assessments here.</p>
+    {% if teacher_assessment_access_enabled %}
+      <p class="fine-print">Download essays, save draft scores, and finalize your assessments here.</p>
+    {% else %}
+      <p class="fine-print">Teacher essay and grading access is currently disabled by the organizers.</p>
+    {% endif %}
   </div>
   <div class="portal-actions">
     {% if teacher.delegation_leader %}
@@ -13,7 +17,11 @@
   </div>
 </section>
 
-{% if stage1_locked or stage2_locked %}
+{% if not teacher_assessment_access_enabled %}
+  <div class="portal-alert warning">
+    Teacher essay and grading access is currently disabled by the organizing team.
+  </div>
+{% elif stage1_locked or stage2_locked %}
   <div class="portal-alert warning">
     {% if stage1_locked and stage2_locked %}
       Stage 1 and Stage 2 are currently locked by the organizers. Essay downloads and scoring are paused until the lock is lifted.
@@ -26,28 +34,30 @@
 {% endif %}
 
 <section class="portal-summary-grid">
-  <div class="portal-summary-card">
-    <h3>Stage 1 assignments</h3>
-    <ul>
-      <li><strong>Total:</strong> {{ stage1_summary.total }}</li>
-      <li><strong>Finalized:</strong> {{ stage1_summary.finalized }}</li>
-      <li><strong>Draft saved:</strong> {{ stage1_summary.in_progress }}</li>
-      <li><strong>Awaiting student finalization:</strong> {{ stage1_summary.awaiting_finalization }}</li>
-      <li><strong>Awaiting essay upload:</strong> {{ stage1_summary.waiting_upload }}</li>
-      <li><strong>Not started:</strong> {{ stage1_summary.pending }}</li>
-    </ul>
-  </div>
-  <div class="portal-summary-card">
-    <h3>Stage 2 assignments</h3>
-    <ul>
-      <li><strong>Total:</strong> {{ stage2_summary.total }}</li>
-      <li><strong>Finalized:</strong> {{ stage2_summary.finalized }}</li>
-      <li><strong>Draft saved:</strong> {{ stage2_summary.in_progress }}</li>
-      <li><strong>Awaiting student finalization:</strong> {{ stage2_summary.awaiting_finalization }}</li>
-      <li><strong>Awaiting essay upload:</strong> {{ stage2_summary.waiting_upload }}</li>
-      <li><strong>Not started:</strong> {{ stage2_summary.pending }}</li>
-    </ul>
-  </div>
+  {% if teacher_assessment_access_enabled %}
+    <div class="portal-summary-card">
+      <h3>Stage 1 assignments</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ stage1_summary.total }}</li>
+        <li><strong>Finalized:</strong> {{ stage1_summary.finalized }}</li>
+        <li><strong>Draft saved:</strong> {{ stage1_summary.in_progress }}</li>
+        <li><strong>Awaiting student finalization:</strong> {{ stage1_summary.awaiting_finalization }}</li>
+        <li><strong>Awaiting essay upload:</strong> {{ stage1_summary.waiting_upload }}</li>
+        <li><strong>Not started:</strong> {{ stage1_summary.pending }}</li>
+      </ul>
+    </div>
+    <div class="portal-summary-card">
+      <h3>Stage 2 assignments</h3>
+      <ul>
+        <li><strong>Total:</strong> {{ stage2_summary.total }}</li>
+        <li><strong>Finalized:</strong> {{ stage2_summary.finalized }}</li>
+        <li><strong>Draft saved:</strong> {{ stage2_summary.in_progress }}</li>
+        <li><strong>Awaiting student finalization:</strong> {{ stage2_summary.awaiting_finalization }}</li>
+        <li><strong>Awaiting essay upload:</strong> {{ stage2_summary.waiting_upload }}</li>
+        <li><strong>Not started:</strong> {{ stage2_summary.pending }}</li>
+      </ul>
+    </div>
+  {% endif %}
   <div class="portal-summary-card">
     <h3>Surveys</h3>
     <ul>
@@ -62,6 +72,9 @@
 
 <div class="portal-columns">
   <section class="portal-assignments">
+    {% if not teacher_assessment_access_enabled %}
+      <p class="fine-print">Assigned essays and grades are not currently visible.</p>
+    {% else %}
     <h3>Stage 1 essays</h3>
     {% if stage1_entries %}
       <ul class="portal-assignment-list">
@@ -216,6 +229,7 @@
       </ul>
     {% else %}
       <p class="fine-print">No Stage 2 assignments currently assigned.</p>
+    {% endif %}
     {% endif %}
   </section>
 

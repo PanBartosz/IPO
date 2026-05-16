@@ -36,7 +36,8 @@ They are grouped by area so it’s easy to expand coverage incrementally.
 - [x] Student preview allowed after upload (`/participant/upload/preview` returns 200).
 - [x] Student download blocked before event end (`/participant/upload/download` returns 403).
 - [x] Student download allowed after event end (set `event_end` in the past or use `event_end_override=force_end` and assert 200).
-- [x] Delegation leader essay download blocked before event end.
+- [x] Delegation leader essay download remains blocked until the dedicated manual release switch is enabled.
+- [x] Delegation leader essay download is allowed after the dedicated manual release switch is enabled.
 - [x] Delegation leader can only download essays from their country (404 cross-country).
 
 ## Exports
@@ -49,6 +50,7 @@ They are grouped by area so it’s easy to expand coverage incrementally.
 
 ## Teacher Portal (Assignments & Scoring)
 - [x] Teacher sees assigned essays only (setup minimal group/assignment rows).
+- [x] Teacher assessment visibility switch hides assignments and grades and blocks detail/download routes.
 - [x] Teacher cannot download assignment essay until student finalizes upload.
 - [x] Teacher score draft save persists numeric score + comments.
 - [x] Teacher score finalization sets `teacher_finalized=True` and timestamps.

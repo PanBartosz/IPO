@@ -141,6 +141,54 @@ def test_teacher_sees_only_assigned_essays_on_dashboard(client, csrf_token):
     assert "1420" in html
 
 
+def test_teacher_assessment_access_toggle_hides_assignments_and_blocks_routes(client, csrf_token):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        _set_setting("teacher_assessment_access_enabled", "false")
+        teacher_id = _create_teacher(username="teacher-hidden", password="teacher-pass")
+        student_id = _create_student(label="student-hidden")
+        student = db.session.get(Student, student_id)
+        assert student is not None
+        student.uploaded_filename = f"student-{student_id}-hidden.pdf"
+        student.uploaded_at = datetime.utcnow()
+        student.essay_finalized = True
+        student.essay_finalized_at = datetime.utcnow()
+        db.session.commit()
+
+        upload_folder = Path(client.application.config["UPLOAD_FOLDER"])
+        (upload_folder / student.uploaded_filename).write_bytes(b"%PDF-1.4\n% hidden\n%%EOF\n")
+
+        assignment_id = _create_stage1_assignment(teacher_id=teacher_id, student_id=student_id)
+        db.session.add(
+            EssayScore(
+                student_id=student_id,
+                teacher_id=teacher_id,
+                assignment_id=assignment_id,
+                stage=Stage.STAGE_1,
+                score=7.5,
+                submitted_at=datetime.utcnow(),
+            )
+        )
+        db.session.commit()
+
+    _login_teacher_portal(client, csrf_token, "teacher-hidden", "teacher-pass")
+
+    dashboard = client.get("/teacher/")
+    html = dashboard.get_data(as_text=True)
+    assert dashboard.status_code == 200
+    assert "Teacher essay and grading access is currently disabled by the organizing team." in html
+    assert f"Essay {student_id}" not in html
+    assert "7.50" not in html
+
+    detail = client.get(f"/teacher/assignments/{assignment_id}/stage_1", follow_redirects=False)
+    assert detail.status_code == 302
+    assert detail.headers["Location"] == "/teacher/"
+
+    download = client.get(f"/teacher/assignments/{assignment_id}/stage_1/download", follow_redirects=False)
+    assert download.status_code == 302
+    assert download.headers["Location"] == "/teacher/"
+
+
 def test_teacher_cannot_download_assignment_until_student_finalizes(client, csrf_token):
     with client.application.app_context():
         _set_setting("teacher_portal_enabled", "true")

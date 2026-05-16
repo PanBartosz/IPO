@@ -420,18 +420,19 @@ class DashboardSettingsForm(FlaskForm):
         "Stage 2 deadline", format="%Y-%m-%dT%H:%M", validators=[Optional()]
     )
     event_end = DateTimeField(
-        "Event end (essay access unlock)", format="%Y-%m-%dT%H:%M", validators=[Optional()]
+        "Event end (student download unlock)", format="%Y-%m-%dT%H:%M", validators=[Optional()]
     )
     event_end_override = SelectField(
-        "Event access override",
+        "Student essay download override",
         choices=[
-            ("auto", "Auto (use event end time)"),
-            ("force_end", "Force end (unlock downloads now)"),
-            ("force_open", "Force open (keep downloads locked)"),
+            ("auto", "Automatic (use event end time)"),
+            ("force_end", "Allow student downloads now"),
+            ("force_open", "Block student downloads"),
         ],
         validators=[DataRequired(), AnyOf(["auto", "force_end", "force_open"])],
         default="auto",
     )
+    delegation_essay_downloads_enabled = BooleanField("Allow delegation leaders to download essays")
     stage1_sla = IntegerField(
         "Stage 1 score SLA (hours)", validators=[Optional()]
     )
@@ -490,6 +491,7 @@ class DashboardSettingsForm(FlaskForm):
     )
     essay_upload_enabled = BooleanField("Enable essay upload module")
     teacher_portal_enabled = BooleanField("Enable teacher portal (individual login & online grading)")
+    teacher_assessment_access_enabled = BooleanField("Allow teachers to view assigned essays and grades")
     student_temporary_access_login_enabled = BooleanField(
         "Allow students to sign in with printed temporary access codes"
     )

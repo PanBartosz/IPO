@@ -48,7 +48,7 @@
       <div class="form-field">
         {{ form.event_end.label }}
         {{ form.event_end(type="datetime-local") }}
-        <span class="form-help">Controls when student and delegation leader essay downloads unlock. Default: {{ config.DASHBOARD_EVENT_END or 'none' }}.</span>
+        <span class="form-help">Controls when students can download their own essays. Default: {{ config.DASHBOARD_EVENT_END or 'none' }}.</span>
         {% for error in form.event_end.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
@@ -56,8 +56,28 @@
       <div class="form-field">
         {{ form.event_end_override.label }}
         {{ form.event_end_override() }}
-        <span class="form-help">Use this to manually end or reopen essay downloads regardless of the event end time.</span>
+        <span class="form-help">Applies only to student self-downloads. Delegation leader access is controlled separately below.</span>
         {% for error in form.event_end_override.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="portal-alert {{ 'success' if delegation_essay_downloads_enabled else 'warning' }}">
+          <strong>Delegation leader essay visibility:</strong>
+          {% if delegation_essay_downloads_enabled %}
+            Delegation leaders can currently download finalized essays from their own delegation.
+          {% else %}
+            Delegation leaders cannot currently download essays.
+          {% endif %}
+        </div>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.delegation_essay_downloads_enabled() }}
+          {{ form.delegation_essay_downloads_enabled.label.text }}
+        </label>
+        <span class="form-help">Manual switch for delegation leaders. Keep this off during the competition; it is independent from the event end time and student download setting.</span>
+        {% for error in form.delegation_essay_downloads_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>
@@ -156,8 +176,30 @@
           {{ form.teacher_portal_enabled() }}
           {{ form.teacher_portal_enabled.label.text }}
         </label>
-        <span class="form-help">When enabled, teachers receive individual credentials, can download assigned essays, submit scores, and view personalized board messages.</span>
+        <span class="form-help">When enabled, teachers can sign in to their portal for surveys, delegation tasks, board messages, and any assessment access separately allowed below.</span>
         {% for error in form.teacher_portal_enabled.errors %}
+          <div class="field-error">{{ error }}</div>
+        {% endfor %}
+      </div>
+      <div class="form-field full-width">
+        <div class="portal-alert {{ 'success' if teacher_assessment_visible else 'warning' }}">
+          <strong>Teacher essay and grade visibility:</strong>
+          {% if teacher_assessment_visible %}
+            Teachers can currently see assigned essays and their own grades.
+          {% elif teacher_assessment_access_enabled %}
+            Teachers cannot currently see assigned essays or grades because the teacher portal is disabled.
+          {% else %}
+            Teachers cannot currently see assigned essays or grades.
+          {% endif %}
+        </div>
+      </div>
+      <div class="form-field full-width">
+        <label class="checkbox">
+          {{ form.teacher_assessment_access_enabled() }}
+          {{ form.teacher_assessment_access_enabled.label.text }}
+        </label>
+        <span class="form-help">Manual switch for the teacher assessment surface. When off, assigned essays, score values, scoring pages, and essay downloads are hidden even if teachers can still sign in.</span>
+        {% for error in form.teacher_assessment_access_enabled.errors %}
           <div class="field-error">{{ error }}</div>
         {% endfor %}
       </div>

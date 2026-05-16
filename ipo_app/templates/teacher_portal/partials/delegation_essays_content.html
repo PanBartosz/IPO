@@ -1,7 +1,7 @@
 <section class="portal-hero">
   <div>
     <h2>Delegation essays - {{ delegation_country }}</h2>
-    <p class="fine-print">Review student upload status and download finalized essays after the event ends.</p>
+    <p class="fine-print">Review student upload status and download finalized essays when the organizing team enables access.</p>
   </div>
   <div class="portal-actions">
     <a class="button secondary" href="{{ url_for('teacher_portal.dashboard') }}">Back to dashboard</a>
@@ -11,21 +11,13 @@
   </div>
 </section>
 
-{% if event_state.override == "force_end" %}
+{% if delegation_downloads_enabled %}
   <div class="portal-alert success">
-    Downloads are unlocked by the organizers (manual override).
+    Delegation essay downloads are currently enabled by the organizers.
   </div>
-{% elif event_state.override == "force_open" %}
+{% else %}
   <div class="portal-alert warning">
-    Downloads are temporarily locked by the organizers (manual override).
-  </div>
-{% elif not event_state.event_over %}
-  <div class="portal-alert warning">
-    {% if event_state.display %}
-      Downloads unlock after the event ends ({{ event_state.display }}).
-    {% else %}
-      Downloads unlock after the event ends. Ask the organizers to set the event end time in Settings.
-    {% endif %}
+    Delegation essay downloads are currently blocked by the organizers.
   </div>
 {% endif %}
 

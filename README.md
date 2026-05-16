@@ -47,12 +47,13 @@ The new **Admin → Communication** module reuses the same SendGrid credentials 
 Data exports (SQL + essay ZIP) are under **Admin → Exports** and require admin authentication. Database dumps currently support MariaDB/MySQL (via `mysqldump` installed in the Docker image) or SQLite (file copy).
 
 ## Teacher portal workflow
-1. Enable **“Enable teacher portal (individual login & online grading)”** under **Admin → Settings** when you are ready to open the scoring portal.
+1. Enable **“Enable teacher portal (individual login & online grading)”** under **Admin → Settings** when you are ready to open the teacher portal.
 2. Visit **Admin → Exports → Teacher portal cards** to generate PDF cards. Each export resets every teacher’s temporary password and lists the portal and board URLs.
 3. Teachers sign in at `/teacher/login` with their unique username/password. Successful portal logins automatically unlock the personalized teacher board view.
-4. From the portal dashboard, teachers can download assigned essays, respond to surveys, save draft scores, and finalize submissions. Finalized scores lock editing for the teacher, but admins can reopen a score at any time via the **Unlock** action on the Stage 1/Stage 2 scoring pages.
-5. Stage lock toggles freeze both grading and essay downloads for the affected stage; unlock when jurors need access again.
-6. Toggle the setting back off to close the portal—teachers will be redirected with a notice that the portal is offline. Lock settings you changed while the portal was disabled are still honored once it is re-enabled.
+4. Use **“Allow teachers to view assigned essays and grades”** to open or close the assessment surface independently from the rest of the teacher portal.
+5. When assessment access is enabled, teachers can download assigned essays, respond to surveys, save draft scores, and finalize submissions. Finalized scores lock editing for the teacher, but admins can reopen a score at any time via the **Unlock** action on the Stage 1/Stage 2 scoring pages.
+6. Stage lock toggles freeze both grading and essay downloads for the affected stage; unlock when jurors need access again.
+7. Toggle the portal setting back off to close the portal entirely—teachers will be redirected with a notice that the portal is offline. Assessment visibility and lock settings remain persisted independently.
 
 ## Stage 3 steering committee workflow
 1. Flag Stage 2 essays for Stage 3 consideration from the Stage 2 scoring screen.
@@ -83,10 +84,12 @@ Data exports (SQL + essay ZIP) are under **Admin → Exports** and require admin
 - Use Upload lock to pause student uploads when needed.
 - Use Stage 1/Stage 2 locks to pause grading and teacher downloads for a stage.
 - Monitor the Dashboard alerts and use Messages/Communication for urgent updates.
-- If downloads must be blocked regardless of the event end, set Event access override to Force open (locks downloads).
+- If student self-downloads must be blocked regardless of the event end, set Student essay download override to Block student downloads.
+- Keep delegation leader essay downloads disabled until the organizing team is ready to release them.
 
 ### After the event
-- Set Event access override to Force end (unlocks downloads) or rely on the event end time.
+- Set Student essay download override to Allow student downloads now or rely on the event end time.
+- Enable delegation leader essay downloads only when those files are ready to be released.
 - Export the essay ZIP and database dump (Admin -> Exports) and store them securely.
 
 ### Common recovery actions
