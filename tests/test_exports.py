@@ -4,9 +4,12 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 import re
+import sqlite3
 
 from openpyxl import load_workbook
+import pytest
 
+import ipo_app.views as views
 from ipo_app.extensions import db
 from ipo_app.models import ActivityLog, Student, Teacher
 
@@ -59,6 +62,8 @@ def test_admin_export_essays_zip_contains_manifest(client, csrf_token):
     manifest = archive.read("manifest.csv").decode("utf-8")
     assert str(student.id) in manifest
     assert student.uploaded_filename in manifest
+    with client.application.app_context():
+        assert ActivityLog.query.filter_by(action="essays_exported").count() == 1
 
 
 def test_admin_exports_redirects_to_login_for_non_admin(client):
@@ -165,6 +170,98 @@ def test_admin_export_database_sqlite_creates_backup(client, csrf_token):
 
     backups_folder = Path(client.application.config["BACKUP_FOLDER"])
     assert (backups_folder / filename).exists()
+    with client.application.app_context():
+        assert ActivityLog.query.filter_by(action="database_exported").count() == 1
+
+
+def test_sqlite_backup_includes_committed_wal_data(app):
+    with app.app_context():
+        connection = db.engine.raw_connection()
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA wal_autocheckpoint=0")
+            connection.execute("CREATE TABLE wal_backup_probe (value TEXT)")
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("INSERT INTO wal_backup_probe VALUES ('committed in WAL')")
+            connection.commit()
+
+            path, _ = views._export_database()
+            with sqlite3.connect(path) as backup:
+                assert backup.execute("SELECT value FROM wal_backup_probe").fetchall() == [("committed in WAL",)]
+        finally:
+            connection.close()
+
+
+def test_sqlite_backup_uses_engine_for_relative_database_path(app):
+    with app.app_context():
+        # Flask resolves relative SQLite paths against instance_path, not cwd.
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///relative.db"
+        db.session.add(ActivityLog(action="relative-backup", description="keep this row"))
+        db.session.commit()
+        path, _ = views._export_database()
+        with sqlite3.connect(path) as backup:
+            assert backup.execute("SELECT action FROM activity_logs").fetchall() == [("relative-backup",)]
+
+
+@pytest.mark.parametrize("role", ["student", "teacher"])
+def test_registration_workbooks_preserve_formula_like_input_as_text(client, role):
+    with client.application.app_context():
+        common = dict(
+            country="Testland", first_name='=HYPERLINK("https://evil.example","click")', last_name="Export",
+            email=f"{role}.formula@example.test", school="=1+1", meal_preference="No preference",
+        )
+        if role == "student":
+            record = Student(**common, date_of_birth=date(2000, 1, 1), essay_language="English", keyboard_preference="QWERTY")
+        else:
+            record = Teacher(**common, languages="English", tshirt_size="M")
+        db.session.add(record)
+        db.session.commit()
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+
+    response = client.get(f"/admin/{role}s/export")
+    assert response.status_code == 200
+    sheet = load_workbook(io.BytesIO(response.data)).active
+    assert sheet["A2"].data_type == "n"
+    for address, expected in [("C2", common["first_name"]), ("F2", common["school"])]:
+        assert sheet[address].value == expected
+        assert sheet[address].data_type == "s"
+
+
+def test_essay_archive_sanitizes_paths_and_csv_formula_values(app):
+    with app.app_context():
+        student = Student(
+            country="@SUM(1)", first_name="=1+1", last_name="../../outside",
+            email="archive.paths@example.test", school="Test School", date_of_birth=date(2000, 1, 1),
+            essay_language="English", keyboard_preference="QWERTY", meal_preference="No preference",
+            uploaded_filename="archive.pdf",
+        )
+        db.session.add(student)
+        db.session.commit()
+        Path(app.config["UPLOAD_FOLDER"], "archive.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+        stream, _ = views._zip_essays()
+
+    with zipfile.ZipFile(stream) as archive:
+        essay_names = [name for name in archive.namelist() if name.endswith(".pdf")]
+        assert len(essay_names) == 1
+        assert len(Path(essay_names[0]).parts) == 2
+        assert Path(essay_names[0]).parts[0] == "essays"
+        manifest = list(csv.DictReader(io.StringIO(archive.read("manifest.csv").decode())))
+        assert manifest[0]["first_name"] == "'=1+1"
+        assert manifest[0]["country"] == "'@SUM(1)"
+
+
+def test_log_csv_export_neutralizes_formula_values(client):
+    with client.application.app_context():
+        db.session.add(ActivityLog(action="review", actor="=1+1", description="@SUM(1)"))
+        db.session.commit()
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+    response = client.get("/admin/logs/export")
+    row = next(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
+    assert row["actor"] == "'=1+1"
+    assert row["description"] == "'@SUM(1)"
 
 
 def test_admin_logs_export_csv_respects_limit(client):

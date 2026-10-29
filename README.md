@@ -1,5 +1,7 @@
 # International Philosophy Olympiad Admin Portal (working document)
 
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+
 ## Purpose
 The IPO Admin Portal streamlines logistics for the International Philosophy Olympiad. It centralizes student and teacher registrations, essay workflow management, stage planning, message broadcasting, and PDF packet generation, keeping the competition compliant with IPO statutes.
 
@@ -44,11 +46,11 @@ Set these in `.env`, Docker env, or your host:
 ### App settings (runtime)
 Under **Admin → Settings**, admins can toggle the teacher portal, switch duplex printing, enable automatic emails, and edit the registration/message/survey/password email templates. Values are persisted in `app_settings` (Text columns).
 The new **Admin → Communication** module reuses the same SendGrid credentials to deliver targeted broadcasts; drafts and previews are available even when SendGrid is not configured. The built-in rich text editor is the TinyMCE community build served locally from `static/vendor/tinymce`, so no API key is required.
-Data exports (SQL + essay ZIP) are under **Admin → Exports** and require admin authentication. Database dumps currently support MariaDB/MySQL (via `mysqldump` installed in the Docker image) or SQLite (file copy).
+Data exports (SQL + essay ZIP) are under **Admin → Exports** and require admin authentication. Database dumps support MariaDB/MySQL (via `mysqldump` installed in the Docker image) or SQLite (a consistent database snapshot, including committed WAL data). SQLite exports contain a binary SQLite database despite the historical `.sql` download suffix.
 
 ## Teacher portal workflow
 1. Enable **“Enable teacher portal (individual login & online grading)”** under **Admin → Settings** when you are ready to open the teacher portal.
-2. Visit **Admin → Exports → Teacher portal cards** to generate PDF cards. Each export resets every teacher’s temporary password and lists the portal and board URLs.
+2. Visit **Admin → Exports → Teacher portal cards** to generate PDF cards with login details, temporary access codes, and portal/board URLs. Exporting cards does not rotate passwords. Temporary access code login is controlled separately in Settings.
 3. Teachers sign in at `/teacher/login` with their unique username/password. Successful portal logins automatically unlock the personalized teacher board view.
 4. Use **“Allow teachers to view assigned essays and grades”** to open or close the assessment surface independently from the rest of the teacher portal.
 5. When assessment access is enabled, teachers can download assigned essays, respond to surveys, save draft scores, and finalize submissions. Finalized scores lock editing for the teacher, but admins can reopen a score at any time via the **Unlock** action on the Stage 1/Stage 2 scoring pages.
@@ -183,6 +185,18 @@ Automated tests live under `tests/` and can be run with:
 ```bash
 pytest
 ```
+
+Keep participant spreadsheets, generated diplomas, database exports, uploads, and `.env` files local. The Git and Docker ignore rules exclude these operational files; use synthetic records for test fixtures.
+
+## License
+
+Copyright © Bartosz Maćkiewicz and contributors.
+
+Unless otherwise indicated, the original source code and documentation in this repository are licensed under [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/). The full license text is in [LICENSE](LICENSE).
+
+For attribution, credit **Bartosz Maćkiewicz and IPO Admin Portal contributors**, link to [this repository](https://github.com/PanBartosz/IPO), retain the license notice, and indicate changes. Sharing and adaptations are permitted for noncommercial purposes under the license's attribution and ShareAlike terms.
+
+Third-party libraries, fonts, institutional logos, trademarks, and externally authored reference documents retain their existing rights and licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the bundled materials excluded from the project's CC license.
 
 ## Contributing
 1. Fork + clone

@@ -20,7 +20,7 @@ from ipo_app.models import (
     Teacher,
     TeacherLanguage,
 )
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 

@@ -1,11 +1,32 @@
 from datetime import date
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import ipo_app.views as views
 from ipo_app.extensions import db
 from ipo_app.models import ActivityLog, AppSetting, Student, Teacher
+
+
+@pytest.mark.parametrize("target", ["/\\evil.example", "/\t/evil.example", "/\x00/evil.example"])
+def test_admin_login_rejects_browser_normalized_external_redirect(client, target):
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+    response = client.get("/admin/login", query_string={"next": target})
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/admin"
+
+
+@pytest.mark.parametrize("path", ["/admin/grading/lock", "/admin/uploads/lock"])
+@pytest.mark.parametrize("target,expected", [("https://evil.example", "/admin"), ("/admin/uploads?review=1", "/admin/uploads?review=1")])
+def test_lock_actions_validate_return_url(client, csrf_token, path, target, expected):
+    with client.session_transaction() as session:
+        session["admin_user"] = "admin"
+    token = csrf_token(client.get("/admin/settings"))
+    response = client.post(path, data={"csrf_token": token, "stage": "stage_1", "state": "lock", "redirect": target})
+    assert response.status_code == 302
+    assert response.headers["Location"] == expected
 
 
 def _set_setting(key: str, value: str) -> None:

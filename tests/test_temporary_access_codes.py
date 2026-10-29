@@ -4,7 +4,7 @@ from datetime import date, datetime
 from io import BytesIO
 from importlib import import_module
 
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations

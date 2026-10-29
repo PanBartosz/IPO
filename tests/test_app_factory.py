@@ -1,10 +1,30 @@
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 from sqlalchemy.exc import OperationalError
 
 import ipo_app
 from ipo_app import create_app
 from ipo_app.extensions import db
+
+
+def test_dotenv_is_loaded_before_default_configuration(tmp_path):
+    (tmp_path / ".env").write_text(
+        "SECRET_KEY=secret-from-dotenv-regression-test\n"
+        "DATABASE_URL=sqlite:///:memory:\n"
+        f"UPLOAD_FOLDER={tmp_path / 'uploads'}\n"
+    )
+    env = os.environ.copy()
+    for key in ("SECRET_KEY", "DATABASE_URL", "FLASK_CONFIG", "UPLOAD_FOLDER", "STATIC_PAGE_ATTACHMENT_FOLDER"):
+        env.pop(key, None)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    result = subprocess.run(
+        [sys.executable, "-c", "from ipo_app import create_app; app = create_app(); print(app.config['SECRET_KEY'])"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=True, timeout=30,
+    )
+    assert result.stdout.strip() == "secret-from-dotenv-regression-test"
 
 
 def _build_config(tmp_path: Path, **overrides):

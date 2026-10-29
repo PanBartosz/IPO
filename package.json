@@ -1,6 +1,7 @@
 {
   "name": "ipo-e2e-tools",
   "private": true,
+  "license": "CC-BY-NC-SA-4.0",
   "type": "module",
   "scripts": {
     "e2e:file-bin": "node scripts/e2e_file_bin.mjs",

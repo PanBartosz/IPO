@@ -65,6 +65,28 @@ def _create_student(*, label: str, country: str = "Testland") -> int:
     return student.id
 
 
+@pytest.mark.parametrize("path,login_path", [("/teacher/", "/teacher/login"), ("/board", "/board/login")])
+def test_marking_teacher_absent_revokes_existing_portal_and_board_session(client, path, login_path):
+    with client.application.app_context():
+        _set_setting("teacher_portal_enabled", "true")
+        teacher_id = _create_teacher(username="absent-reader", password="teacher-pass")
+    with client.session_transaction() as session:
+        session["teacher_portal_id"] = teacher_id
+        session["teacher_board"] = True
+    assert client.get(path).status_code == 200
+
+    with client.application.app_context():
+        db.session.get(Teacher, teacher_id).is_absent = True
+        db.session.commit()
+
+    response = client.get(path)
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith(login_path)
+    with client.session_transaction() as session:
+        assert "teacher_portal_id" not in session
+        assert "teacher_board" not in session
+
+
 def _create_stage1_assignment(*, teacher_id: int, student_id: int) -> int:
     batch = AssignmentBatch(name="Batch 1", stage=Stage.STAGE_1, status=PlannerStatus.PUBLISHED)
     db.session.add(batch)

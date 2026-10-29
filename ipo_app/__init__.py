@@ -7,6 +7,9 @@ from flask import Flask
 from sqlalchemy.exc import OperationalError
 from werkzeug.local import LocalProxy
 
+# Configuration classes read environment variables when they are imported.
+load_dotenv()
+
 from .config import Config, DevelopmentConfig
 from .extensions import csrf, db, limiter, migrate
 

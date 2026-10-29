@@ -1,5 +1,8 @@
 from datetime import date, datetime
 from pathlib import Path
+from io import BytesIO
+
+from openpyxl import load_workbook
 
 from ipo_app.extensions import db
 from ipo_app.models import (
@@ -127,6 +130,29 @@ def _add_stage1_extra_reader(*, assignment_id: int, teacher_id: int) -> None:
             stage=Stage.STAGE_1.value,
         )
     )
+
+
+def test_grade_export_keeps_formula_like_names_as_text(client, csrf_token):
+    with client.application.app_context():
+        teacher_id = _create_teacher("formula-reader")
+        student_id = _create_student("formula-student", client.application)
+        student = db.session.get(Student, student_id)
+        student.first_name = "=1+1"
+        assignment_id = _create_stage1_assignment(student_id=student_id, reader_ids=[teacher_id])
+        _add_score(assignment_id=assignment_id, student_id=student_id, teacher_id=teacher_id, stage=Stage.STAGE_1, score=8)
+        db.session.commit()
+
+    _login_admin(client)
+    token = csrf_token(client.get("/admin/grades-export"))
+    response = client.post("/admin/grades-export", data={
+        "csrf_token": token, "stages": ["stage1"], "export_type": "xlsx", "sort_by": "student_id",
+        "include_countries": "y", "group_by_country": "y", "compact_view": "y",
+    })
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.data))
+    matching_cells = [cell for sheet in workbook for row in sheet for cell in row if isinstance(cell.value, str) and cell.value.startswith("=1+1")]
+    assert len(matching_cells) >= 3  # Summary, country and compact views.
+    assert all(cell.data_type == "s" for cell in matching_cells)
 
 
 def test_admin_stage1_rejects_non_statutory_score(client, csrf_token):

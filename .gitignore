@@ -1,4 +1,5 @@
 .env
+.env.*
 !.env.example
 /instance/backups/
 /instance/uploads/
@@ -14,6 +15,10 @@ __pycache__/
 /ipo_app/__pycache__/
 /scripts/__pycache__/
 *.sqlite
+*.sqlite3
+*.db
+*.sql
+*.sql.gz
 *.log
 *.DS_Store
 /.vscode/
@@ -30,3 +35,8 @@ __pycache__/
 /tmp_ptf_on_black.png
 /.playwright-cli
 /docs/IPO identyfikacja.pdf
+
+# Participant records and generated certificates remain local.
+/share/*.xlsx
+/share/*.zip
+/share/dyplomy/

@@ -1,4 +1,5 @@
 import io
+import pytest
 from datetime import date, datetime
 
 from openpyxl import load_workbook
@@ -380,7 +381,8 @@ def test_admin_update_survey_recipients_rejects_draft_survey(client):
     assert response.headers["Location"] == "/admin/surveys"
 
 
-def test_admin_survey_responses_export_xlsx_contains_question_columns_and_answers(client):
+@pytest.mark.parametrize("answer", ["Great organization.", '=HYPERLINK("https://evil.example","click")'])
+def test_admin_survey_responses_export_xlsx_contains_question_columns_and_answers(client, answer):
     with client.application.app_context():
         survey_id, question_id = _create_draft_student_survey(title="Export survey")
         student_id = _create_student(email="export.survey@example.com")
@@ -397,7 +399,7 @@ def test_admin_survey_responses_export_xlsx_contains_question_columns_and_answer
             SurveyResponse(
                 survey_id=survey_id,
                 assignment_id=assignment.id,
-                response_data={f"question_{question_id}": "Great organization."},
+                response_data={f"question_{question_id}": answer},
             )
         )
         db.session.commit()
@@ -421,7 +423,8 @@ def test_admin_survey_responses_export_xlsx_contains_question_columns_and_answer
     assert sheet["I1"].value == "What did you like most?"
 
     assert sheet["B2"].value == "student"
-    assert sheet["I2"].value == "Great organization."
+    assert sheet["I2"].value == answer
+    assert sheet["I2"].data_type == "s"
 
 
 def test_admin_survey_publish_requires_at_least_one_question(client):

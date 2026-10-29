@@ -64,6 +64,40 @@ def _write_pdf(app, filename: str, content: bytes | None = None) -> None:
     (upload_folder / filename).write_bytes(payload)
 
 
+def test_uploads_in_same_second_preserve_both_history_files(client, csrf_token, monkeypatch):
+    import ipo_app.views as views
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return cls(2026, 10, 29, 12, 0, 0)
+
+    monkeypatch.setattr(views, "datetime", FrozenDatetime)
+    with client.application.app_context():
+        _set_setting("essay_upload_enabled", "true")
+        student_id = _create_student("rapid-uploader", "student-pass")
+    with client.session_transaction() as session:
+        session["student_upload_id"] = student_id
+
+    token = csrf_token(client.get("/participant/upload"))
+    payloads = [b"%PDF-1.4\n% first essay\n%%EOF\n", b"%PDF-1.4\n% revised essay\n%%EOF\n"]
+    for payload in payloads:
+        response = client.post(
+            "/participant/upload",
+            data={"csrf_token": token, "essay": (io.BytesIO(payload), "essay.pdf"), "submit": "Upload essay"},
+            content_type="multipart/form-data",
+        )
+        assert response.status_code == 302
+
+    with client.application.app_context():
+        uploads = EssayUpload.query.filter_by(student_id=student_id).order_by(EssayUpload.id).all()
+        assert len(uploads) == 2
+        assert uploads[0].filename != uploads[1].filename
+        folder = Path(client.application.config["UPLOAD_FOLDER"])
+        assert [(folder / upload.filename).read_bytes() for upload in uploads] == payloads
+        assert db.session.get(Student, student_id).uploaded_filename == uploads[-1].filename
+
+
 def test_student_upload_stores_file_and_creates_upload_row(client, csrf_token):
     with client.application.app_context():
         _set_setting("essay_upload_enabled", "true")

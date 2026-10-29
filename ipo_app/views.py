@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import unicodedata
 from collections import defaultdict
+from contextlib import closing
 from datetime import datetime, timedelta
 from html import escape, unescape
 from html.parser import HTMLParser
@@ -24,6 +25,7 @@ from flask import (
     current_app,
     flash,
     get_flashed_messages,
+    has_request_context,
     make_response,
     redirect,
     render_template,
@@ -40,7 +42,7 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.engine.url import make_url
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
-from PyPDF2 import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -619,7 +621,7 @@ def _accommodation_info_html() -> str:
 
 def _count_pdf_words(pdf_path: Path) -> int | None:
     try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
     except Exception:
         return None
     try:
@@ -720,7 +722,8 @@ def _teacher_languages(teacher: Teacher) -> set[str]:
 
 
 def _teacher_board_authorized() -> bool:
-    return bool(session.get("teacher_board") or session.get("teacher_portal_id"))
+    teacher = _teacher_portal_from_session()
+    return bool(session.get("teacher_board") or teacher)
 
 
 def _prepare_message_form(form: TeacherMessageForm, selected_teacher_id: int | None = None) -> None:
@@ -1630,14 +1633,23 @@ def _student_from_session() -> Student | None:
     student_id = session.get("student_upload_id")
     if not student_id:
         return None
-    return db.session.get(Student, student_id)
+    student = db.session.get(Student, student_id)
+    if not student or student.is_absent:
+        session.pop("student_upload_id", None)
+        return None
+    return student
 
 
 def _teacher_portal_from_session() -> Teacher | None:
     teacher_id = session.get("teacher_portal_id")
     if not teacher_id:
         return None
-    return db.session.get(Teacher, teacher_id)
+    teacher = db.session.get(Teacher, teacher_id)
+    if not teacher or teacher.is_absent:
+        session.pop("teacher_portal_id", None)
+        session.pop("teacher_board", None)
+        return None
+    return teacher
 
 
 def _portal_next_url(candidate: str | None) -> str | None:
@@ -1648,7 +1660,7 @@ def _portal_next_url(candidate: str | None) -> str | None:
         return None
     if candidate.startswith("//"):
         return None
-    if "\r" in candidate or "\n" in candidate:
+    if "\\" in candidate or any(ord(char) < 32 or ord(char) == 127 for char in candidate):
         return None
     return candidate
 
@@ -2341,6 +2353,22 @@ def _apply_column_bold(sheet, column_indexes: list[int]) -> None:
             cell.font = bold_font
 
 
+def _save_data_workbook(workbook: Workbook, stream: BytesIO) -> None:
+    """Export strings as literal text, including values starting with '='."""
+    for sheet in workbook:
+        for row in sheet:
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+    workbook.save(stream)
+
+
+def _csv_safe_value(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
 def _grades_export_xlsx(students: list[dict], options: dict) -> Any:
     workbook = Workbook()
     summary_sheet = workbook.active
@@ -2523,7 +2551,7 @@ def _grades_export_xlsx(students: list[dict], options: dict) -> Any:
         workbook.active = workbook.sheetnames.index(compact_sheet.title)
 
     output = BytesIO()
-    workbook.save(output)
+    _save_data_workbook(workbook, output)
     output.seek(0)
     return send_file(
         output,
@@ -2862,12 +2890,6 @@ def _ensure_student_credentials(student: Student, *, reset_password: bool = Fals
 
     return student.upload_username, plain_password
 
-
-def _student_from_session() -> Student | None:
-    student_id = session.get("student_upload_id")
-    if not student_id:
-        return None
-    return db.session.get(Student, student_id)
 
 def _current_admin() -> str | None:
     return session.get("admin_user")
@@ -5793,18 +5815,17 @@ def _export_database() -> tuple[Path, str] | None:
     backups_dir = Path(current_app.config.get("BACKUP_FOLDER", Path(current_app.instance_path) / "backups"))
     backups_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    filename = f"ipo-db-{timestamp}.sql"
+    filename = f"ipo-db-{timestamp}-{secrets.token_hex(4)}.sql"
     output_path = backups_dir / filename
 
     database_url = _get_database_url() or ""
-    if database_url.startswith("sqlite"):
-        db_path = database_url.replace("sqlite://", "")
-        db_file = Path(db_path)
-        if not db_file.exists():
-            return None
-        import shutil
+    if db.engine.dialect.name == "sqlite":
+        import sqlite3
 
-        shutil.copyfile(db_file, output_path)
+        # A file copy misses committed rows still in SQLite's WAL journal.
+        with db.engine.connect() as source:
+            with closing(sqlite3.connect(output_path)) as backup:
+                source.connection.driver_connection.backup(backup)
         return output_path, filename
 
     if "mysql" in database_url:
@@ -5835,7 +5856,7 @@ def _zip_essays(only_finalized: bool = False) -> tuple[BytesIO, str] | None:
             pdf_path = _essay_pdf_path(student)
             if not pdf_path or not pdf_path.exists():
                 continue
-            safe_name = f"{student.id}-{student.last_name}_{student.first_name}.pdf"
+            safe_name = secure_filename(f"{student.id}-{student.last_name}_{student.first_name}.pdf")
             manifest_rows.append(
                 {
                     "student_id": student.id,
@@ -5857,7 +5878,7 @@ def _zip_essays(only_finalized: bool = False) -> tuple[BytesIO, str] | None:
         writer = csv_module.DictWriter(manifest_bytes, fieldnames=fieldnames)
         writer.writeheader()
         for row in manifest_rows:
-            writer.writerow(row)
+            writer.writerow({key: _csv_safe_value(value) for key, value in row.items()})
         archive.writestr("manifest.csv", manifest_bytes.getvalue())
 
     zip_buffer.seek(0)
@@ -6474,7 +6495,7 @@ def student_upload():
             return redirect(url_for("web.student_upload"))
         upload_folder = _get_upload_folder()
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        stored_name = f"student-{student.id}-{timestamp}.pdf"
+        stored_name = f"student-{student.id}-{timestamp}-{secrets.token_hex(8)}.pdf"
         file_path = upload_folder / stored_name
         file.save(file_path)
         uploaded_at = datetime.utcnow()
@@ -7073,7 +7094,7 @@ def admin_toggle_grading_lock():
     if _is_htmx_request():
         return admin_dashboard()
 
-    redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
+    redirect_target = _portal_next_url(request.form.get("redirect")) or url_for("web.admin_dashboard")
     return redirect(redirect_target)
 
 
@@ -7106,7 +7127,7 @@ def admin_toggle_upload_lock():
     if _is_htmx_request():
         return admin_dashboard()
 
-    redirect_target = request.form.get("redirect") or request.referrer or url_for("web.admin_dashboard")
+    redirect_target = _portal_next_url(request.form.get("redirect")) or url_for("web.admin_dashboard")
     return redirect(redirect_target)
 
 
@@ -7764,10 +7785,18 @@ def _collect_dashboard_data(filters: dict | None = None):
 
 
 def _get_setting(key: str, default: str | None = None) -> str | None:
-    setting = AppSetting.query.filter_by(key=key).first()
-    if setting and setting.value is not None:
-        return setting.value
-    return default
+    if not has_request_context():
+        setting = AppSetting.query.filter_by(key=key).first()
+        return setting.value if setting and setting.value is not None else default
+
+    # Cache one snapshot per request and transaction, never across users/workers.
+    cache = request.environ.get("ipo.settings")
+    if cache is None or cache[0] is not db.session().get_transaction():
+        values = dict(db.session.query(AppSetting.key, AppSetting.value).all())
+        cache = (db.session().get_transaction(), values)
+        request.environ["ipo.settings"] = cache
+    value = cache[1].get(key)
+    return value if value is not None else default
 
 
 def _set_setting(key: str, value: str | None) -> None:
@@ -7777,6 +7806,8 @@ def _set_setting(key: str, value: str | None) -> None:
     else:
         setting = AppSetting(key=key, value=value)
         db.session.add(setting)
+    if has_request_context():
+        request.environ.pop("ipo.settings", None)
 
 
 def _parse_bool(raw: str | None) -> bool:
@@ -8280,6 +8311,7 @@ def admin_export_database():
         return redirect(url_for("web.admin_exports"))
     path, filename = result
     log_activity("database_exported", f"Database export {filename} generated", object_type="backup", object_id=filename)
+    db.session.commit()
     return send_file(path, as_attachment=True, download_name=filename, mimetype="application/sql")
 
 
@@ -8299,6 +8331,7 @@ def admin_export_essays():
         object_type="essay_export",
         details={"finalized_only": only_finalized},
     )
+    db.session.commit()
     return send_file(zip_buffer, as_attachment=True, download_name=filename, mimetype="application/zip")
 
 
@@ -10544,7 +10577,7 @@ def admin_logs_export():
     writer = csv.writer(output)
     writer.writerow(["timestamp", "actor", "action", "object_type", "object_id", "description", "details"])
     for entry in logs:
-        writer.writerow([
+        values = [
             entry.created_at.isoformat(timespec="seconds") if entry.created_at else "",
             entry.actor,
             entry.action,
@@ -10552,7 +10585,8 @@ def admin_logs_export():
             entry.object_id or "",
             entry.description or "",
             json.dumps(entry.details, ensure_ascii=False, indent=2) if entry.details else "",
-        ])
+        ]
+        writer.writerow([_csv_safe_value(value) for value in values])
 
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -12804,7 +12838,7 @@ def admin_invitation_batch_template(batch_type: str, fmt: str):
     worksheet.append(headers)
     worksheet.append([sample_row.get(header, "") for header in headers])
     output = BytesIO()
-    workbook.save(output)
+    _save_data_workbook(workbook, output)
     output.seek(0)
     return send_file(
         output,
@@ -16760,7 +16794,7 @@ def _survey_responses_workbook(survey: Survey, assignments: list[SimpleNamespace
         ws.append(excel_row)
 
     stream = BytesIO()
-    wb.save(stream)
+    _save_data_workbook(wb, stream)
     stream.seek(0)
     return stream
 
@@ -16961,7 +16995,7 @@ def _students_workbook(students: list[Student]) -> io.BytesIO:
     ws.auto_filter.ref = ws.dimensions
 
     stream = io.BytesIO()
-    wb.save(stream)
+    _save_data_workbook(wb, stream)
     stream.seek(0)
     return stream
 
@@ -17019,6 +17053,6 @@ def _teachers_workbook(teachers: list[Teacher]) -> io.BytesIO:
     ws.auto_filter.ref = ws.dimensions
 
     stream = io.BytesIO()
-    wb.save(stream)
+    _save_data_workbook(wb, stream)
     stream.seek(0)
     return stream
