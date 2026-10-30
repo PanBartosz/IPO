@@ -4,19 +4,23 @@
     <meta charset="utf-8">
     <title>{% block title %}IPO Registration{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/ipo-warsaw-2026/6.png') }}">
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/ipo-warsaw-2026/6c.png') }}" media="(prefers-color-scheme: dark)">
+    {% if appearance.logo_urls.favicon %}<link rel="icon" type="image/png" href="{{ appearance.logo_urls.favicon }}">{% endif %}
+    {% if appearance.logo_urls.favicon_dark %}<link rel="icon" type="image/png" href="{{ appearance.logo_urls.favicon_dark }}" media="(prefers-color-scheme: dark)">{% endif %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <style id="edition-appearance">:root {
+      {% for property, value in appearance.css_variables.items() %}{{ property }}: {{ value|safe }};
+      {% endfor %}
+    }</style>
     {% block extra_head %}{% endblock %}
   </head>
-  <body>
+  <body{% if not appearance.decorations_enabled %} class="edition-no-decoration"{% endif %}>
     <header class="site-header">
       <div class="container-wide site-header__inner">
         <a class="brand" href="{{ url_for('web.index') }}">
-          <img src="{{ url_for('static', filename='img/ipo-warsaw-2026/6c.png') }}" alt="IPO Warsaw 2026 logo" class="brand-logo">
+          {% if appearance.logo_urls.header %}<img src="{{ appearance.logo_urls.header }}" alt="{{ appearance.edition_name }} logo" class="brand-logo">{% endif %}
           <span class="brand-text">
-            <span class="brand-title">IPO Warsaw 2026</span>
-            <span class="brand-subtitle">International Philosophy Olympiad portal</span>
+            <span class="brand-title">{{ appearance.edition_name }}</span>
+            {% if appearance.tagline %}<span class="brand-subtitle">{{ appearance.tagline }}</span>{% endif %}
           </span>
         </a>
         <nav class="site-nav" aria-label="Primary">
@@ -58,26 +62,29 @@
     <main class="{% block main_class %}container{% endblock %}">
       {% block content %}{% endblock %}
     </main>
-    <footer class="site-footer">
+    {% if appearance.footer_enabled %}<footer class="site-footer">
       <div class="container-wide site-footer__inner">
         <div class="site-footer__brand">
-          <img src="{{ url_for('static', filename='img/ipo-warsaw-2026/7.png') }}" alt="" class="site-footer__logo" aria-hidden="true">
+          {% if appearance.logo_urls.footer %}<img src="{{ appearance.logo_urls.footer }}" alt="" class="site-footer__logo" aria-hidden="true">{% endif %}
           <div class="site-footer__text">
-            <div class="site-footer__title">IPO Warsaw 2026</div>
-            <small>&copy; {{ current_year | default(2024) }} International Philosophy Olympiad</small>
+            <div class="site-footer__title">{{ appearance.edition_name }}</div>
+            <small>&copy; {{ current_year | default(2024) }} {{ appearance.copyright }}</small>
+            {% if appearance.footer_note %}<p class="site-footer__note">{{ appearance.footer_note }}</p>{% endif %}
+            {% if appearance.contact_email or appearance.contact_url %}<div class="site-footer__contact">{% if appearance.contact_email %}<a href="mailto:{{ appearance.contact_email }}">{{ appearance.contact_email }}</a>{% endif %}{% if appearance.contact_url %}<a href="{{ appearance.contact_url }}" target="_blank" rel="noopener noreferrer">Event website ↗</a>{% endif %}</div>{% endif %}
           </div>
         </div>
-        <div class="site-footer__partners" aria-label="Partners">
+        {% if appearance.partners_enabled %}<div class="site-footer__partners" aria-label="Partners">
+          {% for group in appearance.partner_groups %}
           <div class="site-footer__partner">
-            <span class="site-footer__partner-label">Organized by</span>
-            <img src="{{ url_for('static', filename='img/ptf-logo.png') }}" alt="Polskie Towarzystwo Filozoficzne (PTF) logo" class="site-footer__partner-logo">
-            <img src="{{ url_for('static', filename='img/uw-logo.png') }}" alt="University of Warsaw (UW) logo" class="site-footer__partner-logo">
-            <img src="{{ url_for('static', filename='img/wfz-logo.png') }}" alt="Wydział Filozofii (WFZ) logo" class="site-footer__partner-logo">
-            <img src="{{ url_for('static', filename='img/ministry-logo.png') }}" alt="Ministry logo" class="site-footer__partner-logo">
+            {% if group.label %}<span class="site-footer__partner-label">{{ group.label }}</span>{% endif %}
+            {% for partner in group.partners %}
+              {% if partner.website %}<a href="{{ partner.website }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="{{ partner.image_url }}" alt="{{ partner.name }}" class="site-footer__partner-logo">{% if partner.website %}</a>{% endif %}
+            {% endfor %}
           </div>
-        </div>
+          {% endfor %}
+        </div>{% endif %}
       </div>
-    </footer>
+    </footer>{% endif %}
     <script src="{{ url_for('static', filename='vendor/htmx/htmx.min.js') }}" defer></script>
     <script>
       (function () {

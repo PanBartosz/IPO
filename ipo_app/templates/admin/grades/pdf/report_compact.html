@@ -79,7 +79,7 @@
         <div class="meta">Generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</div>
       </div>
       {% if pdf_logo_small_url %}
-        <img class="report-logo" src="{{ pdf_logo_small_url }}" alt="IPO 2026">
+        <img class="report-logo" src="{{ pdf_logo_small_url }}" alt="{{ appearance.edition_name }}">
       {% endif %}
     </header>
 

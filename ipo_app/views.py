@@ -56,6 +56,11 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
 from .extensions import db, limiter
+from .appearance import (
+    get_appearance,
+    get_config as get_appearance_config,
+    logo_path as appearance_logo_path,
+)
 from .forms import (
     AssignmentBatchForm,
     AdminEssayOverrideForm,
@@ -660,6 +665,7 @@ def protect_admin_routes():
 @web_bp.app_context_processor
 def inject_globals():
     return {
+        "appearance": get_appearance(),
         "current_year": datetime.utcnow().year,
         "current_admin": _current_admin(),
         "ADMIN_MODULES": ADMIN_MODULES,
@@ -3021,12 +3027,19 @@ def _store_admin_essay_pdf(student: Student, file) -> tuple[str, Path, int | Non
     return stored_name, file_path, word_count, counted_at
 
 
-def _pdf_logo_path(kind: str) -> Path:
+def _pdf_logo_path(kind: str) -> Path | None:
+    if get_appearance_config()["logos"]["print"]["hidden"]:
+        return None
+    custom = appearance_logo_path("print")
+    if custom:
+        return custom
     return Path(current_app.static_folder) / PDF_LOGO_ASSETS[kind]
 
 
 def _pdf_logo_uri(kind: str) -> str | None:
     path = _pdf_logo_path(kind)
+    if path is None:
+        return None
     if not path.exists():
         current_app.logger.warning("PDF logo asset missing: %s", path)
         return None
@@ -3045,8 +3058,12 @@ def _pdf_font_uri(kind: str) -> str | None:
     return path.resolve().as_uri()
 
 
-def _pdf_logo_context() -> dict[str, str | None]:
+def _pdf_logo_context() -> dict[str, str | bool | None]:
+    appearance_config = get_appearance_config()
     return {
+        "pdf_wifi_network": appearance_config["wifi_network"],
+        "pdf_wifi_password": appearance_config["wifi_password"],
+        "pdf_wifi_enabled": appearance_config["wifi_enabled"],
         "pdf_logo_primary_url": _pdf_logo_uri("primary"),
         "pdf_logo_small_url": _pdf_logo_uri("small"),
         "pdf_logo_packet_url": _pdf_logo_uri("packet"),
@@ -3086,6 +3103,8 @@ def _draw_pdf_logo(
     align: str = "left",
 ) -> None:
     path = _pdf_logo_path(kind)
+    if path is None:
+        return
     if not path.exists():
         current_app.logger.warning("PDF logo asset missing: %s", path)
         return

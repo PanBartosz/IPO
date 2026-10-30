@@ -106,9 +106,11 @@ def _register_extensions(app: Flask) -> None:
 
 def _register_blueprints(app: Flask) -> None:
     from .views import web_bp, teacher_portal_bp
+    from .appearance import appearance_bp
 
     app.register_blueprint(web_bp)
     app.register_blueprint(teacher_portal_bp)
+    app.register_blueprint(appearance_bp)
 
 
 def _initialize_database(app: Flask) -> None:

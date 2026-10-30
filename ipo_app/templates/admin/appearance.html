@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Appearance & edition · Admin · IPO{% endblock %}
+{% block extra_head %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/appearance.css') }}">
+{% endblock %}
+{% block main_class %}container-wide{% endblock %}
+
+{% macro field(control, help='') %}
+  <div class="form-field">
+    {{ control.label }}
+    {{ control() }}
+    {% if help %}<span class="form-help">{{ help }}</span>{% endif %}
+    {% for message in control.errors %}<div class="field-error">{{ message }}</div>{% endfor %}
+  </div>
+{% endmacro %}
+{% macro toggle(control) %}
+  <div class="form-field full-width">
+    <label class="checkbox">{{ control() }} {{ control.label.text }}</label>
+    {% for message in control.errors %}<div class="field-error">{{ message }}</div>{% endfor %}
+  </div>
+{% endmacro %}
+
+{% block content %}
+  <div class="appearance-page-header">
+    <div>
+      <a class="appearance-back" href="{{ url_for('web.admin_settings') }}">← Settings</a>
+      <h1>Appearance & edition</h1>
+      <p class="fine-print">Make the portal your own for the next Olympiad. The original Warsaw 2026 identity is the default.</p>
+    </div>
+    <button type="submit" form="appearance-form" class="button">Save appearance</button>
+  </div>
+  {% if error %}<div class="portal-alert warning appearance-error" role="alert">{{ error }}</div>{% endif %}
+  {% if form.errors %}<div class="portal-alert warning appearance-error" role="alert">Some settings need attention. Check the marked fields before saving.</div>{% endif %}
+
+  <div class="appearance-layout">
+    <div class="appearance-editor">
+      <nav class="appearance-section-nav" aria-label="Appearance sections">
+        <a href="#appearance-identity">Edition</a><a href="#appearance-palette">Colors</a><a href="#appearance-layout">Typography & layout</a><a href="#appearance-logos">Logos</a><a href="#appearance-partners">Partners</a><a href="#appearance-restore">Restore defaults</a>
+      </nav>
+      <form method="post" id="appearance-form" action="{{ url_for('appearance.settings') }}" novalidate>
+        {{ form.hidden_tag() }}
+        <section class="appearance-card" id="appearance-identity">
+          <div class="appearance-card-heading"><span class="appearance-step">01</span><div><h2>Edition identity</h2><p>The name and welcome text people see across the portal.</p></div></div>
+          <div class="form-grid">
+            {{ field(form.edition_name, 'For example: IPO [host city] [year].') }}
+            {{ field(form.browser_title) }}
+            <div class="full-width">{{ field(form.tagline) }}</div>
+            <div class="full-width">{{ field(form.hero_title) }}</div>
+            <div class="full-width">{{ field(form.hero_intro, 'The introduction appears when open registration is available. Published essay topics keep their existing priority.') }}</div>
+          </div>
+        </section>
+
+        <section class="appearance-card" id="appearance-palette">
+          <div class="appearance-card-heading"><span class="appearance-step">02</span><div><h2>Color palette</h2><p>Start with a palette or pick each color. Changes appear in the preview before you save.</p></div></div>
+          <div class="appearance-presets" role="group" aria-label="Preset palettes">
+            {% for key, palette in palettes.items() %}
+              <button class="appearance-preset" type="button" data-palette="{{ key }}" title="{{ palette.label }}">
+                <span class="appearance-preset-swatches" aria-hidden="true">{% for color in ['primary', 'accent', 'highlight'] %}<i style="background: {{ palette.colors[color] }}"></i>{% endfor %}</span>
+                <span>{{ palette.label.split(' · ')[0] }}</span>
+              </button>
+            {% endfor %}
+          </div>
+          <div class="appearance-color-grid">
+            {% for key, metadata in color_fields.items() %}
+              {% set control = form|attr(key) %}
+              <div class="appearance-color-field">
+                {{ control.label }}
+                <div class="appearance-color-inputs">
+                  {{ control(type="color", data_color=key) }}
+                  <input type="text" class="appearance-hex" value="{{ control.data }}" data-hex="{{ key }}" maxlength="7" pattern="#[0-9A-Fa-f]{6}" aria-label="{{ control.label.text }} hex value" autocomplete="off" spellcheck="false">
+                </div>
+                {% for message in control.errors %}<div class="field-error">{{ message }}</div>{% endfor %}
+              </div>
+            {% endfor %}
+          </div>
+          {{ toggle(form.gradient_enabled) }}
+        </section>
+
+        <section class="appearance-card" id="appearance-layout">
+          <div class="appearance-card-heading"><span class="appearance-step">03</span><div><h2>Typography & layout</h2><p>A few small choices can give the next edition a different character.</p></div></div>
+          <div class="form-grid">
+            {{ field(form.body_font) }}{{ field(form.heading_font) }}{{ field(form.corners) }}{{ field(form.font_size) }}
+            {{ field(form.header_logo_width) }}{{ field(form.partner_logo_height) }}
+            {{ toggle(form.decorations_enabled) }}
+          </div>
+        </section>
+
+        <section class="appearance-card" id="appearance-footer">
+          <div class="appearance-card-heading"><span class="appearance-step">04</span><div><h2>Footer & contact</h2><p>Use your organizing institution's details and choose what to show.</p></div></div>
+          <div class="form-grid">
+            <div class="full-width">{{ field(form.copyright) }}</div>
+            {{ field(form.contact_email) }}{{ field(form.contact_url) }}
+            <div class="full-width">{{ field(form.footer_note) }}</div>
+            {{ toggle(form.footer_enabled) }}{{ toggle(form.partners_enabled) }}
+          </div>
+        </section>
+
+        <section class="appearance-card" id="appearance-print">
+          <div class="appearance-card-heading"><span class="appearance-step">05</span><div><h2>Printed access cards</h2><p>The PDF logo can be changed below. Update these details for the next venue.</p></div></div>
+          <div class="form-grid">
+            {{ field(form.wifi_network) }}{{ field(form.wifi_password) }}{{ toggle(form.wifi_enabled) }}
+          </div>
+        </section>
+        <div class="appearance-save-row"><span class="fine-print">Your changes apply after saving.</span>{{ form.submit(class_="button") }}</div>
+      </form>
+
+      <section class="appearance-card" id="appearance-logos">
+        <div class="appearance-card-heading"><span class="appearance-step">06</span><div><h2>Logos & browser icons</h2><p>Upload PNG, JPEG or WebP, up to 3 MB. Transparent PNGs work well for logos. Each image saves separately.</p></div></div>
+        <div class="appearance-logo-grid">
+          {% for slot, metadata in logo_slots.items() %}
+            <article class="appearance-logo-card">
+              <div class="appearance-image-preview {{ 'appearance-image-preview--dark' if slot == 'header' else '' }}" data-image-preview="{{ slot }}">
+                {% if appearance.logo_urls[slot] %}<img src="{{ appearance.logo_urls[slot] }}" alt="{{ metadata[0] }} preview">{% else %}<span>Hidden</span>{% endif %}
+              </div>
+              <h3>{{ metadata[0] }}</h3>
+              <span class="appearance-asset-status">{{ 'Hidden' if appearance_config.logos[slot].hidden else ('Custom image' if appearance_config.logos[slot].filename else 'Original image') }}</span>
+              <form action="{{ url_for('appearance.update_logo', slot=slot) }}" method="post" enctype="multipart/form-data" class="appearance-asset-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label for="logo-{{ slot }}" class="fine-print">Replace image</label>
+                {{ logo_form.image(id='logo-' ~ slot, accept='image/png,image/jpeg,image/webp', data_image_slot=slot) }}
+                <div class="appearance-small-actions">
+                  <button type="submit" class="button small" name="action" value="upload">Upload</button>
+                  <button type="submit" class="button-link" name="action" value="reset">Use original</button>
+                  <button type="submit" class="button-link" name="action" value="{{ 'show' if appearance_config.logos[slot].hidden else 'hide' }}">{{ 'Show' if appearance_config.logos[slot].hidden else 'Hide' }}</button>
+                </div>
+              </form>
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="appearance-card" id="appearance-partners">
+        <div class="appearance-card-heading"><span class="appearance-step">07</span><div><h2>Organizers, partners & sponsors</h2><p>Add logos and links, edit group labels, and put them in the order you want. Consecutive partners with the same label form one group.</p></div></div>
+        <div class="appearance-partner-list">
+          {% for partner in partners %}
+            <article class="appearance-partner-card">
+              <div class="appearance-partner-image appearance-image-preview">{% if partner.image_url %}<img src="{{ partner.image_url }}" alt="{{ partner.name }}">{% endif %}</div>
+              <form method="post" action="{{ url_for('appearance.update_partner') }}" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="partner_id" value="{{ partner.id }}">
+                <div class="form-grid">
+                  {% for key in ['name', 'label', 'website'] %}
+                    {% set control = partner.form|attr(key) %}
+                    <div class="form-field {{ 'full-width' if key == 'website' else '' }}"><label for="partner-{{ partner.id }}-{{ key }}">{{ control.label.text }}</label>{{ control(id='partner-' ~ partner.id ~ '-' ~ key) }}</div>
+                  {% endfor %}
+                  <div class="form-field full-width"><label for="partner-{{ partner.id }}-image">Replace logo (optional)</label>{{ partner.form.image(id='partner-' ~ partner.id ~ '-image', accept='image/png,image/jpeg,image/webp') }}</div>
+                  <label class="checkbox full-width">{{ partner.form.enabled(id='partner-' ~ partner.id ~ '-enabled') }} Visible</label>
+                </div>
+                <div class="appearance-small-actions">
+                  <button name="action" value="save" class="button small">Save partner</button>
+                  <button name="action" value="up" class="button-link" aria-label="Move {{ partner.name }} up" {{ 'disabled' if loop.first else '' }}>↑</button>
+                  <button name="action" value="down" class="button-link" aria-label="Move {{ partner.name }} down" {{ 'disabled' if loop.last else '' }}>↓</button>
+                  <button name="action" value="remove" class="button-link appearance-remove">Remove</button>
+                </div>
+              </form>
+            </article>
+          {% else %}<p class="fine-print">No partners yet. Add the first logo below.</p>{% endfor %}
+        </div>
+        <details class="appearance-add-partner"><summary>Add a partner or sponsor</summary>
+          <form method="post" action="{{ url_for('appearance.update_partner') }}" enctype="multipart/form-data" class="form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% for key in ['name', 'label', 'website'] %}{% set control = partner_form|attr(key) %}
+              <div class="form-field {{ 'full-width' if key == 'website' else '' }}"><label for="new-partner-{{ key }}">{{ control.label.text }}</label>{{ control(id='new-partner-' ~ key) }}</div>
+            {% endfor %}
+            <div class="form-field full-width"><label for="new-partner-image">Logo</label>{{ partner_form.image(id='new-partner-image', accept='image/png,image/jpeg,image/webp') }}</div>
+            <label class="checkbox full-width">{{ partner_form.enabled(id='new-partner-enabled') }} Visible</label>
+            <div class="form-actions"><button class="button" name="action" value="save">Add partner</button></div>
+          </form>
+        </details>
+        <form method="post" action="{{ url_for('appearance.reset') }}" class="appearance-partner-restore">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="section" value="partners">
+          <button class="button-link">Restore original partner list</button>
+        </form>
+      </section>
+
+      <section class="appearance-card" id="appearance-restore">
+        <h2>Restore the original appearance</h2>
+        <p class="fine-print">Return to the complete {{ default_edition }} identity: colors, text, typography, logos, partners and printed-card details. Registration, scoring, deadlines and participant records stay as they are.</p>
+        <form method="post" action="{{ url_for('appearance.reset') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="section" value="all">
+          <label class="checkbox"><input type="checkbox" name="confirm_reset" value="yes" required> Restore all original appearance settings</label>
+          <button class="button secondary" style="margin-top: 1rem;">Restore defaults</button>
+        </form>
+      </section>
+    </div>
+
+    <aside class="appearance-preview-column">
+      <div class="appearance-preview-heading"><strong>Live preview</strong><span id="appearance-preview-status" role="status">Saved appearance</span></div>
+      <div class="appearance-preview" data-appearance-preview>
+        <div class="appearance-preview-header">
+          {% if appearance.logo_urls.header %}<img src="{{ appearance.logo_urls.header }}" alt="" data-preview-logo="header">{% endif %}
+          <div><strong data-preview-text="edition_name">{{ appearance.edition_name }}</strong><small data-preview-text="tagline">{{ appearance.tagline }}</small></div>
+        </div>
+        <div class="appearance-preview-main">
+          <div class="hero appearance-preview-hero"><h2 data-preview-text="hero_title">{{ appearance.hero_title }}</h2><p data-preview-text="hero_intro">{{ appearance.hero_intro }}</p><span class="button">Register a student</span></div>
+          <div class="appearance-preview-sample"><strong>Welcome to your portal</strong><p>Essays, surveys and everything you need for this edition.</p><span class="appearance-preview-link">Open your dashboard →</span></div>
+        </div>
+        <div class="appearance-preview-footer" data-preview-footer><strong data-preview-text="edition_name">{{ appearance.edition_name }}</strong><small data-preview-text="copyright">{{ appearance.copyright }}</small><div class="appearance-preview-partners" data-preview-partners>{% for group in appearance.partner_groups %}{% for partner in group.partners %}<img src="{{ partner.image_url }}" alt="{{ partner.name }}">{% endfor %}{% endfor %}</div></div>
+      </div>
+      <p class="form-help">The preview is visible only here until you save. Image and partner updates appear after their own Save or Upload action.</p>
+      <a class="button-link" href="{{ url_for('web.index') }}" target="_blank" rel="noopener">Open the current public homepage ↗</a>
+    </aside>
+  </div>
+  <script id="appearance-palettes" type="application/json">{{ palettes|tojson }}</script>
+  <script src="{{ url_for('static', filename='js/appearance.js') }}" defer></script>
+{% endblock %}

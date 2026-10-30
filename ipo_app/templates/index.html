@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}IPO Registration{% endblock %}
+{% block title %}{{ appearance.browser_title }}{% endblock %}
 
 {% block content %}
   {% if essay_topics_html %}
@@ -11,13 +11,13 @@
     </section>
   {% else %}
     <section class="hero">
-      <h2>Welcome to the IPO registration portal</h2>
+      <h2>{{ appearance.hero_title }}</h2>
       {% if invite_only %}
         <div class="portal-alert warning">
           Registrations are available by invitation only. Please use your invite link or contact your delegation leader.
         </div>
       {% else %}
-        <p>Please choose the appropriate registration form.</p>
+        <p class="edition-introduction">{{ appearance.hero_intro }}</p>
         <div class="cta-group">
           <a class="button" href="{{ url_for('web.register_student') }}">Register a student</a>
           <a class="button secondary" href="{{ url_for('web.register_teacher') }}">Register a teacher</a>

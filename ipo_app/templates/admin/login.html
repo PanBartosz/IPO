@@ -4,9 +4,9 @@
 
 {% block content %}
   <div class="table-card portal-login-card">
-    <div class="login-brand">
-      <img src="{{ url_for('static', filename='img/ipo-official-logo.png') }}" alt="International Philosophy Olympiad official logo" class="login-brand__logo">
-    </div>
+    {% if appearance.logo_urls.login %}<div class="login-brand">
+      <img src="{{ appearance.logo_urls.login }}" alt="{{ appearance.edition_name }} logo" class="login-brand__logo">
+    </div>{% endif %}
     <h2>Admin access</h2>
     <form method="post" class="form-grid" novalidate>
       {{ form.hidden_tag() }}

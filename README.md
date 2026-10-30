@@ -57,6 +57,23 @@ Data exports (SQL + essay ZIP) are under **Admin → Exports** and require admin
 6. Stage lock toggles freeze both grading and essay downloads for the affected stage; unlock when jurors need access again.
 7. Toggle the portal setting back off to close the portal entirely—teachers will be redirected with a notice that the portal is offline. Assessment visibility and lock settings remain persisted independently.
 
+## Appearance for future editions
+
+Open **Admin → Settings → Appearance & edition** (`/admin/settings/appearance`) to customize the portal without changing code. With no saved customization, the complete existing **IPO Warsaw 2026** appearance remains the default, including colors, layout, logos and organizers.
+
+The panel includes:
+
+- Edition name, header subtitle, homepage browser title, welcome heading and introduction.
+- Eleven color controls, four starter palettes, optional gradients, local font choices, text sizes, corner styles and decorative shapes. A live preview shows unsaved changes without applying them to the portal.
+- Independent header, footer, login, light/dark browser icons, homepage decoration and PDF logos. Images can be replaced, hidden or restored individually.
+- Organizer, partner and sponsor logos with editable names, group labels, links, visibility and ordering. The original four-organizer list can be restored independently.
+- Footer copyright, optional notes, contact email and event website.
+- Wi-Fi network/password and visibility on printed access cards. These values are not included in the public page context.
+
+Save appearance to apply the identity, palette and layout. Image and partner actions save separately. **Restore defaults** restores the original visual identity without changing registrations, grading, deadlines or other competition settings. Published essay topics continue to take priority over the homepage welcome panel.
+
+Uploads accept PNG, JPEG and WebP up to 3 MB and 16 million pixels. They are validated and re-encoded as PNG, preserving transparency and discarding metadata. Uploaded brand images are public assets and are stored in `UPLOAD_FOLDER/branding/`; keep that directory on persistent storage and include it with database backups. Settings use the existing `app_settings` table, so this feature requires no database migration. Historical static instruction manuals keep their original illustrations.
+
 ## Stage 3 steering committee workflow
 1. Flag Stage 2 essays for Stage 3 consideration from the Stage 2 scoring screen.
 2. Navigate to **Admin → Stage 2 → Stage 3 packets**.

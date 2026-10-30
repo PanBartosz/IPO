@@ -49,7 +49,7 @@
       .header {
         display: table;
         width: 100%;
-        border-bottom: 1.5pt solid #822d80;
+        border-bottom: 1.5pt solid {{ appearance.primary }};
         padding-bottom: 2.1mm;
         margin-bottom: 2.1mm;
       }
@@ -118,7 +118,7 @@
       }
       .role {
         width: 15mm;
-        color: #822d80;
+        color: {{ appearance.primary }};
         font-size: 5.9pt;
         font-weight: 700;
         text-transform: uppercase;
@@ -149,7 +149,7 @@
           </div>
           <div class="header-logo">
             {% if pdf_logo_primary_url %}
-              <img src="{{ pdf_logo_primary_url }}" alt="IPO 2026">
+              <img src="{{ pdf_logo_primary_url }}" alt="{{ appearance.edition_name }}">
             {% endif %}
           </div>
         </header>

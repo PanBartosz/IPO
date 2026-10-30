@@ -166,7 +166,7 @@
             {% if pdf_logo_primary_url %}
               <img src="{{ pdf_logo_primary_url }}" alt="IPO {{ current_year }} Teacher Portal Access">
             {% else %}
-              <h3>IPO {{ current_year }}</h3>
+              <h3>{{ appearance.edition_name }}</h3>
               <p>Teacher Portal Access</p>
             {% endif %}
           </div>
@@ -183,13 +183,13 @@
             <span class="credential-value">{{ entry.temporary_access_code or 'Not generated' }}</span>
           </div>
         </div>
-        <div class="wifi-box">
+        {% if pdf_wifi_enabled %}<div class="wifi-box">
           <span class="wifi-title">Wi-Fi access</span>
           <div class="wifi-line">
-            <span class="wifi-item"><span class="wifi-label">Network:</span> <span class="wifi-value">ipo2026</span></span>
-            <span class="wifi-item"><span class="wifi-label">Password:</span> <span class="wifi-value">ipowarsaw2026</span></span>
+            <span class="wifi-item"><span class="wifi-label">Network:</span> <span class="wifi-value">{{ pdf_wifi_network }}</span></span>
+            <span class="wifi-item"><span class="wifi-label">Password:</span> <span class="wifi-value">{{ pdf_wifi_password }}</span></span>
           </div>
-        </div>
+        </div>{% endif %}
         <div class="instructions">
           <p><strong>When grading starts:</strong></p>
           <ol>

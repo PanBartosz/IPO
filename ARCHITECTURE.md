@@ -40,6 +40,7 @@ Repository (core):
 - `ipo_app/models.py`: SQLAlchemy models + enums (registrations, assignments, scoring, settings, comms, audit, surveys).
 - `ipo_app/forms.py`: WTForms definitions (registrations, admin workflows, portal actions).
 - `ipo_app/views.py`: main routes/blueprints, access control, workflow logic, exports, PDF/email helpers.
+- `ipo_app/appearance.py`: edition identity and palette defaults, appearance forms, admin branding routes, image validation and public brand asset delivery. Configuration is stored as versioned JSON in `AppSetting`; absent settings reproduce the original Warsaw 2026 identity. Uploaded branding assets live in `UPLOAD_FOLDER/branding/`.
 - `ipo_app/templates/`: Jinja templates (admin, student, teacher_portal, PDFs).
 - `ipo_app/static/`: CSS/JS assets, vendored TinyMCE.
 - `migrations/`: Alembic migrations.
