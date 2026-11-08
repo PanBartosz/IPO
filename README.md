@@ -2,6 +2,16 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
+## Funding and institutions
+
+**System został sfinansowany przez Ministerstwo Edukacji Narodowej (MEN).**
+
+The development of this system was funded by the Ministry of National Education of the Republic of Poland.
+
+![Ministerstwo Edukacji Narodowej (MEN), Polskie Towarzystwo Filozoficzne (PTF), Wydział Filozofii Uniwersytetu Warszawskiego (WFZ), Uniwersytet Warszawski (UW)](docs/assets/institutional-logos.png)
+
+Instytucje: **Polskie Towarzystwo Filozoficzne (PTF)** · **Wydział Filozofii Uniwersytetu Warszawskiego (WFZ)** · **Uniwersytet Warszawski (UW)**.
+
 ## Purpose
 The IPO Admin Portal streamlines logistics for the International Philosophy Olympiad. It centralizes student and teacher registrations, essay workflow management, stage planning, message broadcasting, and PDF packet generation, keeping the competition compliant with IPO statutes.
 
